@@ -1,0 +1,26 @@
+format=td3-stepdsl-v1
+active_steps=16
+triplet_time=on
+
+01  C:DA-:N
+02 C#:---:T
+03  D:-A-:R
+04 D#:D--:N
+05  E:-A-:T
+06  F:--S:R
+07 F#:DA-:N
+08  G:--S:T
+09 G#:-A-:R
+10  A:D--:N
+11 A#:-A-:T
+12  B:--S:R
+13 C^:---:N
+14  C:D-S:T
+15  D:-A-:R
+16  E:---:N
+
+# NOTE:TAS:TIME
+# transpose: U|D|-
+# accent: A|-
+# slide: S|-
+# time: N|T|R|TR

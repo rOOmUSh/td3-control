@@ -1,0 +1,11 @@
+name: "td3-control CodeQL config"
+
+paths-ignore:
+  - "src/tests/**"
+  - "**/*.test.js"
+  - "ui/js/**/*.test.js"
+
+query-filters:
+  - exclude:
+      id: rust/path-injection
+      tags contain: test

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>TD-3 Control</title>
+<!-- TD3_CONFIG_INJECT -->
+<link href="css/tailwind.css" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700;900&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="css/custom.css" rel="stylesheet"/>
+<link href="css/bank.css" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+</head>
+<body class="bg-surface-dim text-on-surface font-body overflow-hidden" data-page="control">
+<div class="flex flex-col h-screen">
+
+<div data-partial-path="partials/topbar-control.html"></div>
+
+<main class="flex-1 flex overflow-hidden">
+
+<!-- Sidebar -->
+<aside class="hidden md:flex flex-col h-full w-[16rem] bg-[#0d0f0f] border-r-4 border-[#1e2020] shadow-inner flex-shrink-0">
+  <div data-partial-path="partials/sidebar/group-select.html"></div>
+  <div data-partial-path="partials/sidebar/pattern-select.html"></div>
+  <div data-partial-path="partials/sidebar/side-select.html"></div>
+  <div data-partial-path="partials/sidebar/randomizer.html"></div>
+</aside>
+
+<!-- Sequencer Canvas -->
+<section class="flex-1 flex flex-col bg-surface-container-lowest overflow-hidden">
+  <div data-partial-path="partials/toolbar-control.html"></div>
+  <div data-partial-path="partials/toolbar-control-secondary.html"></div>
+  <div class="flex-1 px-4 py-3 overflow-y-auto">
+    <!-- Multi-pattern card list. Each `.mp-card` is rendered by
+         ui/js/multipattern/multipattern-row.js and contains a 16-step grid.
+         Structural edits are handled by the secondary toolbar. -->
+    <div id="multipattern-list" class="flex flex-col gap-3"></div>
+    <!-- Keyboard-edit status strip - shows current selected step + hint -->
+    <div class="flex items-center gap-3 mt-3">
+      <span id="kb-step-display" class="text-[0.9rem] font-mono text-on-surface-variant opacity-0">STEP: 01</span>
+      <span id="kb-hint" class="text-[1rem] font-mono text-on-surface-variant opacity-0 ml-auto">arrows:nav | C,F,V,G,B,N,J,M,K,&lt;,;,.,/:notes | A:acc S:slide | ↑↓:UP/DN | \\:rest | R:rand | SPACE:play</span>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<div data-partial-path="partials/transport-bar.html"></div>
+
+</div>
+
+<!-- Multi-pattern timeline modal. Hidden until the TIMELINE toolbar button
+     toggles it. Owns its own ID namespace so it can't collide with any
+     progression-page modal wording. -->
+<div data-partial-path="partials/timeline-modal.html"></div>
+
+<script type="module">
+import { bootstrapLayout } from "./js/layout-loader.js";
+
+await bootstrapLayout({ entryScript: "js/main.js" });
+</script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+{
+  "anchor_steps": [0, 4, 8, 12],
+  "profile_priority": ["tension", "dark", "jazz", "safe"],
+  "scale_profiles": {
+    "natural_minor": "dark",
+    "harmonic_minor": "dark",
+    "phrygian_dominant": "tension",
+    "major": "safe",
+    "dorian": "jazz",
+    "phrygian": "tension",
+    "major_pentatonic": "safe",
+    "minor_pentatonic": "dark",
+    "blues": "dark",
+    "whole_tone": "tension",
+    "chromatic": "tension",
+    "mixolydian": "safe",
+    "lydian": "jazz",
+    "locrian": "tension",
+    "melodic_minor": "dark",
+    "hungarian_minor": "tension",
+    "spanish_phrygian": "tension",
+    "hirajoshi": "dark",
+    "iwato": "tension",
+    "in_sen": "dark",
+    "kumoi": "dark",
+    "yo": "safe",
+    "prometheus": "tension",
+    "augmented": "tension",
+    "tritone": "tension",
+    "bebop_dominant": "jazz",
+    "bebop_dorian": "jazz",
+    "diminished_hw": "tension",
+    "diminished_wh": "tension",
+    "altered": "tension"
+  },
+  "presets": {
+    "safe": [[1, 4, 5, 1], [1, 6, 7, 1]],
+    "dark": [[1, 6, 7, 1], [1, 7, 6, 5], [1, 3, 7, 1]],
+    "tension": [[1, 7, 6, 5], [1, 2, 7, 1]],
+    "jazz": [[1, 4, 5, 1], [1, 3, 6, 2]]
+  },
+  "mutation": {
+    "target_changes": 3,
+    "min_changes": 2,
+    "max_changes": 4,
+    "rhythm_preserve": 0.75,
+    "contour_preserve": 0.6
+  },
+  "range_policy": {
+    "mode": "fold_then_clamp",
+    "anchor_priority": "target_pitch_class",
+    "body_priority": "contour_then_target"
+  },
+  "default_timeline": [1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4]
+}

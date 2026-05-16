@@ -1,0 +1,27 @@
+{
+  "bass_rhythm_modes": {
+    "safe":    "four_on_floor",
+    "dark":    "anchor_fill",
+    "tension": "offbeat_8",
+    "jazz":    "acid_follow"
+  },
+  "ending_rewrite": {
+    "enabled": true,
+    "step_index": 14
+  },
+  "anchor_fill": {
+    "target_fill_count": 2,
+    "avoid_acid_overlap": true
+  },
+  "offbeat_8": {
+    "offbeat_fifth_probability": 0.3
+  },
+  "acid_follow": {
+    "density_fraction": 0.5,
+    "min_additional_active": 3
+  },
+  "pitch_layer": {
+    "root_probability_nonanchor": 0.8,
+    "fifth_fallback_order": ["fifth", "fourth", "third"]
+  }
+}

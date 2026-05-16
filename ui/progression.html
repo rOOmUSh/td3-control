@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>TD-3 Progression</title>
+<!-- TD3_CONFIG_INJECT -->
+<link href="css/tailwind.css" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700;900&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="css/custom.css" rel="stylesheet"/>
+<link href="css/bank.css" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<style>
+  .prog-row-p1 { background: rgba(0,191,255,0.06); }
+  .prog-row-p2 { background: rgba(255,215,0,0.06); }
+  .prog-row-p3 { background: rgba(220,20,60,0.06); }
+  .prog-row-p4 { background: rgba(155,48,255,0.06); }
+  .prog-label-p1 { color: #00BFFF; }
+  .prog-label-p2 { color: #FFD700; }
+  .prog-label-p3 { color: #DC143C; }
+  .prog-label-p4 { color: #9B30FF; }
+  .prog-row-playing { box-shadow: inset 4px 0 0 #4e8c45; }
+</style>
+</head>
+<body class="bg-surface-dim text-on-surface font-body overflow-hidden" data-page="progression">
+<div class="flex flex-col h-screen">
+
+<div data-partial-path="partials/topbar-progression.html"></div>
+
+<main class="flex-1 flex overflow-hidden">
+
+<!-- Sidebar -->
+<aside class="hidden md:flex flex-col h-full w-[16rem] bg-[#0d0f0f] border-r-4 border-[#1e2020] shadow-inner flex-shrink-0">
+  <div data-partial-path="partials/sidebar/group-select.html"></div>
+  <div data-partial-path="partials/sidebar/pattern-select.html"></div>
+  <div data-partial-path="partials/sidebar/side-select.html"></div>
+  <div data-partial-path="partials/sidebar/randomizer.html"></div>
+</aside>
+
+<!-- Main Content -->
+<section class="flex-1 flex flex-col bg-surface-container-lowest overflow-hidden">
+  <!-- Toolbar -->
+  <div class="flex items-center gap-3 px-6 py-2 border-b border-surface-container bg-surface-container-low flex-wrap">
+    <button id="btn-timeline" class="td3-toolbar-btn td3-toolbar-btn--neutral tactile-button">
+      <span class="material-symbols-outlined text-sm">view_timeline</span> TIMELINE
+    </button>
+    <div class="w-px h-5 bg-surface-container-highest"></div>
+    <!-- Global SL/ACC - colored to match the per-step SL/AC pills
+         (step-card-styles.js): sky for slides, orange for accents.
+    <span class="text-[0.8rem] font-black text-on-surface-variant tracking-wider">RAND ALL</span>
+    <button id="btn-global-rand-sl" class="td3-sidebar-rand-btn td3-sidebar-rand-btn--slide tactile-button" title="Randomize slides on all patterns">SL</button>
+    <button id="btn-global-rand-acc" class="td3-sidebar-rand-btn td3-sidebar-rand-btn--accent tactile-button" title="Randomize accents on all patterns">AC</button>
+    <div class="w-px h-5 bg-surface-container-highest"></div> -->
+    <!-- Global SHIFT -->
+    <div class="flex items-center gap-0.5">
+      <span class="text-[0.8rem] font-black text-on-surface-variant tracking-wider mr-1">SHIFT ALL</span>
+      <button id="btn-gshift-b4" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--sm tactile-button">&laquo;&lsaquo;</button>
+      <button id="btn-gshift-b2" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--sm tactile-button">&laquo;</button>
+      <button id="btn-gshift-b1" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--sm tactile-button">&lsaquo;</button>
+      <button id="btn-gshift-f1" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--sm tactile-button">&rsaquo;</button>
+      <button id="btn-gshift-f2" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--sm tactile-button">&raquo;</button>
+      <button id="btn-gshift-f4" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--sm tactile-button">&rsaquo;&raquo;</button>
+    </div>
+    <div class="w-px h-5 bg-surface-container-highest"></div>
+    <!-- Global TRNSPS - shift every step's note across all 4 patterns
+         in one click. ±1 nudges by a semitone, ±12 jumps a full octave. -->
+    <div class="flex items-center gap-0.5">
+      <span class="text-[0.8rem] font-black text-on-surface-variant tracking-wider mr-1">TRNSPS ALL</span>
+      <button id="btn-gtrnsps-up"   class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--sm tactile-button" title="Transpose all 4 patterns +1 semitone">+1</button>
+      <button id="btn-gtrnsps-dn"   class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--sm tactile-button" title="Transpose all 4 patterns &minus;1 semitone">&minus;1</button>
+      <button id="btn-gtrnsps-up12" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--sm tactile-button" title="Transpose all 4 patterns +12 semitones (one octave up)">+12</button>
+      <button id="btn-gtrnsps-dn12" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--sm tactile-button" title="Transpose all 4 patterns &minus;12 semitones (one octave down)">&minus;12</button>
+    </div>
+    <div class="w-px h-5 bg-surface-container-highest"></div>
+    <!-- Shared MIDI-preview volume
+    <div class="flex items-center gap-1" title="Volume for browser WebAudio preview (bassline)">
+      <span class="text-[0.8rem] font-black text-on-surface-variant tracking-wider">MIDI VOL</span>
+      <input id="midi-preview-vol" type="range" min="0" max="100" value="30" class="w-24 h-1.5 accent-primary-fixed cursor-pointer"/>
+      <span id="midi-preview-vol-val" class="text-[0.8rem] font-mono text-primary-fixed w-8 text-right">30%</span>
+    </div>
+    -->
+    <!-- SAVE PACKAGE - hover the button to expose the format picker. Clicking
+         the button saves the currently ticked formats. Wrapper uses `group`
+         so the dropdown stays open while the cursor is within either the
+         button or the panel. `ml-auto` lives here (the left-most of the
+         right-aligned pair) so SAVE PACKAGE and PUSH float together to the
+         right edge. -->
+    <div class="relative group ml-auto">
+      <button id="btn-save-package" disabled
+              class="td3-toolbar-btn td3-toolbar-btn--primary td3-toolbar-btn--sm tactile-button"
+              title="Generate a progression first">
+        SAVE PACKAGE
+      </button>
+      <div class="absolute right-0 top-full mt-1 hidden group-hover:block z-50 min-w-[14rem] p-3 rounded-lg bg-surface-container-highest shadow-xl border border-outline-variant">
+        <div class="flex flex-col gap-1 mb-2 pb-2 border-b border-outline-variant text-[0.7rem] font-mono">
+          <span id="pkg-status" class="text-primary-fixed-dim opacity-80 truncate" title="Current in-memory package">No package</span>
+          <span id="pkg-last-saved" class="text-primary-fixed-dim opacity-60 truncate" title="Last exported ZIP"></span>
+        </div>
+        <div id="pkg-format-grid" class="flex flex-col gap-1.5 text-[0.75rem] font-mono text-on-surface-variant">
+          <label class="flex items-center gap-2 cursor-pointer" title="Standard MIDI file - DAW import">
+            <input id="pkg-fmt-mid" type="checkbox" class="td3-checkbox"/><span>mid</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer" title="Human-readable step text">
+            <input id="pkg-fmt-steps_txt" type="checkbox" class="td3-checkbox"/><span>steps_txt</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer" title="Behringer SynthTribe .seq">
+            <input id="pkg-fmt-seq" type="checkbox" class="td3-checkbox"/><span>seq</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer" title="ABL3 .pat">
+            <input id="pkg-fmt-pat" type="checkbox" class="td3-checkbox"/><span>pat</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer" title="ReBirth .rbs">
+            <input id="pkg-fmt-rbs" type="checkbox" class="td3-checkbox"/><span>rbs</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer" title="Internal re-import JSON">
+            <input id="pkg-fmt-json" type="checkbox" class="td3-checkbox"/><span>json</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer" title="Internal re-import TOML">
+            <input id="pkg-fmt-toml" type="checkbox" class="td3-checkbox"/><span>toml</span>
+          </label>
+          <div class="h-px bg-outline-variant opacity-40 my-1"></div>
+          <label class="flex items-center gap-2 cursor-pointer" title="Full-progression .rbs (acid→dev1, bass→dev2)">
+            <input id="pkg-fmt-combined_rbs" type="checkbox" class="td3-checkbox"/><span>combined.rbs</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer" title="Full-progression .sqs (acid A-side, bass B-side)">
+            <input id="pkg-fmt-combined_sqs" type="checkbox" class="td3-checkbox"/><span>combined.sqs</span>
+          </label>
+        </div>
+        <div class="h-px bg-outline-variant opacity-40 my-2"></div>
+        <button id="btn-pkg-bank" disabled
+                class="td3-toolbar-btn td3-toolbar-btn--secondary td3-toolbar-btn--sm td3-toolbar-btn--full tactile-button"
+                title="Generate a progression first">
+          BANK (push 4 acid + 20 basslines as snapshot)
+        </button>
+      </div>
+    </div>
+    <!-- PUSH TO TD-3 - writes the 4 progression patterns to the device in
+         sequential slots starting at the currently selected slot, skipping
+         the scratch slot if it falls in that range. Opens a confirmation
+         modal that previews the exact target addresses. -->
+    <button id="btn-push-td3" class="td3-toolbar-btn td3-toolbar-btn--secondary td3-toolbar-btn--sm tactile-button" title="Write 4 patterns to the device starting at the selected slot">
+      <span class="material-symbols-outlined text-sm">upload</span> PUSH TO TD-3
+    </button>
+  </div>
+
+  <!-- Quad Sequencer Grid - rows rendered by progression-row.js at init -->
+  <div id="prog-rows" class="flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-4"></div>
+</section>
+
+</main>
+
+<div data-partial-path="partials/transport-bar.html"></div>
+
+</div>
+
+<!-- Timeline Modal -->
+<div id="timeline-modal" class="fixed inset-0 z-[100] hidden">
+  <div class="absolute inset-0 bg-black/70" id="timeline-backdrop"></div>
+  <div class="absolute inset-8 bg-surface-container-low rounded-2xl border-2 border-surface-container-highest shadow-2xl flex flex-col overflow-hidden">
+    <!-- Modal Header -->
+    <div class="flex items-center justify-between px-6 py-4 border-b border-surface-container">
+      <div class="flex items-center gap-6">
+        <span class="text-lg font-black text-primary-fixed tracking-widest">PATTERN TIMELINE</span>
+        <div class="flex items-center gap-2">
+          <label class="text-[0.9rem] font-black text-on-surface-variant">LOOPS</label>
+          <input id="timeline-loops" type="number" min="1" max="128" value="16"
+                 class="w-16 h-8 bg-surface-container-lowest text-primary-fixed text-xs font-mono text-center border-none ring-1 ring-surface-container-highest focus:ring-primary-fixed rounded-lg"/>
+        </div>
+        <span id="timeline-duration" class="text-[0.9rem] font-mono text-on-surface-variant opacity-60"></span>
+      </div>
+      <button id="btn-timeline-close" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--icon tactile-button">
+        <span class="material-symbols-outlined text-lg">close</span>
+      </button>
+    </div>
+    <!-- Timeline Grid - vertically centered so the 4 pattern rows sit in
+         the middle of the scroll viewport (not glued to the top). -->
+    <div class="flex-1 overflow-x-auto overflow-y-hidden px-6 py-4 flex items-center" id="timeline-scroll">
+      <div id="timeline-grid" class="inline-flex flex-col gap-0">
+        <!-- Rendered by JS -->
+      </div>
+    </div>
+    <!-- Quick Fill Dropdown - single FILL button opens a menu upward (bottom-full)
+         that bundles the fill presets. Wrapper uses `group` so the panel stays
+         open while the cursor is within either the button or the panel. -->
+    <div class="flex items-center gap-2 px-6 py-3 border-t border-surface-container">
+      <div class="relative group">
+        <button id="tl-fill" class="td3-toolbar-btn td3-toolbar-btn--neutral tactile-button">
+          FILL <span class="material-symbols-outlined text-sm">arrow_drop_up</span>
+        </button>
+        <div class="absolute left-0 bottom-full mb-1 hidden group-hover:block z-50 min-w-[14rem] p-2 rounded-lg bg-surface-container-highest shadow-xl border border-outline-variant">
+          <button type="button" data-fill="random"   class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--menu tactile-button" title="Random P1..P4 at each column">RANDOMIZE</button>
+          <div class="h-px bg-outline-variant opacity-40 my-1"></div>
+          <button type="button" data-fill="p1"       class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--menu tactile-button">FILL ALL P1</button>
+          <button type="button" data-fill="p2"       class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--menu tactile-button">FILL ALL P2</button>
+          <button type="button" data-fill="p3"       class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--menu tactile-button">FILL ALL P3</button>
+          <button type="button" data-fill="p4"       class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--menu tactile-button">FILL ALL P4</button>
+          <div class="h-px bg-outline-variant opacity-40 my-1"></div>
+          <button type="button" data-fill="prog"     class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--menu tactile-button" title="1111 2222 3333 4444 repeating">FILL PROGRESSION</button>
+        </div>
+      </div>
+      <button id="tl-clear" class="td3-toolbar-btn td3-toolbar-btn--neutral tactile-button">CLEAR</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { bootstrapLayout } from "./js/layout-loader.js";
+
+await bootstrapLayout({ entryScript: "js/progression/progression-main.js" });
+</script>
+</body>
+</html>

@@ -1,0 +1,147 @@
+# =============================================================================
+# TD-3 CONTROL UTILITY - CENTRAL CONFIGURATION
+# =============================================================================
+#
+# Human-editable runtime config for the TD-3 Control Utility and its Web UI.
+# This file is written on first run if it doesn't exist. Edit values here
+# before starting the utility to customize startup behavior.
+#
+# Precedence: CLI flag > this file > bundled default
+# Format:     KEY=VALUE (one per line, # for comments, quotes optional)
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# 1. MIDI & DEVICE CONNECTION
+# -----------------------------------------------------------------------------
+
+# Substring used to identify the TD-3 MIDI input/output ports.
+# Substring match is used unless MIDI_STRICT_NAME_MATCH is set to 1.
+MIDI_PORT_SUBSTRING="TD-3"
+
+# If 1, requires an exact case-sensitive match for MIDI port names.
+# If 0, performs a substring match (recommended for cross-platform stability).
+MIDI_STRICT_NAME_MATCH=0
+
+# Timeout in milliseconds for MIDI SysEx request/response cycles.
+MIDI_TIMEOUT_MS=5000
+
+# Number of times to retry a failed MIDI probe or pattern download on timeout.
+# Uploads are never retried to prevent partial writes.
+MIDI_RETRIES=0
+
+
+# -----------------------------------------------------------------------------
+# 2. WEB UI & SERVER SETTINGS
+# -----------------------------------------------------------------------------
+
+# The TCP port the web server will listen on.
+WEB_PORT=3030
+
+# The network address the web server will bind to.
+# "127.0.0.1" for local access, "0.0.0.0" for network access.
+WEB_BIND="127.0.0.1"
+
+# The pattern slot used as a temporary scratch buffer for "Live Update" and
+# "Audition" features. This pattern WILL BE OVERWRITTEN during operation.
+# Format: G<1-4>P<1-8><A/B>, with or without dash (G1-P2A and G1P2A both work).
+UI_SCRATCH_PATTERN="G1-P1A"
+
+# If 1, the web UI will attempt to auto-connect to the TD-3 on page load.
+UI_AUTO_CONNECT_TO_MIDI=1
+
+# If 1, any change to the sequencer grid is sent immediately to the TD-3
+# scratch pattern. Use with caution.
+UI_AUTO_SET_LIVE_UPDATE=1
+
+
+# -----------------------------------------------------------------------------
+# 3. SEQUENCER & PATTERN DEFAULTS
+# -----------------------------------------------------------------------------
+
+# Initial BPM (tempo) for the web UI transport and preview features (20-300).
+UI_DEFAULT_BPM=120
+
+# Default state of the Triplet timing mode (1 = ON, 0 = OFF).
+UI_DEFAULT_TRIPLET=0
+
+# Maximum number of patterns the "Bank History" sidebar can hold before
+# discarding the oldest entries.
+UI_MAX_BANK_HISTORY_SIZE=1000
+
+
+# -----------------------------------------------------------------------------
+# 4. RANDOMIZER DEFAULTS
+# -----------------------------------------------------------------------------
+
+# Default root note index (0=C, 1=C#, ..., 11=B).
+UI_RAND_DEFAULT_ROOT=2
+
+# Default scale name. Normalized at load: lowercased + spaces become underscores.
+# Must match an ID in config/scales-config.json (or scales-defaults.json) after normalization.
+UI_RAND_DEFAULT_SCALE="Phrygian Dominant"
+
+# Default percentage of steps that will be active (Note Density, 0-100).
+UI_RAND_NOTE_PERCENT=85
+
+# Default percentage of active steps that will have a Slide flag (0-100).
+UI_RAND_SLIDE_PERCENT=15
+
+# Default percentage of active steps that will have an Accent flag (0-100).
+UI_RAND_ACC_PERCENT=20
+
+# Default percentage of steps that will carry a UP/DOWN transpose flag (0-100).
+# UP and DOWN are mutually exclusive on a step; the randomizer picks one
+# 50/50 per chosen step. Applies to all 16 steps regardless of REST state.
+UI_RAND_UD_PERCENT=30
+
+
+# -----------------------------------------------------------------------------
+# 5. PROGRESSION GENERATOR SETTINGS
+# -----------------------------------------------------------------------------
+
+# Determines which step in the progression logic triggers a pattern save
+# to the local library.
+PROGRESSION_NEXT_PATTERN_SAVE_STEP=2
+
+
+# -----------------------------------------------------------------------------
+# 6. BANK & LIBRARY MANAGEMENT
+# -----------------------------------------------------------------------------
+
+# Path to the SQLite database file where the pattern library is stored.
+LIBRARY_DATABASE_PATH="ui/config/bank-library.sqlite3"
+
+# Directory used for temporary device backups created before UI sessions
+# or bulk bank imports.
+BACKUP_DIR_PATH="./backups"
+
+# Directory where individual pattern binary sidecars (.syx) are stored
+# for fast comparison and duplicate detection.
+PATTERN_SIDECAR_DIR="bank-library-patterns"
+
+
+# -----------------------------------------------------------------------------
+# 7. MIDI EXPORT DEFAULTS (DAW Integration)
+# -----------------------------------------------------------------------------
+
+# Default MIDI channel (1-16) for exported .mid files.
+MIDI_EXPORT_CHANNEL=1
+
+# Ticks Per Quarter Note (PPQN) resolution for exported MIDI files.
+MIDI_EXPORT_PPQN=480
+
+# Semitone offset applied to notes during MIDI export.
+MIDI_EXPORT_OCTAVE_OFFSET=0
+
+# MIDI velocity used for standard (non-accented) notes (0-127).
+MIDI_EXPORT_NORMAL_VELOCITY=78
+
+# MIDI velocity used for accented notes (0-127).
+MIDI_EXPORT_ACCENT_VELOCITY=110
+
+# How slides are rendered in MIDI: "td3" (overlapping notes), "generic", or "none".
+MIDI_EXPORT_SLIDE_MODE="td3"
+
+# Default number of times the pattern loops in a single exported MIDI file.
+MIDI_EXPORT_LOOP_COUNT=1

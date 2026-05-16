@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:tailwind": "tailwindcss -c tailwind.config.cjs -i ./ui/css/tailwind.input.css -o ./ui/css/tailwind.css --minify"
+  },
+  "devDependencies": {
+    "@tailwindcss/forms": "^0.5.10",
+    "tailwindcss": "^3.4.17"
+  }
+}

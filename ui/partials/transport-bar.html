@@ -1,0 +1,59 @@
+<footer class="flex-shrink-0 flex justify-between items-center h-20 bg-[#0d0f0f] border-t-4 border-[#1e2020] px-4 shadow-[0px_-10px_30px_rgba(0,0,0,0.8)]">
+  <div class="flex items-center gap-5">
+    <div class="flex flex-col items-center">
+      <button id="btn-midi" class="w-10 h-10 rounded-full border-2 border-secondary-container flex items-center justify-center led-glow-red transition-all active:scale-95 tactile-button">
+        <span class="material-symbols-outlined text-secondary-container text-lg">sync_problem</span>
+      </button>
+      <span id="midi-label" class="text-[0.9rem] font-black text-secondary-container mt-1 tracking-widest">DISCONNECTED</span>
+    </div>
+    <div class="flex flex-col items-center">
+      <div id="sync-pills" class="flex flex-col gap-0.5">
+        <button class="sync-pill" data-sync="int" disabled>INT</button>
+        <button class="sync-pill sync-pill--active" data-sync="usb" disabled>USB</button>
+        <button class="sync-pill" data-sync="din" disabled>DIN</button>
+        <button class="sync-pill" data-sync="trig" disabled>TRIG</button>
+      </div>
+      <span class="text-[0.9rem] font-black text-on-surface-variant mt-1 tracking-widest"></span>
+    </div>
+    <div class="flex flex-col items-center">
+      <button id="btn-play" class="w-14 rounded-full bg-surface-container flex items-center justify-center border-4 border-surface-container-highest hover:bg-surface-bright transition-all group tactile-button">
+        <span class="material-symbols-outlined text-primary-fixed text-3xl group-hover:scale-110">play_arrow</span>
+      </button>
+      <span class="text-[0.9rem] font-black text-on-surface-variant mt-1 tracking-widest">PLAY / STOP</span>
+    </div>
+    <div class="flex flex-col items-center">
+      <button id="btn-live" class="w-14 h-10 rounded-lg bg-surface-container-highest flex items-center justify-center border-2 border-surface-container-highest text-on-surface-variant text-[1rem] font-black tracking-widest tactile-button">
+        LIVE
+      </button>
+      <span class="text-[0.9rem] font-black text-on-surface-variant mt-1 tracking-widest">UPDATE</span>
+    </div>
+    <div class="flex items-center gap-3 bg-surface-container-lowest p-1 rounded-xl border border-surface-container-highest shadow-inner">
+      <div class="bg-black px-4 py-2 rounded-lg border-2 border-surface-container-highest bpm-display flex items-center justify-center">
+        <span id="bpm-display" class="text-4xl font-digital text-on-secondary-fixed-variant tracking-widest leading-none" style="text-shadow: 0 0 10px #8b0000;"></span>
+      </div>
+      <button id="bpm-fine-toggle" type="button" class="sync-pill" aria-pressed="false" title="Toggle 0.01 BPM precision">.00</button>
+      <div class="flex flex-col items-center gap-1">
+        <div id="bpm-knob" class="w-10 h-10 rounded-full bg-surface-container-highest border-2 border-surface-bright knob-shadow flex items-center justify-center relative group cursor-pointer tactile-button">
+          <div id="knob-indicator" class="w-0.5 h-4 bg-primary-fixed absolute top-1 left-1/2 -translate-x-1/2 origin-bottom knob-indicator"></div>
+          <div class="w-full h-full rounded-full milled-texture opacity-30"></div>
+        </div>
+        <span class="text-[1rem] font-bold text-on-surface-variant">BPM</span>
+      </div>
+    </div>
+    <div class="w-px h-14 bg-surface-container-highest"></div>
+    <!-- <div class="flex items-center gap-2">
+      <div class="flex flex-col items-center gap-0.5">
+        <div class="flex items-baseline gap-0.5 font-mono text-gray-400">
+          <span id="bank-count" class="text-sm">0</span>
+          <span class="text-[1rem]">/</span>
+          <input id="bank-size" type="number" min="1"
+                 class="w-10 bg-transparent text-sm font-mono text-gray-400 text-center outline-none"/>
+        </div>
+        <span class="text-[0.45rem] font-bold text-on-surface-variant tracking-widest">BANK</span>
+      </div>
+    </div>
+  </div> -->
+  <div class="flex items-center gap-4">
+    <span id="status-log" class="text-[1rem] font-mono text-on-surface-variant opacity-60"></span>
+  </div>
+</footer>

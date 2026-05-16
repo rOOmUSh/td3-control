@@ -1,0 +1,99 @@
+<!-- Secondary toolbar for the main Control page.
+     Sits directly under the primary toolbar.
+
+     ADD / DUPLICATE / DEL handle structural pattern list ops.
+     SHIFT STEPS / TRNSPS apply to the current selection.
+     (if ≥1 checked → all checked; else → focused). RESET PATTERN (N)
+     mirrors the selection size and renders as `RESET FOCUSED` when N=0
+     (I21).
+
+     ADD / DUPLICATE / DEL / RESET PATTERN (N) are wired by
+     `ui/js/multipattern/multipattern-toolbar.js`, which also keeps their
+     `disabled` state in sync with the current pattern count + selection. -->
+<div class="flex items-center gap-2 px-6 py-2 border-b border-surface-container bg-surface-container-lowest flex-wrap text-[0.8rem]">
+
+  <!-- ADD / DUPLICATE / DEL - structural ops. -->
+  <button id="btn-mp-add" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--sm tactile-button" title="Append a new blank pattern">
+    <span class="material-symbols-outlined text-sm">add</span>ADD
+  </button>
+  <button id="btn-mp-duplicate" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--sm tactile-button" title="Duplicate the focused pattern">
+    <span class="material-symbols-outlined text-sm">content_copy</span>DUPLICATE
+  </button>
+  <button id="btn-mp-del" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--sm tactile-button" title="Delete the focused pattern">
+    <span class="material-symbols-outlined text-sm">delete</span>DEL
+  </button>
+
+  <div class="w-px h-5 bg-surface-container-highest"></div>
+
+  <!-- SHIFT STEPS - apply to selection. IDs preserved so main.js handlers
+       keep working. These buttons used to live as a column beside the grid
+       (see pre-rewire ui/index.html); the multi-pattern layout moves them
+       into the secondary toolbar. -->
+  <div class="flex items-center gap-1">
+    <span class="font-black text-on-surface-variant tracking-wider">SHIFT</span>
+    <button id="btn-shift-back4" class="td3-row-btn tactile-button td3-row-btn-shift" title="Shift back 4 steps">&lsaquo;&lsaquo;&lsaquo;</button>
+    <button id="btn-shift-back2" class="td3-row-btn tactile-button td3-row-btn-shift" title="Shift back 2 steps">&lsaquo;&lsaquo;</button>
+    <button id="btn-shift-back1" class="td3-row-btn tactile-button td3-row-btn-shift" title="Shift back 1 step">&lsaquo;</button>
+    <button id="btn-shift-fwd1"  class="td3-row-btn tactile-button td3-row-btn-shift" title="Shift forward 1 step">&rsaquo;</button>
+    <button id="btn-shift-fwd2"  class="td3-row-btn tactile-button td3-row-btn-shift" title="Shift forward 2 steps">&rsaquo;&rsaquo;</button>
+    <button id="btn-shift-fwd4"  class="td3-row-btn tactile-button td3-row-btn-shift" title="Shift forward 4 steps">&rsaquo;&rsaquo;&rsaquo;</button>
+    <button id="btn-shuffle-all" class="td3-row-btn tactile-button td3-row-btn-neutral" title="Shuffle step positions across the selection (checked patterns, or all)">SHUFFLE</button>
+  </div>
+
+  <div class="w-px h-5 bg-surface-container-highest"></div>
+
+  <!-- TRNSPS - ±1 semitone (and ±12 octave jumps). IDs preserved. -->
+  <div class="flex items-center gap-1">
+    <span class="font-black text-on-surface-variant tracking-wider">TRNSPS</span>
+    <button id="btn-trnsps-dn"   class="td3-row-btn tactile-button td3-row-btn-neutral" title="Transpose pattern &minus;1 semitone">&minus;1</button>
+    <button id="btn-trnsps-up"   class="td3-row-btn tactile-button td3-row-btn-neutral" title="Transpose pattern +1 semitone">+1</button>
+    <button id="btn-trnsps-dn12" class="td3-row-btn tactile-button td3-row-btn-neutral" title="Transpose pattern &minus;12 semitones (one octave down)">&minus;12</button>
+    <button id="btn-trnsps-up12" class="td3-row-btn tactile-button td3-row-btn-neutral" title="Transpose pattern +12 semitones (one octave up)">+12</button>
+  </div>
+
+  <div class="w-px h-5 bg-surface-container-highest"></div>
+  
+  <!-- Viewport chips (K24) - filter the card list by the slot label's
+       group + side prefix. ALL shows every card; G{N}{A|B} chips hide any
+       card whose computed badge doesn't match. The overflow (SNAPSHOT)
+       badge always shows under ALL; under a specific chip it's hidden. -->
+  <div id="viewport-chips" class="flex items-center gap-1" title="Filter visible cards by device slot group + side">
+    <span class="font-black text-on-surface-variant tracking-wider">SLOT VIEW</span>
+    <button type="button" data-vp-group="ALL" data-vp-side="ALL"
+      class="mp-vp-chip td3-row-btn tactile-button td3-row-btn-neutral">ALL</button>
+    <button type="button" data-vp-group="1" data-vp-side="A"
+      class="mp-vp-chip td3-row-btn tactile-button td3-row-btn-neutral">G1A</button>
+    <button type="button" data-vp-group="1" data-vp-side="B"
+      class="mp-vp-chip td3-row-btn tactile-button td3-row-btn-neutral">G1B</button>
+    <button type="button" data-vp-group="2" data-vp-side="A"
+      class="mp-vp-chip td3-row-btn tactile-button td3-row-btn-neutral">G2A</button>
+    <button type="button" data-vp-group="2" data-vp-side="B"
+      class="mp-vp-chip td3-row-btn tactile-button td3-row-btn-neutral">G2B</button>
+    <button type="button" data-vp-group="3" data-vp-side="A"
+      class="mp-vp-chip td3-row-btn tactile-button td3-row-btn-neutral">G3A</button>
+    <button type="button" data-vp-group="3" data-vp-side="B"
+      class="mp-vp-chip td3-row-btn tactile-button td3-row-btn-neutral">G3B</button>
+    <button type="button" data-vp-group="4" data-vp-side="A"
+      class="mp-vp-chip td3-row-btn tactile-button td3-row-btn-neutral">G4A</button>
+    <button type="button" data-vp-group="4" data-vp-side="B"
+      class="mp-vp-chip td3-row-btn tactile-button td3-row-btn-neutral">G4B</button>
+  </div>
+
+  <!-- A/B toggle (E10/E12) - flips between ALTERNATE (A/B interleaved per
+       pattern pair) and SERIAL (all As, then all Bs). Every card's slot
+       badge recomputes live on toggle. -->
+  <button id="btn-ab-mode" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--sm tactile-button" title="Toggle A/B slot assignment mode (ALTERNATE ↔ SERIAL)">
+    <span class="material-symbols-outlined text-sm">swap_horiz</span><span id="ab-mode-label">A/B ALT</span>
+  </button>
+  <div class="w-px h-5 bg-surface-container-highest"></div>
+  <button id="btn-all-to-bank" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--sm tactile-button" title="Save all patterns, or checked patterns, into the Bank">
+    <span class="material-symbols-outlined text-sm">account_balance</span>ALL TO BANK
+  </button>
+  <div class="w-px h-5 bg-surface-container-highest"></div>
+  <!-- RESET PATTERN (N) - label reflects |selection|. The toolbar JS flips
+       the text between "RESET FOCUSED" (N=0 checks) and "RESET PATTERN (K)"
+       (K = |checked|) and manages the disabled state. -->
+  <button id="btn-mp-reset-selection" class="ml-auto td3-row-btn tactile-button td3-row-btn-neutral" title="Reset the current selection to a blank pattern">
+    RESET FOCUSED
+  </button>
+</div>
