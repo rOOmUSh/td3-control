@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>TD-3 Settings</title>
+<!-- TD3_CONFIG_INJECT -->
+<link href="css/tailwind.css" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700;900&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="css/custom.css" rel="stylesheet"/>
+</head>
+<body class="bg-surface-dim text-on-surface font-body overflow-hidden">
+<div class="flex flex-col h-screen">
+
+<!-- Top Bar -->
+<header class="bg-[#121414] border-b-4 border-[#1e2020] shadow-2xl flex justify-between items-center w-full px-6 py-3 z-50">
+  <div class="flex items-center gap-8">
+    <span class="text-xl font-black tracking-tighter text-primary-fixed">TD-3 SETTINGS</span>
+  </div>
+  <div class="flex items-center gap-2">
+    <a href="/bank.html" class="td3-topbar-link tactile-button" title="Bank Management">
+      <span class="material-symbols-outlined text-sm">library_music</span> BANK
+    </a>
+    <a href="/" class="td3-topbar-link tactile-button">
+      <span class="material-symbols-outlined text-sm">arrow_back</span> MAIN
+    </a>
+  </div>
+</header>
+
+<main class="flex-1 flex overflow-hidden">
+
+<!-- Sidebar -->
+<aside class="flex flex-col h-full w-56 bg-[#0d0f0f] border-r-4 border-[#1e2020] shadow-inner flex-shrink-0">
+  <div class="p-4">
+    <span class="block text-[1rem] font-bold text-on-surface-variant mb-3 tracking-widest">SETTINGS</span>
+    <button id="nav-keyboard" class="settings-nav-btn is-active tactile-button mb-2">
+      <span class="material-symbols-outlined text-sm">keyboard</span> KEYBOARD MAPPING
+    </button>
+    <button id="nav-scales" class="settings-nav-btn tactile-button">
+      <span class="material-symbols-outlined text-sm">music_note</span> SCALES
+    </button>
+
+    <span class="block text-[1rem] font-bold text-on-surface-variant mt-6 mb-3 tracking-widest">CONFIG</span>
+    <div id="nav-config-list" class="flex flex-col gap-1.5">
+      <!-- populated by settings-config.js from /api/config/env/full -->
+    </div>
+  </div>
+</aside>
+
+<!-- Content -->
+<section class="flex-1 p-8 bg-surface-container-lowest overflow-y-auto">
+  <div id="page-keyboard" class="max-w-3xl">
+    <h2 class="text-sm font-black text-primary-fixed tracking-widest mb-6">KEYBOARD MAPPING</h2>
+
+    <!-- Note Keys -->
+    <div class="mb-8">
+      <h3 class="text-[1rem] font-bold text-on-surface-variant tracking-widest mb-3">NOTE KEYS</h3>
+      <div id="note-keys-grid" class="grid grid-cols-2 gap-1.5">
+        <!-- populated by settings.js -->
+      </div>
+    </div>
+
+    <!-- Action Keys -->
+    <div class="mb-8">
+      <h3 class="text-[1rem] font-bold text-on-surface-variant tracking-widest mb-3">ACTION KEYS</h3>
+      <div id="action-keys-grid" class="grid grid-cols-2 gap-1.5">
+        <!-- populated by settings.js -->
+      </div>
+    </div>
+
+    <!-- Buttons -->
+    <div class="flex gap-3">
+      <button id="btn-save" class="settings-action-btn settings-action-btn--primary tactile-button">
+        <span class="material-symbols-outlined text-sm">save</span> SAVE
+      </button>
+      <button id="btn-reset" class="settings-action-btn settings-action-btn--neutral tactile-button">
+        <span class="material-symbols-outlined text-sm">restart_alt</span> RESET TO DEFAULT
+      </button>
+    </div>
+    <span id="status-msg" class="block mt-3 text-[1rem] font-mono text-on-surface-variant opacity-60"></span>
+  </div>
+
+  <!-- Scales Editor Page -->
+  <div id="page-scales" class="max-w-4xl hidden">
+    <h2 class="text-sm font-black text-primary-fixed tracking-widest mb-6">SCALES CONFIGURATION</h2>
+
+    <!-- Scale list -->
+    <div class="mb-6">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-[1rem] font-bold text-on-surface-variant tracking-widest">SCALES</h3>
+        <button id="btn-add-scale" class="settings-action-btn settings-action-btn--primary settings-action-btn--compact tactile-button">
+          <span class="material-symbols-outlined text-sm">add</span> ADD SCALE
+        </button>
+      </div>
+      <div id="scales-list" class="flex flex-col gap-2">
+        <!-- populated by settings.js -->
+      </div>
+    </div>
+
+    <!-- Buttons -->
+    <div class="flex gap-3">
+      <button id="btn-save-scales" class="settings-action-btn settings-action-btn--primary tactile-button">
+        <span class="material-symbols-outlined text-sm">save</span> SAVE
+      </button>
+      <button id="btn-reset-scales" class="settings-action-btn settings-action-btn--neutral tactile-button">
+        <span class="material-symbols-outlined text-sm">restart_alt</span> RESET TO DEFAULTS
+      </button>
+    </div>
+    <span id="status-msg-scales" class="block mt-3 text-[1rem] font-mono text-on-surface-variant opacity-60"></span>
+  </div>
+
+  <!-- CONFIG Editor Page (TD3_CONFIG.env) -->
+  <div id="page-config" class="max-w-3xl hidden">
+    <div class="flex items-baseline justify-between mb-6">
+      <h2 id="config-section-title" class="text-sm font-black text-primary-fixed tracking-widest">CONFIG</h2>
+      <span id="config-dirty" class="text-[1rem] font-mono text-on-surface-variant opacity-60"></span>
+    </div>
+
+    <p class="text-[0.9rem] text-on-surface-variant opacity-80 mb-4">
+      Changes are written to
+      <code id="config-file-path" class="text-primary-fixed">TD3_CONFIG.env</code>
+      and take effect on the next restart.
+    </p>
+
+    <div id="config-fields" class="flex flex-col gap-4 mb-6">
+      <!-- populated by settings-config.js -->
+    </div>
+
+    <div class="flex gap-3">
+      <button id="btn-save-config" class="settings-action-btn settings-action-btn--primary tactile-button">
+        <span class="material-symbols-outlined text-sm">save</span> SAVE
+      </button>
+      <button id="btn-reset-config" class="settings-action-btn settings-action-btn--neutral tactile-button">
+        <span class="material-symbols-outlined text-sm">restart_alt</span> RESET SECTION
+      </button>
+    </div>
+    <span id="status-msg-config" class="block mt-3 text-[1rem] font-mono text-on-surface-variant opacity-60"></span>
+  </div>
+</section>
+
+</main>
+</div>
+
+<script type="module" src="js/settings.js"></script>
+<script type="module" src="js/settings-config.js"></script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+<div class="p-4 flex-1 flex flex-col gap-3 overflow-y-auto">
+  <div class="flex items-center justify-between gap-2">
+    <span class="block text-[1rem] font-bold text-on-surface-variant tracking-widest">RANDOMIZER</span>
+    <!-- MAGIC toggle: when checked, all randomize flows (control RANDOMIZE,
+         slice, progression RANDOMIZE 1-4 / 2-4) route through the
+         whole-phrase magic pipeline (magic-randomizer/*). Unchecked = legacy
+         randomize.js / progression-generator.js paths, byte-for-byte
+         preserved. Persists in localStorage as `td3_magic_randomizer`. -->
+    <label for="magic-toggle"
+           class="flex items-center gap-1.5 cursor-pointer select-none"
+           title="MAGIC: route randomize through the whole-phrase musical pipeline (validate → score → repair → encode). Unchecked = legacy randomizer.">
+      <input id="magic-toggle" type="checkbox" class="peer sr-only" />
+      <span class="w-4 h-4 rounded-sm border-2 border-on-surface-variant bg-transparent flex items-center justify-center text-[0.7rem] font-black leading-none text-black transition-colors peer-checked:bg-amber-400 peer-checked:border-amber-400 after:content-[''] peer-checked:after:content-['V']"></span>
+      <span class="text-[0.7rem] font-bold tracking-widest text-on-surface-variant peer-checked:text-amber-400">MAGIC</span>
+    </label>
+  </div>
+  <div id="detection-chip" class="hidden items-center gap-2 px-2 py-1 rounded-lg text-[0.7rem] font-mono border">
+    <span id="detection-chip-label" class="flex-1 truncate"></span>
+    <button id="detection-chip-dismiss" type="button" class="opacity-60 hover:opacity-100 text-base leading-none" aria-label="Dismiss detection">&times;</button>
+  </div>
+  <div class="flex items-center gap-2">
+    <select id="root-select" class="scale-select text-xs font-mono uppercase p-2 rounded-lg w-14 flex-none">
+      <option value="0">C</option><option value="1">C#</option><option value="2">D</option>
+      <option value="3">D#</option><option value="4">E</option><option value="5">F</option>
+      <option value="6">F#</option><option value="7">G</option><option value="8">G#</option>
+      <option value="9">A</option><option value="10">A#</option><option value="11">B</option>
+    </select>
+    <select id="scale-select" class="scale-select text-xs font-mono p-2 rounded-lg min-w-0 flex-1">
+      <optgroup label="-- Safe / Melodic --"></optgroup>
+      <optgroup label="-- Dark / Acid --"></optgroup>
+      <optgroup label="-- Tension / Cinematic --"></optgroup>
+    </select>
+  </div>
+  <div class="flex flex-col gap-2 mt-1">
+    <div class="flex items-center gap-2">
+      <button id="btn-rand-rst" class="td3-sidebar-rand-btn td3-sidebar-rand-btn--rest tactile-button" title="Randomize rest positions at NOTE %">R|N</button>
+      <input id="slider-note" type="range" min="0" max="100" class="flex-1 h-1.5 accent-primary-fixed cursor-pointer"/>
+      <span id="slider-note-val" class="text-[1rem] font-mono text-primary-fixed w-10 text-center"></span>
+    </div>
+    <div class="flex items-center gap-2">
+      <button id="btn-rand-sl" class="td3-sidebar-rand-btn td3-sidebar-rand-btn--slide tactile-button" title="Randomize slides at SL %">SL</button>
+      <input id="slider-slide" type="range" min="0" max="100" class="flex-1 h-1.5 bg-sky-900 accent-sky-900 cursor-pointer"/>
+      <span id="slider-slide-val" class="text-[1rem] font-mono bg-sky-900 rounded-lg w-10 text-center"></span>
+    </div>
+    <div class="flex items-center gap-2">
+      <button id="btn-rand-acc" class="td3-sidebar-rand-btn td3-sidebar-rand-btn--accent tactile-button" title="Randomize accents at AC %">AC</button>
+      <input id="slider-acc" type="range" min="0" max="100" class="flex-1 h-1.5 bg-orange-900 accent-orange-900 cursor-pointer"/>
+      <span id="slider-acc-val" class="text-[1rem] font-mono bg-orange-900 rounded-lg w-10 text-center"></span>
+    </div>
+    <div class="flex items-center gap-2">
+      <button id="btn-rand-ud" class="td3-sidebar-rand-btn td3-sidebar-rand-btn--updown tactile-button" title="Randomize UP/DOWN flags at U|D %">U|D</button>
+      <input id="slider-ud" type="range" min="0" max="100" value="0" class="flex-1 h-1.5 bg-neutral-700 accent-neutral-400 cursor-pointer"/>
+      <span id="slider-ud-val" class="text-[1rem] font-mono bg-neutral-700 rounded-lg w-10 text-center">0%</span>
+    </div>
+  </div>
+  <!-- RST / SL / AC - direct-action randomizers. Clicking one shuffles only
+       that attribute family (rest positions, slide positions, accent
+       positions) on the current pattern, using the configured slider
+       percentage. Slicer, when enabled, limits the affected step range.
+       SL/AC use the sky/orange color scheme from step-card-styles.js so
+       the buttons read as an extension of the per-step pills. 
+  <div data-page-only="control" class="flex gap-2">
+    <button id="btn-rand-rst" class="td3-sidebar-rand-btn td3-sidebar-rand-btn--rest tactile-button" title="Randomize rest positions at NOTE %">RST</button>
+    <button id="btn-rand-sl" class="td3-sidebar-rand-btn td3-sidebar-rand-btn--slide tactile-button" title="Randomize slides at SL %">SL</button>
+    <button id="btn-rand-acc" class="td3-sidebar-rand-btn td3-sidebar-rand-btn--accent tactile-button" title="Randomize accents at AC %">AC</button>
+  </div> -->
+  <!-- Slicer - control-page only. Limits randomization to a step range
+       (e.g. "13-16"). Lives inside the randomizer so it reads as a
+       modifier for the RANDOMIZE action below. -->
+  <div data-page-only="control" class="flex items-center gap-2 mt-1">
+    <div class="flex-1 bg-black px-3 py-1.5 rounded-lg border-2 border-surface-container-highest">
+      <input id="slicer-input" type="text" value="" placeholder="13-16"
+             class="w-full bg-transparent text-sm font-mono text-gray-300 text-center outline-none placeholder-gray-600"
+             style="text-shadow: 0 0 6px rgba(200,200,200,0.3);"/>
+    </div>
+    <button id="btn-slicer" class="td3-toolbar-btn td3-toolbar-btn--neutral tactile-button" title="Toggle slicer - restrict randomization to the step range above">OFF</button>
+  </div>
+  <button id="btn-randomize" class="td3-randomize-btn tactile-button">
+    RANDOMIZE
+  </button>
+  <!-- RANDOMIZE 2-4 - progression-only secondary randomize. Keeps P1
+       verbatim and re-rolls P2..P4 via the same sibling-derivation chain
+       used by SEND TO PROGRESSION and the main RANDOMIZE 1-4 flow. Lets
+       the user lock a hand-authored (or imported) P1 and iterate on the
+       progression around it - great for auditioning different scales or
+       degree-path rolls against a fixed bassline. -->
+  <button id="btn-randomize-2-4" data-page-only="progression"
+          class="td3-randomize-btn td3-randomize-btn--secondary tactile-button"
+          title="Keep P1, regenerate P2..P4 only">
+    RANDOMIZE 2-4
+  </button>
+</div>

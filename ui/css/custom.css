@@ -1,0 +1,692 @@
+/* TD-3 Control UI - Custom Styles */
+
+.font-digital {
+    font-family: Digital7, ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+.td3-checkbox {
+    width: 1rem;
+    height: 1rem;
+    border-radius: 0.25rem;
+    border-color: #333535;
+    background-color: #0d0f0f;
+    color: #4e8c45;
+    cursor: pointer;
+}
+.td3-checkbox:focus {
+    border-color: #4e8c45;
+    --tw-ring-color: #4e8c45;
+    --tw-ring-offset-width: 0;
+}
+.td3-checkbox:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Milled aluminum texture */
+.milled-texture {
+    background-image: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.05) 0%, transparent 100%);
+}
+
+/* Brushed metal knob shadow */
+.knob-shadow {
+    box-shadow: inset 0 2px 4px rgba(255,255,255,0.1), 0 4px 8px rgba(0,0,0,0.6);
+}
+
+/* LED glow effects */
+.led-glow-green { box-shadow: 0 0 12px #2d5a27; }
+.led-glow-red { box-shadow: 0 0 12px #8b0000; }
+.led-glow-yellow { box-shadow: 0 0 12px #b58900; }
+.led-glow-green-bright { box-shadow: 0 0 20px #4e8c45, 0 0 40px rgba(78,140,69,0.3); }
+
+/* Sync source pill column */
+.sync-pill {
+    width: 3.0rem;
+    height: 0.9rem;
+    border-radius: 9999px;
+    font-size: 0.65rem;
+    font-weight: 900;
+    letter-spacing: 0.1em;
+    line-height: 1;
+    background-color: #2a2c2c;
+    color: #ffffff;
+    border: 1px solid #3a3c3c;
+    transition: background-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+    cursor: pointer;
+}
+.sync-pill:hover:not([disabled]) { background-color: #3a3c3c; }
+.sync-pill--active {
+    background-color: #4e8c45;
+    color: #0d0f0f;
+    border-color: #6fbe63;
+    box-shadow: 0 0 8px rgba(78,140,69,0.55);
+}
+.sync-pill[disabled] {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* Tactile button press effect */
+.tactile-button {
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 2px 4px rgba(0,0,0,0.4);
+    transition: all 0.1s ease;
+}
+.tactile-button:active {
+    transform: translateY(2px);
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+}
+
+/* Shared row buttons for Control and Progression pattern rows */
+.td3-row-btn {
+    height: 1.5rem;
+    padding: 0 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.7rem;
+    font-weight: 900;
+}
+.td3-row-btn-neutral,
+.td3-row-btn-shift,
+.td3-row-btn-bank {
+    background-color: #333535;
+    color: #b8c4b8;
+}
+.td3-row-btn-neutral:hover,
+.td3-row-btn-shift:hover,
+.td3-row-btn-bank:hover {
+    color: #4e8c45;
+}
+.td3-row-btn-slide {
+    background-color: #0c4a6e;
+    color: #ffffff;
+}
+.td3-row-btn-slide:hover {
+    background-color: #38bdf8;
+}
+.td3-row-btn-accent {
+    background-color: #7c2d12;
+    color: #ffffff;
+}
+.td3-row-btn-accent:hover {
+    background-color: #fb923c;
+}
+.td3-row-btn-updown {
+    background: linear-gradient(to right, #365314 50%, #4c1d95 50%);
+    color: #ffffff;
+}
+.td3-row-btn-shift {
+    padding: 0 0.25rem;
+}
+.td3-row-btn-bank {
+    font-size: 0.75rem;
+}
+.td3-row-btn-danger {
+    background-color: #7f1d1d;
+    color: #ffffff;
+}
+.td3-row-btn-danger:hover {
+    background-color: #f87171;
+}
+.td3-row-btn-triplet {
+    background-color: #2d5a27;
+    color: #d1ffd1;
+    box-shadow: 0 0 0 1px #4e8c45;
+}
+.td3-row-btn-disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* Shared app chrome buttons */
+.td3-toolbar-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    height: 2rem;
+    padding: 0 0.75rem;
+    border-radius: 0.5rem;
+    font-size: 0.9rem;
+    font-weight: 900;
+    letter-spacing: 0.05em;
+}
+.td3-toolbar-btn--sm {
+    height: 1.75rem;
+    font-size: 0.8rem;
+}
+.td3-toolbar-btn--xs {
+    height: 1.5rem;
+    padding: 0 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.7rem;
+}
+.td3-toolbar-btn--neutral {
+    background-color: #333535;
+    color: #b8c4b8;
+}
+.td3-toolbar-btn--neutral:hover {
+    color: #4e8c45;
+}
+.td3-toolbar-btn.is-active,
+.td3-toolbar-btn--neutral.is-active {
+    background-color: #2d5a27;
+    color: #d1ffd1;
+}
+.td3-toolbar-btn--primary {
+    background-color: #2d5a27;
+    color: #d1ffd1;
+}
+.td3-toolbar-btn--primary:hover {
+    background-color: #3a6a33;
+}
+.td3-toolbar-btn--secondary {
+    background-color: #8b0000;
+    color: #ffdad6;
+}
+.td3-toolbar-btn--secondary:hover {
+    background-color: #383939;
+}
+.td3-toolbar-btn--icon {
+    width: 2rem;
+    padding: 0;
+}
+.td3-toolbar-btn--menu {
+    width: 100%;
+    height: auto;
+    justify-content: flex-start;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-family: monospace;
+    font-size: 0.8rem;
+    font-weight: 400;
+    letter-spacing: 0;
+}
+.td3-toolbar-btn--menu:hover {
+    background-color: #383939;
+}
+.td3-toolbar-btn--full {
+    width: 100%;
+}
+.td3-toolbar-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+#btn-live.is-active {
+    background-color: #2d5a27;
+    color: #d1ffd1;
+    border-color: #4e8c45;
+}
+.td3-row-btn.is-active {
+    background-color: #4e8c45;
+    color: #121414;
+    box-shadow: 0 0 0 1px #4e8c45;
+}
+.archetype-chip.is-active {
+    background-color: #2d5a27;
+    color: #d1ffd1;
+    box-shadow: 0 0 0 1px #4e8c45;
+}
+.td3-topbar-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    height: 2rem;
+    padding: 0 0.75rem;
+    border-radius: 0.5rem;
+    background-color: #333535;
+    color: #b8c4b8;
+    font-size: 1rem;
+    font-weight: 900;
+    letter-spacing: 0.1em;
+}
+.td3-topbar-link:hover {
+    background-color: #383939;
+    color: #4e8c45;
+}
+.td3-topbar-link--icon {
+    width: 2rem;
+    padding: 0;
+}
+.td3-sidebar-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    height: 2rem;
+    padding: 0 0.5rem;
+    border-radius: 0.5rem;
+    background-color: #333535;
+    color: #e2e2e2;
+    font-size: 0.8rem;
+    font-weight: 900;
+    letter-spacing: 0.05em;
+}
+.td3-sidebar-action:hover {
+    color: #4e8c45;
+}
+.td3-sidebar-action--save {
+    grid-column: span 2 / span 2;
+    color: #4e8c45;
+}
+.td3-sidebar-action--save:hover {
+    background-color: #383939;
+}
+.td3-sidebar-rand-btn {
+    flex: 1 1 0;
+    height: 1.75rem;
+    border-radius: 0.5rem;
+    font-size: 0.9rem;
+    font-weight: 900;
+    letter-spacing: 0.05em;
+}
+.td3-sidebar-rand-btn--rest {
+    background-color: #333535;
+    color: #b8c4b8;
+}
+.td3-sidebar-rand-btn--rest:hover {
+    color: #4e8c45;
+}
+.td3-sidebar-rand-btn--slide {
+    background-color: #0c4a6e;
+    color: #ffffff;
+}
+.td3-sidebar-rand-btn--slide:hover {
+    background-color: #075985;
+}
+.td3-sidebar-rand-btn--accent {
+    background-color: #7c2d12;
+    color: #ffffff;
+}
+.td3-sidebar-rand-btn--accent:hover {
+    background-color: #9a3412;
+}
+.td3-sidebar-rand-btn--updown {
+    background: linear-gradient(to right, #365314 50%, #4c1d95 50%);
+    color: #ffffff;
+}
+.td3-randomize-btn {
+    width: 100%;
+    padding: 0.75rem 0;
+    border-bottom: 2px solid #4e8c45;
+    border-radius: 0.75rem;
+    background-color: #282a2a;
+    color: #4e8c45;
+    font-size: 0.9rem;
+    font-weight: 900;
+    letter-spacing: 0.1em;
+}
+.td3-randomize-btn:hover {
+    background-color: #333535;
+}
+.td3-randomize-btn--secondary {
+    padding: 0.5rem 0;
+    border-bottom-color: #3c443c;
+    color: #e2e2e2;
+    font-size: 0.8rem;
+}
+.td3-selector-btn {
+    border-radius: 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #b8c4b8;
+    background-color: #1a1c1c;
+}
+.td3-selector-btn--group {
+    flex: 1 1 0;
+    height: 2.5rem;
+}
+.td3-selector-btn--pattern {
+    height: 2.25rem;
+}
+.td3-selector-btn--side {
+    flex: 1 1 0;
+    height: 2rem;
+    font-size: 0.875rem;
+    font-weight: 900;
+}
+.td3-selector-btn.is-active {
+    background-color: #333535;
+    color: #3a6a33;
+    border-bottom: 2px solid #4e8c45;
+    font-weight: 900;
+}
+.td3-selector-btn.is-inactive:hover {
+    background-color: #282a2a;
+}
+.td3-selector-btn.is-side-active {
+    background-color: #2d5a27;
+    color: #d1ffd1;
+}
+.td3-selector-btn.is-scratch {
+    background-color: #7f1d1d;
+    color: #fee2e2;
+    border-bottom: 2px solid #ef4444;
+    font-weight: 900;
+}
+
+/* Settings and editor buttons */
+.settings-nav-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.625rem 0.75rem;
+    border-radius: 0.5rem;
+    background-color: #333535;
+    color: #b8c4b8;
+    font-size: 1rem;
+    font-weight: 900;
+    letter-spacing: 0.05em;
+}
+.settings-nav-btn.is-active {
+    background-color: #2d5a27;
+    color: #d1ffd1;
+}
+.settings-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    padding: 0.625rem 1.5rem;
+    border-radius: 0.5rem;
+    font-size: 1rem;
+    font-weight: 900;
+    letter-spacing: 0.1em;
+}
+.settings-action-btn--primary {
+    background-color: #2d5a27;
+    color: #d1ffd1;
+}
+.settings-action-btn--primary:hover {
+    background-color: #3a6a33;
+}
+.settings-action-btn--neutral {
+    background-color: #333535;
+    color: #b8c4b8;
+}
+.settings-action-btn--neutral:hover {
+    background-color: #383939;
+}
+.settings-action-btn--compact {
+    padding: 0.375rem 0.75rem;
+    letter-spacing: 0.05em;
+}
+.settings-key-btn {
+    min-width: 80px;
+    height: 1.75rem;
+    padding: 0 0.75rem;
+    border-radius: 0.25rem;
+    background-color: #333535;
+    color: #4e8c45;
+    font-family: monospace;
+    font-size: 1rem;
+    font-weight: 700;
+    text-align: center;
+}
+.settings-key-btn:hover {
+    background-color: #383939;
+}
+.settings-key-btn.is-capturing {
+    background-color: #2d5a27;
+    color: #d1ffd1;
+}
+.settings-scale-delete-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2.25rem;
+    border-radius: 0.25rem;
+    background-color: #4a0000;
+    color: #ffdad6;
+}
+.settings-scale-delete-btn:hover {
+    opacity: 0.8;
+}
+.settings-scale-note-btn {
+    flex: 1 1 0;
+    height: 2.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    transition: color 0.1s ease, background-color 0.1s ease, opacity 0.1s ease;
+}
+.settings-scale-note-btn.is-active {
+    background-color: #2d5a27;
+    color: #d1ffd1;
+}
+.settings-scale-note-btn.is-active.is-black {
+    background-color: #4e8c45;
+    color: #121414;
+}
+.settings-scale-note-btn:not(.is-active) {
+    background-color: #282a2a;
+    color: #b8c4b8;
+}
+.settings-scale-note-btn:not(.is-active).is-black {
+    background-color: #333535;
+    opacity: 0.6;
+}
+
+/* Step card controls */
+.step-ctrl-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 0.25rem;
+    font-size: 0.7rem;
+    font-weight: 900;
+    letter-spacing: 0.05em;
+}
+.step-ctrl-btn:not(.is-active) {
+    background-color: #333535;
+    color: #b8c4b8;
+}
+.step-ctrl-btn:not(.is-active):hover {
+    color: #4e8c45;
+}
+.step-ctrl-btn.is-up {
+    background-color: #365314;
+    color: #ffffff;
+}
+.step-ctrl-btn.is-down {
+    background-color: #4c1d95;
+    color: #ffffff;
+}
+.step-ctrl-btn.is-slide {
+    background-color: #0c4a6e;
+    color: #ffffff;
+}
+.step-ctrl-btn.is-accent {
+    background-color: #7c2d12;
+    color: #ffffff;
+}
+.step-flag-pill {
+    padding: 0 0.25rem;
+    border-radius: 0.25rem;
+    color: #ffffff;
+    font-size: 0.65rem;
+    font-weight: 900;
+    line-height: 1;
+}
+.step-flag-pill--accent {
+    background-color: #7c2d12;
+}
+.step-flag-pill--slide {
+    background-color: #0c4a6e;
+}
+
+/* Tactile card surface */
+.tactile-card {
+    box-shadow: inset 0 1px 1px rgba(255,255,255,0.05), 0 4px 6px rgba(0,0,0,0.3);
+    background-image: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, transparent 100%);
+}
+
+/* Step card note display - drag cursor */
+.step-card {
+    cursor: ns-resize;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+/* Downbeat emphasis - steps 01/05/09/13 get an upper white halo so the
+   16-step grid reads as four groups of four at a glance. Shares the card's
+   tactile shadow stack so the raised-card look is preserved. The .step-active
+   playing highlight is declared AFTER this rule so it wins when both apply. */
+.step-downbeat {
+    box-shadow:
+        0 -2px 10px rgba(255,255,255,0.60),
+        inset 0 1px 0 rgba(255,255,255,0.40),
+        0 4px 6px rgba(0,0,0,0.5);
+}
+
+/* Step card: active beat highlight */
+.step-active {
+    background-color: #4e8c45 !important;
+    color: #000 !important;
+    box-shadow: 0 0 24px #4e8c45, 0 0 48px rgba(78,140,69,0.4);
+    transition: box-shadow 0.08s ease-out;
+}
+.step-active span {
+    color: #000 !important;
+    opacity: 1 !important;
+}
+.step-pulse {
+    animation: pulse-beat 0.12s ease-out;
+}
+@keyframes pulse-beat {
+    0% { transform: scale(1.04); box-shadow: 0 0 30px #4e8c45, 0 0 60px rgba(78,140,69,0.6); }
+    100% { transform: scale(1); box-shadow: 0 0 24px #4e8c45, 0 0 48px rgba(78,140,69,0.4); }
+}
+
+/* BPM knob rotation */
+.knob-indicator {
+    transition: transform 0.05s linear;
+}
+
+/* Scrollbar styling for dark theme */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #0d0f0f; }
+::-webkit-scrollbar-thumb { background: #333535; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #4e8c45; }
+
+/* Toggle button active state */
+.toggle-on {
+    background-color: #2d5a27 !important;
+    color: #d1ffd1 !important;
+}
+
+/* Disabled step (beyond active_steps) */
+.step-disabled {
+    opacity: 0.25;
+    pointer-events: none;
+}
+
+/* BPM display inner shadow for glass effect */
+.bpm-display {
+    box-shadow: inset 0 2px 8px rgba(0,0,0,0.8), inset 0 -1px 4px rgba(139,0,0,0.2);
+}
+
+/* Reserve the full 3-digit width at all times so the readout does not
+   jitter when the value drops from 140 to 99. Local digital fonts can
+   have a narrow "1" glyph, and fallback fonts vary by platform. `ch`
+   alone is not enough, so force tabular-nums and add an em buffer for
+   the fallback path. `text-align: center` keeps 2-digit values centered
+   inside the reserved box. */
+#bpm-display {
+    display: inline-block;
+    min-width: calc(3ch + 0.6em);
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+}
+
+/* Keyboard edit: selected step cursor */
+.step-kb-selected {
+    outline: 2px solid #4e8c45;
+    outline-offset: -2px;
+    box-shadow: 0 0 12px rgba(78,140,69,0.4), inset 0 1px 1px rgba(255,255,255,0.05), 0 4px 6px rgba(0,0,0,0.3) !important;
+}
+
+/* ---------------------------------------------------------------------------
+   Multi-pattern card list (main Control page).
+   Each `.mp-card` wraps one pattern as a single horizontal row mirroring the
+   progression layout - column stack (PREVIEW, SHIFT, TRNSPS, RAND, COPY,
+   PASTE) + 16-step grid. Focused/checked visuals stay lightweight so the
+   per-step highlights remain the dominant visual signal during playback.
+--------------------------------------------------------------------------- */
+.mp-card {
+    border: 1px solid rgba(255,255,255,0.04);
+    border-radius: 0.5rem;
+    background-color: rgba(255,255,255,0.01);
+    transition: background-color 0.1s ease, border-color 0.1s ease;
+}
+.mp-card.focused {
+    background-color: rgba(78,140,69,0.08);
+    border-color: rgba(78,140,69,0.35);
+}
+.mp-card.checked {
+    outline: 2px solid #4e8c45;
+    outline-offset: -2px;
+}
+.mp-card-row {
+    border-radius: 0.5rem;
+}
+/* Drag handle - fills the empty stretch of the id column below the DEL
+   button, painted with a faint dot grid so the grab affordance reads at
+   a glance. Only this element starts a drag; clicks on neighbouring
+   buttons/labels keep working as before. */
+.mp-drag-handle {
+    flex: 1 1 auto;
+    min-height: 1.25rem;
+    cursor: grab;
+    border-radius: 0.25rem;
+    background-image: radial-gradient(circle, rgba(255,255,255,0.35) 1px, transparent 1.5px);
+    background-size: 6px 6px;
+    background-position: 0 0;
+    opacity: 0.45;
+    transition: opacity 120ms ease, background-color 120ms ease;
+}
+.mp-drag-handle:hover { opacity: 0.85; background-color: rgba(78,140,69,0.08); }
+.mp-drag-handle:active { cursor: grabbing; }
+
+.mp-card.dragging { opacity: 0.4; }
+/* Drop target - full yellow bounding box so the hit zone reads at a glance,
+   mirroring the green focused/checked outline. A thicker inset edge on the
+   top (above) or bottom (below) encodes the insertion side without losing
+   the bounding box. */
+.mp-card.drop-above,
+.mp-card.drop-below {
+    outline: 2px solid #eab308;
+    outline-offset: -2px;
+    background-color: rgba(234,179,8,0.10);
+}
+.mp-card.drop-above { box-shadow: inset 0 4px 0 0 #eab308; }
+.mp-card.drop-below { box-shadow: inset 0 -4px 0 0 #eab308; }
+
+/* Scale selector dropdown */
+.scale-select {
+    background-color: #0d0f0f;
+    color: #4e8c45;
+    border: 1px solid #333535;
+}
+.scale-select:focus {
+    outline: none;
+    border-color: #4e8c45;
+}
+
+/* Scale ranking - color-code the top 5 fit-ranked options under the
+   "- Nearest to key -" optgroup. Each rank gets a distinct tint so the
+   list reads like a confidence gradient: deep green (best fit) fades
+   through lighter green into amber for the lower positions. Option color
+   styling is best-effort - Chromium honors it, Firefox/Safari largely
+   ignore <option> color - so the optgroup label itself ("Nearest to key")
+   is the primary visual signal; the tint is a bonus. */
+option.scale-rank-0 { color: #34d399; background-color: rgba(5,150,105,0.18); font-weight: 600; }
+option.scale-rank-1 { color: #6ee7b7; background-color: rgba(5,150,105,0.12); }
+option.scale-rank-2 { color: #a7f3d0; background-color: rgba(5,150,105,0.08); }
+option.scale-rank-3 { color: #fde68a; background-color: rgba(217,119,6,0.08); }
+option.scale-rank-4 { color: #fdba74; background-color: rgba(217,119,6,0.10); }

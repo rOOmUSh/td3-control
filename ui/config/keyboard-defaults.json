@@ -1,0 +1,30 @@
+{
+  "notes": {
+    "C": "c",
+    "C#": "f",
+    "D": "v",
+    "D#": "g",
+    "E": "b",
+    "F": "n",
+    "F#": "j",
+    "G": "m",
+    "G#": "k",
+    "A": ",",
+    "A#": ";",
+    "B": ".",
+    "C^": "/"
+  },
+  "actions": {
+    "accent": "a",
+    "slide": "s",
+    "transpose_up": "ArrowUp",
+    "transpose_down": "ArrowDown",
+    "prev_step": "ArrowLeft",
+    "next_step": "ArrowRight",
+    "rest": "\\",
+    "rest_alt": "Numpad0",
+    "randomize": "r",
+    "play": " ",
+    "live_toggle": "ctrl+l"
+  }
+}

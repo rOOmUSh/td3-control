@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>TD-3 Bank</title>
+<!-- TD3_CONFIG_INJECT -->
+<link href="/css/tailwind.css" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700;900&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="/css/custom.css" rel="stylesheet"/>
+<link href="/css/bank.css" rel="stylesheet"/>
+</head>
+<body class="bg-surface-dim text-on-surface font-body overflow-hidden">
+<div class="flex flex-col h-screen">
+
+<!-- Top Bar -->
+<header class="bg-[#121414] border-b-4 border-[#1e2020] shadow-2xl flex justify-between items-center w-full px-6 py-3 z-50">
+  <div class="flex items-center gap-8">
+    <span class="text-xl font-black tracking-tighter text-primary-fixed">TD-3 BANK</span>
+    <span id="bank-subtitle" class="text-[0.9rem] font-mono text-on-surface-variant opacity-60 uppercase"></span>
+  </div>
+  <div class="flex items-center gap-4">
+    <a href="/" class="flex items-center gap-1 h-8 px-3 rounded-lg bg-surface-container-highest text-on-surface-variant hover:text-primary-fixed hover:bg-surface-bright text-[1rem] font-black tracking-widest tactile-button" title="Control">
+      <span class="material-symbols-outlined text-sm">tune</span> CONTROL
+    </a>
+    <a href="/progression.html" class="flex items-center gap-1 h-8 px-3 rounded-lg bg-surface-container-highest text-on-surface-variant hover:text-primary-fixed hover:bg-surface-bright text-[1rem] font-black tracking-widest tactile-button" title="Progression">
+      <span class="material-symbols-outlined text-sm">queue_music</span> PROGRESSION
+    </a>
+    <a href="/settings.html" class="w-8 h-8 flex items-center justify-center rounded-lg bg-surface-container-highest text-on-surface-variant hover:text-primary-fixed hover:bg-surface-bright tactile-button" title="Settings">
+      <span class="material-symbols-outlined text-lg">settings</span>
+    </a>
+  </div>
+</header>
+
+<main class="flex-1 flex overflow-hidden">
+
+  <!-- Sidebar -->
+  <aside id="bank-sidebar"
+         class="hidden md:flex flex-col h-full w-[220px] bg-[#0d0f0f] border-r-4 border-[#1e2020] shadow-inner flex-shrink-0 overflow-y-auto p-3 gap-1">
+    <!-- populated by bank-sidebar.js -->
+  </aside>
+
+  <!-- Main content -->
+  <section class="flex-1 flex flex-col overflow-hidden">
+    <div id="bank-toolbar" class="bank-toolbar">
+      <!-- populated by bank-toolbar.js -->
+    </div>
+    <div id="bank-view" class="flex-1 overflow-y-auto p-4 bg-surface-container-lowest">
+      <!-- populated by bank-cards / bank-table -->
+    </div>
+    <div id="bank-bulk" class="hidden"></div>
+  </section>
+
+  <!-- Right drawer -->
+  <div id="bank-drawer" class="bank-drawer" aria-hidden="true">
+    <!-- populated by bank-drawer.js -->
+  </div>
+</main>
+
+<!-- Bottom Transport Bar - MIDI connection + BPM only. Per-item play
+     buttons live on each pattern surface, so no global Play/Stop here. -->
+<footer class="flex-shrink-0 w-full z-50 flex justify-between items-center h-20 bg-[#0d0f0f] border-t-4 border-[#1e2020] px-4 shadow-[0px_-10px_30px_rgba(0,0,0,0.8)]">
+  <div class="flex items-center gap-5">
+    <!-- MIDI Status -->
+    <div class="flex flex-col items-center">
+      <button id="btn-midi" class="w-10 h-10 rounded-full border-2 border-secondary-container flex items-center justify-center led-glow-red transition-all active:scale-95 tactile-button" title="Connect to TD-3">
+        <span class="material-symbols-outlined text-secondary-container text-lg">sync_problem</span>
+      </button>
+      <span id="midi-label" class="text-[0.9rem] font-black text-secondary-container mt-1 tracking-widest">DISCONNECTED</span>
+    </div>
+    <!-- Divider -->
+    <div class="w-px h-14 bg-surface-container-highest"></div>
+    <!-- BPM Display + Knob -->
+    <div class="flex items-center gap-3 bg-surface-container-lowest p-1 rounded-xl border border-surface-container-highest shadow-inner">
+      <div class="bg-black px-4 py-2 rounded-lg border-2 border-surface-container-highest bpm-display flex items-center justify-center">
+        <span id="bpm-display" class="text-4xl font-digital text-on-secondary-fixed-variant tracking-widest leading-none" style="text-shadow: 0 0 10px #8b0000;"></span>
+      </div>
+      <div class="flex flex-col items-center gap-1">
+        <div id="bpm-knob" class="w-10 h-10 rounded-full bg-surface-container-highest border-2 border-surface-bright knob-shadow flex items-center justify-center relative group cursor-pointer tactile-button">
+          <div id="knob-indicator" class="w-0.5 h-4 bg-primary-fixed absolute top-1 left-1/2 -translate-x-1/2 origin-bottom knob-indicator"></div>
+          <div class="w-full h-full rounded-full milled-texture opacity-30"></div>
+        </div>
+        <span class="text-[1rem] font-bold text-on-surface-variant">BPM</span>
+      </div>
+    </div>
+  </div>
+
+</footer>
+
+</div>
+
+<!-- Toast container -->
+<div id="bank-toast-stack" class="bank-toast-stack"></div>
+
+<!-- JS entry -->
+<script type="module" src="/js/bank/bank-main.js"></script>
+</body>
+</html>

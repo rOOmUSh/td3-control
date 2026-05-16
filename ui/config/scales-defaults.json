@@ -1,0 +1,41 @@
+{
+  "tag_groups": [
+    { "label": "-- Safe / Melodic --", "tag": "safe" },
+    { "label": "-- Dark / Acid --", "tag": "dark" },
+    { "label": "-- Tension / Cinematic --", "tag": "tension" },
+    { "label": "-- Jazz / Extended --", "tag": "jazz" },
+    { "label": "-- Custom --", "tag": "custom" }
+  ],
+  "scales": [
+    { "id": "major", "name": "Major / Ionian", "intervals": [0,2,4,5,7,9,11], "tags": ["safe"] },
+    { "id": "natural_minor", "name": "Natural Minor", "intervals": [0,2,3,5,7,8,10], "tags": ["safe","dark"] },
+    { "id": "dorian", "name": "Dorian", "intervals": [0,2,3,5,7,9,10], "tags": ["safe"] },
+    { "id": "mixolydian", "name": "Mixolydian", "intervals": [0,2,4,5,7,9,10], "tags": ["safe"] },
+    { "id": "major_pentatonic", "name": "Major Pentatonic", "intervals": [0,2,4,7,9], "tags": ["safe"] },
+    { "id": "minor_pentatonic", "name": "Minor Pentatonic", "intervals": [0,3,5,7,10], "tags": ["safe","dark"] },
+    { "id": "lydian", "name": "Lydian", "intervals": [0,2,4,6,7,9,11], "tags": ["safe"] },
+    { "id": "harmonic_minor", "name": "Harmonic Minor", "intervals": [0,2,3,5,7,8,11], "tags": ["dark"] },
+    { "id": "melodic_minor", "name": "Melodic Minor", "intervals": [0,2,3,5,7,9,11], "tags": ["dark"] },
+    { "id": "phrygian", "name": "Phrygian", "intervals": [0,1,3,5,7,8,10], "tags": ["dark"] },
+    { "id": "locrian", "name": "Locrian", "intervals": [0,1,3,5,6,8,10], "tags": ["dark"] },
+    { "id": "phrygian_dominant", "name": "Phrygian Dominant", "intervals": [0,1,4,5,7,8,10], "tags": ["dark"] },
+    { "id": "minor_blues", "name": "Minor Blues", "intervals": [0,3,5,6,7,10], "tags": ["dark"] },
+    { "id": "major_blues", "name": "Major Blues", "intervals": [0,2,3,4,7,9], "tags": ["dark"] },
+    { "id": "hungarian_minor", "name": "Hungarian Minor", "intervals": [0,2,3,6,7,8,11], "tags": ["tension"] },
+    { "id": "double_harmonic_major", "name": "Double Harmonic Major", "intervals": [0,1,4,5,7,8,11], "tags": ["tension"] },
+    { "id": "altered", "name": "Altered / Super Locrian", "intervals": [0,1,3,4,6,8,10], "tags": ["tension"] },
+    { "id": "diminished_half_whole", "name": "Diminished H-W", "intervals": [0,1,3,4,6,7,9,10], "tags": ["tension"] },
+    { "id": "diminished_whole_half", "name": "Diminished W-H", "intervals": [0,2,3,5,6,8,9,11], "tags": ["tension"] },
+    { "id": "whole_tone", "name": "Whole Tone", "intervals": [0,2,4,6,8,10], "tags": ["tension"] },
+    { "id": "augmented", "name": "Augmented", "intervals": [0,3,4,7,8,11], "tags": ["tension"] },
+    { "id": "persian", "name": "Persian", "intervals": [0,1,4,5,6,8,11], "tags": ["tension"] },
+    { "id": "lydian_dominant", "name": "Lydian Dominant", "intervals": [0,2,4,6,7,9,10], "tags": ["jazz"] },
+    { "id": "neapolitan_minor", "name": "Neapolitan Minor", "intervals": [0,1,3,5,7,8,11], "tags": ["jazz"] },
+    { "id": "neapolitan_major", "name": "Neapolitan Major", "intervals": [0,1,3,5,7,9,11], "tags": ["jazz"] },
+    { "id": "romanian_minor", "name": "Romanian Minor", "intervals": [0,2,3,6,7,9,10], "tags": ["jazz"] },
+    { "id": "bebop_major", "name": "Bebop Major", "intervals": [0,2,4,5,7,8,9,11], "tags": ["jazz"] },
+    { "id": "bebop_dominant", "name": "Bebop Dominant", "intervals": [0,2,4,5,7,9,10,11], "tags": ["jazz"] },
+    { "id": "bebop_minor", "name": "Bebop Minor", "intervals": [0,2,3,5,7,9,10,11], "tags": ["jazz"] },
+    { "id": "chromatic", "name": "Chromatic", "intervals": [0,1,2,3,4,5,6,7,8,9,10,11], "tags": ["tension"] }
+  ]
+}

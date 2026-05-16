@@ -1,0 +1,26 @@
+format=td3-stepdsl-v1
+active_steps=16
+triplet_time=off
+
+01  C:---:N
+02  C:---:N
+03  C:---:N
+04  C:---:N
+05  C:---:N
+06  C:---:N
+07  C:---:N
+08  C:---:N
+09  C:---:N
+10  C:---:N
+11  C:---:N
+12  C:---:N
+13  C:---:N
+14  C:---:N
+15  C:---:N
+16  C:---:N
+
+# NOTE:TAS:TIME
+# transpose: U|D|-
+# accent: A|-
+# slide: S|-
+# time: N|T|R|TR

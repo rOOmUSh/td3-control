@@ -1,0 +1,35 @@
+<div class="p-4 border-b border-surface-container">
+  <div class="flex items-center gap-2 mb-2">
+    <span class="text-[1rem] font-bold text-on-surface-variant tracking-widest">PATTERN</span>
+    <span id="scratch-label" class="text-[0.65rem] font-black text-red-400 tracking-widest bg-red-950 px-2 py-0.5 rounded"></span>
+  </div>
+  <div id="pattern-buttons" class="grid grid-cols-4 gap-1">
+    <button data-pattern="1" class="td3-selector-btn td3-selector-btn--pattern is-active tactile-button">1</button>
+    <button data-pattern="2" class="td3-selector-btn td3-selector-btn--pattern is-inactive tactile-button">2</button>
+    <button data-pattern="3" class="td3-selector-btn td3-selector-btn--pattern is-inactive tactile-button">3</button>
+    <button data-pattern="4" class="td3-selector-btn td3-selector-btn--pattern is-inactive tactile-button">4</button>
+    <button data-pattern="5" class="td3-selector-btn td3-selector-btn--pattern is-inactive tactile-button">5</button>
+    <button data-pattern="6" class="td3-selector-btn td3-selector-btn--pattern is-inactive tactile-button">6</button>
+    <button data-pattern="7" class="td3-selector-btn td3-selector-btn--pattern is-inactive tactile-button">7</button>
+    <button data-pattern="8" class="td3-selector-btn td3-selector-btn--pattern is-inactive tactile-button">8</button>
+  </div>
+  <!-- LOAD / LOAD ALL / SAVE - device I/O for the slot the sidebar selector
+       resolves to. Lives here (not on the top toolbar) so the user doesn't
+       have to travel up across the page after picking a pattern number.
+       LOAD appends a single slot (sidebar-selected) as a new UI pattern
+      . LOAD ALL reads all 64 device slots into the UI;
+       a confirm modal with an A/B mode radio runs before any state changes.
+       SAVE is context-sensitive on |selection|: 0 → disabled,
+       1 → single-slot write, ≥2 → checked-set push modal. -->
+  <div class="grid grid-cols-2 gap-1 mt-3">
+    <button id="btn-load" class="td3-sidebar-action tactile-button" title="Load selected device slot; appends as a new pattern">
+      <span class="material-symbols-outlined text-sm">download</span>LOAD
+    </button>
+    <button id="btn-load-all" class="td3-sidebar-action tactile-button" title="Replace UI with all 64 device slots (confirm first)">
+      <span class="material-symbols-outlined text-sm">download</span>LOAD ALL
+    </button>
+    <button id="btn-save" class="td3-sidebar-action td3-sidebar-action--save tactile-button" title="Context-sensitive save (selection)">
+      <span class="material-symbols-outlined text-sm">upload</span>SAVE
+    </button>
+  </div>
+</div>
