@@ -6,6 +6,8 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  WINDOWS_PLATFORM: windows-x86_64
+  WINDOWS_TARGET: x86_64-pc-windows-msvc
 
 permissions:
   contents: read
@@ -38,7 +40,65 @@ jobs:
       - if: runner.os != 'Windows'
         run: bash scripts/dev/js_tests_macos.sh
 
-  build-and-package:
+  build-and-package-windows:
+    needs: test
+    runs-on: windows-2025-vs2026
+    environment: release-signing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: ${{ env.WINDOWS_TARGET }}
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm run build:tailwind
+      - run: cargo build --release --target ${{ env.WINDOWS_TARGET }}
+      - name: Azure login with OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign Windows exe with Azure Artifact Signing
+        uses: azure/artifact-signing-action@v2.0.0
+        with:
+          endpoint: https://eus.codesigning.azure.net/
+          signing-account-name: roomushtd3signing
+          certificate-profile-name: td3controlpublic
+          files: ${{ github.workspace }}\target\${{ env.WINDOWS_TARGET }}\release\td3-control.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Verify signature
+        shell: pwsh
+        run: |
+          $signtool = "${env:ProgramFiles(x86)}\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe"
+          if (!(Test-Path $signtool)) {
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+              Where-Object { $_.FullName -match "\\x64\\signtool.exe$" } |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if ([string]::IsNullOrWhiteSpace($signtool) -or !(Test-Path $signtool)) {
+            throw "signtool.exe was not found on this runner."
+          }
+
+          & $signtool verify /pa /v "${{ github.workspace }}\target\${{ env.WINDOWS_TARGET }}\release\td3-control.exe"
+      - name: Package release
+        shell: bash
+        run: bash scripts/package-release.sh "${GITHUB_REF_NAME}" "${WINDOWS_PLATFORM}" "${WINDOWS_TARGET}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: td3-control-${{ env.WINDOWS_PLATFORM }}
+          path: dist/*.zip
+
+  build-and-package-macos:
     needs: test
     permissions:
       contents: read
@@ -46,9 +106,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-2025-vs2026
-            target: x86_64-pc-windows-msvc
-            platform: windows-x86_64
           - os: macos-latest
             target: x86_64-apple-darwin
             platform: macos-x86_64
@@ -77,7 +134,9 @@ jobs:
           path: dist/*.zip
 
   release:
-    needs: build-and-package
+    needs:
+      - build-and-package-windows
+      - build-and-package-macos
     runs-on: ubuntu-latest
     permissions:
       contents: write
