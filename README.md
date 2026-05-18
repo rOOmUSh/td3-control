@@ -15,6 +15,12 @@ It combines:
 
 The app runs locally. There is no cloud account, no remote service, and no browser extension.
 
+User-confirmed hardware reports:
+
+| Device             | Firmware | Reported working workflow                                      |
+| ------------------ | -------- | -------------------------------------------------------------- |
+| Behringer TD-3-MO  | 2.0.1    | Windows x86_64 release, USB MIDI connection, Start/Stop works  |
+
 ---
 
 ## Quick Start
