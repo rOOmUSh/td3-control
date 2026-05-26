@@ -23,7 +23,7 @@ eframe = { version = "0.34", default-features = false, features = ["default_font
 webbrowser = "1"
 zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 sha2 = "0.11"
-rusqlite = { version = "0.39", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 rfd = { version = "0.17.2", default-features = false, features = ["common-controls-v6", "xdg-portal"] }
 
 # Windows-only: raise the system timer resolution to 1 ms and bump the
