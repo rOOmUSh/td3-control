@@ -4,10 +4,6 @@
 //   - ADD            - state.addPattern()
 //   - DUPLICATE      - state.duplicatePattern()  (source = focused)
 //   - DEL            - state.deletePattern()     (target = focused)
-//   - RESET PATTERN  - resets the current selection:
-//                      every checked pattern if non-empty, else focused.
-//                      Button label flips between
-//                      "RESET FOCUSED" and "RESET PATTERN (N)".
 //
 // SHIFT STEPS + TRNSPS are wired in main.js against their preserved IDs.
 // They use the bulk variants (state.shiftStepsBulk / state.transposeBulk)
@@ -25,15 +21,24 @@ const MAX = 64;
 export function init({ setStatus } = {}) {
     const status = setStatus || (() => {});
 
+    const checkAll     = document.getElementById('mp-check-all');
     const btnAdd       = document.getElementById('btn-mp-add');
     const btnDuplicate = document.getElementById('btn-mp-duplicate');
     const btnDel       = document.getElementById('btn-mp-del');
-    const btnReset     = document.getElementById('btn-mp-reset-selection');
 
-    if (!btnAdd || !btnDuplicate || !btnDel || !btnReset) {
+    if (!checkAll || !btnAdd || !btnDuplicate || !btnDel) {
         console.warn('[multipattern-toolbar] secondary toolbar buttons missing');
         return;
     }
+
+    checkAll.addEventListener('click', (event) => event.stopPropagation());
+    checkAll.addEventListener('change', () => {
+        state.setAllChecked(checkAll.checked);
+        const checkedCount = state.getCheckedSet().size;
+        status(checkedCount === 0
+            ? 'Selection cleared'
+            : `Checked ${checkedCount} pattern${checkedCount === 1 ? '' : 's'}`);
+    });
 
     btnAdd.addEventListener('click', () => {
         if (!state.addPattern()) {
@@ -85,33 +90,18 @@ export function init({ setStatus } = {}) {
                        : `Deleted P${cur + 1}`);
     });
 
-    // RESET PATTERN (N): reset every index in the current selection.
-    // All checked if non-empty, else focused.
-    btnReset.addEventListener('click', () => {
-        const sel = state.getSelectionIndexes();
-        if (sel.length === 0) { status('Nothing selected to reset'); return; }
-        for (const i of sel) state.resetPattern(i);
-        status(sel.length === 1
-            ? `Reset P${sel[0] + 1}`
-            : `Reset ${sel.length} patterns`);
-    });
-
     // Keep disabled state + labels in sync with state mutations.
     const syncChrome = () => {
         const n = state.getPatternCount();
         const focused = state.getFocusedIdx();
-        const selSize = state.getCheckedSet().size;
+        const checkedCount = state.getCheckedSet().size;
 
+        checkAll.disabled = n === 0;
+        checkAll.checked = n > 0 && checkedCount === n;
+        checkAll.indeterminate = checkedCount > 0 && checkedCount < n;
         btnAdd.disabled       = n >= MAX;
         btnDuplicate.disabled = n >= MAX || focused === null;
         btnDel.disabled       = n === 0;
-        btnReset.disabled     = state.getSelectionIndexes().length === 0;
-
-        // RESET label: "RESET FOCUSED" when no checks (I21), otherwise
-        // "RESET PATTERN (N)" where N = |checked|.
-        btnReset.textContent = selSize === 0
-            ? 'RESET FOCUSED'
-            : `RESET PATTERN (${selSize})`;
     };
 
     state.onChange(syncChrome);

@@ -102,6 +102,42 @@ await test('startPlayback honors a non-default first timeline entry', async () =
     assert(calls[0] === 'save:P3', 'timeline first slot 3 preloads P3');
 });
 
+await test('startPlayback uses host audition when live update is off', async () => {
+    const calls = [];
+    const patterns = [{ name: 'P1' }, { name: 'P2' }, { name: 'P3' }, { name: 'P4' }];
+    let playing = false;
+    let status = '';
+
+    const firstPatIdx = await startPlayback({
+        api: {
+            auditionPattern: async (data, bpm, looping) => {
+                calls.push(`audition:${data.name}:${bpm}:${looping}`);
+            },
+            savePattern: async () => { calls.push('save'); },
+            transportStart: async () => { calls.push('start'); },
+        },
+        timeline: [2, 1, 1, 1],
+        getPattern: (idx) => patterns[idx],
+        scratch: { group: 1, pattern: 1, side: 'A', label: 'G1-P1A' },
+        bpm: 119.5,
+        transport: { start: async (sync) => { calls.push(`transport.start:${sync === null}`); } },
+        stopAllPreviews: async () => { calls.push('stopPreviews'); },
+        liveUpdate: false,
+        setPlaying: (v) => { playing = v; calls.push(`playing:${v}`); },
+        setStatus: (msg) => { status = msg; calls.push(`status:${msg}`); },
+    });
+
+    assert(firstPatIdx === 1, 'returns first pattern index');
+    assert(calls[0] === 'stopPreviews', 'previews stop first');
+    assert(calls[1] === 'audition:P2:119.5:true', 'auditionPattern starts selected pattern');
+    assert(!calls.includes('save'), 'savePattern not called');
+    assert(!calls.includes('start'), 'transportStart not called');
+    assert(calls[2] === 'playing:true', 'playing flips true after audition starts');
+    assert(calls[3] === 'transport.start:true', 'local transport starts without sync payload');
+    assert(status === 'Host audition: P2 (no save)', 'status reports host audition');
+    assert(playing === true, 'playing flag set');
+});
+
 await test('stopPlayback stops transport, resets timeline, and clears playing state', async () => {
     const calls = [];
     let playing = true;
@@ -127,6 +163,32 @@ await test('stopPlayback stops transport, resets timeline, and clears playing st
     assert(calls[4] === 'resetTimeline', 'timeline reset called');
     assert(status === 'Stopped - timeline reset', 'stop status called');
     assert(playing === false, 'playing flag cleared');
+});
+
+await test('stopPlayback stops host audition in audition mode', async () => {
+    const calls = [];
+
+    await stopPlayback({
+        api: {
+            auditionStop: async () => { calls.push('auditionStop'); },
+            transportStop: async () => { calls.push('transportStop'); },
+        },
+        transport: {
+            stopWrapSync: () => { calls.push('transport.stopWrapSync'); },
+            stop: () => { calls.push('transport.stop'); },
+        },
+        resetTimeline: () => { calls.push('resetTimeline'); },
+        auditionMode: true,
+        setPlaying: (v) => { calls.push(`playing:${v}`); },
+        setStatus: (msg) => { calls.push(`status:${msg}`); },
+    });
+
+    assert(calls[0] === 'transport.stopWrapSync', 'wrap sync stops first');
+    assert(calls[1] === 'auditionStop', 'auditionStop after wrap sync reset');
+    assert(!calls.includes('transportStop'), 'transportStop not called for host audition');
+    assert(calls[2] === 'playing:false', 'playing false after audition stop');
+    assert(calls[3] === 'transport.stop', 'transport.stop called');
+    assert(calls[4] === 'resetTimeline', 'timeline reset called');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

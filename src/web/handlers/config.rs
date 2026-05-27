@@ -16,9 +16,13 @@ fn typed_config_payload<T>(
     payload: Result<Json<T>, JsonRejection>,
     name: &'static str,
 ) -> Result<T, AppError> {
-    payload
-        .map(|Json(config)| config)
-        .map_err(|err| AppError::BadRequest(format!("invalid {} config JSON: {}", name, err)))
+    payload.map(|Json(config)| config).map_err(|err| {
+        let mut message = String::from("invalid ");
+        message.push_str(name);
+        message.push_str(" config JSON: ");
+        message.push_str(&err.to_string());
+        AppError::BadRequest(message)
+    })
 }
 
 pub async fn get_keyboard_config(

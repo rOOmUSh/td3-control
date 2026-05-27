@@ -2,6 +2,11 @@ use std::path::Path;
 
 use crate::error::Td3Error;
 
+use super::import_order::sort_import_paths;
+
+const MAX_SCAN_JSON_BYTES: u64 = 2550;
+const MAX_SCAN_TOML_BYTES: u64 = 1900;
+
 pub fn list_candidate_files(
     root: &Path,
     recursive: bool,
@@ -25,6 +30,7 @@ pub fn list_candidate_files(
         "[scan] done: matched {} / scanned {} (across {} dir(s))",
         stats.matched, stats.scanned, stats.dirs
     );
+    sort_import_paths(&mut out);
     Ok(out)
 }
 
@@ -68,7 +74,7 @@ fn walk(
         stats.scanned += 1;
 
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if is_candidate_filename(name) {
+        if is_candidate_filename(name) && is_within_scan_size_limit(&path, name) {
             local_matched += 1;
             stats.matched += 1;
             out.push(path);
@@ -112,6 +118,27 @@ pub fn is_candidate_filename(name: &str) -> bool {
     }
 
     false
+}
+
+fn is_within_scan_size_limit(path: &Path, name: &str) -> bool {
+    let Some(limit) = scan_size_limit(name) else {
+        return true;
+    };
+    match std::fs::metadata(path) {
+        Ok(meta) => meta.len() <= limit,
+        Err(_) => false,
+    }
+}
+
+fn scan_size_limit(name: &str) -> Option<u64> {
+    let lower = name.to_ascii_lowercase();
+    if lower.ends_with(".json") {
+        Some(MAX_SCAN_JSON_BYTES)
+    } else if lower.ends_with(".toml") {
+        Some(MAX_SCAN_TOML_BYTES)
+    } else {
+        None
+    }
 }
 
 /// Look for `G<digit>P<digit>[ab]` - with an optional single `-` between

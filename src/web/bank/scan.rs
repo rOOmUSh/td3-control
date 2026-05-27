@@ -51,7 +51,8 @@ pub(super) async fn scan(
                 finish_scan_progress(&state_for_task, Some(message));
             }
             Err(join_err) => {
-                let message = format!("scan task panicked: {join_err}");
+                let mut message = String::from("scan task panicked: ");
+                message.push_str(&join_err.to_string());
                 state_for_task.scan.jobs.fail(&job_id, message.clone());
                 finish_scan_progress(&state_for_task, Some(message));
             }

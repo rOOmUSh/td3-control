@@ -10,7 +10,7 @@
 //   active  4-7  → root ≥ 1, distinct ≥ 2, no placement constraint
 //   active  1-3  → content rules waived; only encoding + run-length checks
 
-import { decodePitch, isPitchInRange } from './magic-pitch-encoding.js';
+import { isPitchInRange } from './magic-pitch-encoding.js';
 import { pitchPc } from './magic-scale-analysis.js';
 
 const TOTAL_STEPS = 16;

@@ -3,14 +3,19 @@
 
      ADD / DUPLICATE / DEL handle structural pattern list ops.
      SHIFT STEPS / TRNSPS apply to the current selection.
-     (if ≥1 checked → all checked; else → focused). RESET PATTERN (N)
-     mirrors the selection size and renders as `RESET FOCUSED` when N=0
-     (I21).
+     (if ≥1 checked → all checked; else → focused).
 
-     ADD / DUPLICATE / DEL / RESET PATTERN (N) are wired by
-     `ui/js/multipattern/multipattern-toolbar.js`, which also keeps their
+     ADD / DUPLICATE / DEL are wired by
+     `ui/js/multipattern/multipattern-toolbar.js`, which keeps their
      `disabled` state in sync with the current pattern count + selection. -->
 <div class="flex items-center gap-2 px-6 py-2 border-b border-surface-container bg-surface-container-lowest flex-wrap text-[0.8rem]">
+
+  <label class="flex items-center gap-1.5 font-black text-on-surface-variant tracking-wider cursor-pointer select-none" title="Check every pattern">
+    <input id="mp-check-all" type="checkbox" class="td3-checkbox">
+    CHECK ALL
+  </label>
+
+  <div class="w-px h-5 bg-surface-container-highest"></div>
 
   <!-- ADD / DUPLICATE / DEL - structural ops. -->
   <button id="btn-mp-add" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--sm tactile-button" title="Append a new blank pattern">
@@ -83,17 +88,10 @@
        pattern pair) and SERIAL (all As, then all Bs). Every card's slot
        badge recomputes live on toggle. -->
   <button id="btn-ab-mode" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--sm tactile-button" title="Toggle A/B slot assignment mode (ALTERNATE ↔ SERIAL)">
-    <span class="material-symbols-outlined text-sm">swap_horiz</span><span id="ab-mode-label">A/B ALT</span>
+    <span class="material-symbols-outlined text-sm">swap_horiz</span><span id="ab-mode-label">AsBs SER</span>
   </button>
   <div class="w-px h-5 bg-surface-container-highest"></div>
   <button id="btn-all-to-bank" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--sm tactile-button" title="Save all patterns, or checked patterns, into the Bank">
     <span class="material-symbols-outlined text-sm">account_balance</span>ALL TO BANK
-  </button>
-  <div class="w-px h-5 bg-surface-container-highest"></div>
-  <!-- RESET PATTERN (N) - label reflects |selection|. The toolbar JS flips
-       the text between "RESET FOCUSED" (N=0 checks) and "RESET PATTERN (K)"
-       (K = |checked|) and manages the disabled state. -->
-  <button id="btn-mp-reset-selection" class="ml-auto td3-row-btn tactile-button td3-row-btn-neutral" title="Reset the current selection to a blank pattern">
-    RESET FOCUSED
   </button>
 </div>

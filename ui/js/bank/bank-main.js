@@ -4,7 +4,7 @@
 
 import {
     state, subscribe, setState, restoreFilters, persistFilters, defaultFilter,
-    setFocused, clearSelection, selectAllVisible,
+    setFocused, selectAllVisible,
 } from './bank-state.js';
 import { bankApi } from './bank-api.js';
 import { toast } from './bank-toast.js';
@@ -242,15 +242,6 @@ async function reloadDerivedFeeds(baseItems, baseLibraryItems) {
         related,
         duplicates,
     });
-}
-
-async function reloadSnapshots() {
-    try {
-        const snapshots = await bankApi.listSnapshots();
-        setState({ snapshots: snapshots.snapshots || [] });
-    } catch (e) {
-        toast(`Snapshot reload failed: ${e.message}`, 'error');
-    }
 }
 
 async function reloadAll() {

@@ -54,7 +54,7 @@ function reset() {
         focusedIdx: 0,
         checked: [],
         timeline: [1],
-        abMode: 'ALTERNATE',
+        abMode: 'SERIAL',
         viewport: { group: 'ALL', side: 'ALL' },
     }, true);
 }
@@ -68,6 +68,7 @@ console.log('multipattern-state tests:');
 test('initial state: 1 pattern, focused=0, no checks', () => {
     reset();
     assert(state.getPatternCount() === 1, 'count 1');
+    assert(state.getAbMode() === 'SERIAL', 'default A/B mode is serial');
     assert(state.getFocusedIdx() === 0, 'focused 0');
     assert(state.getCheckedArray().length === 0, 'no checks');
     assert(Array.isArray(state.getPattern().steps), 'focused pattern has steps');
@@ -251,21 +252,21 @@ test('resetPattern(idx) targets a specific pattern, leaves others alone', () => 
     assert(state.getPattern(2).steps[0].note === 'F', 'pat 2 untouched');
 });
 
-test('selection-based reset (toolbar RESET PATTERN (N) semantics): all checked, else focused', () => {
+test('getSelectionIndexes returns checked indexes, or focused index when nothing is checked', () => {
     reset();
     state.addPattern();
     state.addPattern();
     for (let i = 0; i < 3; i++) {
         state.setStep(i, 0, { note: 'G', transpose: 'NORMAL', accent: false, slide: false, time: 'NORMAL' });
     }
-    // No checks → selection = [focused]. Reset focused=0.
+    // No checks means selection is the focused pattern.
     state.setFocused(0);
     const selOne = state.getSelectionIndexes();
     assert(selOne.length === 1 && selOne[0] === 0, 'selection = [0]');
     for (const i of selOne) state.resetPattern(i);
     assert(state.getPattern(0).steps[0].note === 'C', 'focused reset');
     assert(state.getPattern(1).steps[0].note === 'G', 'others untouched');
-    // Now check 1 and 2. Reset both.
+    // Checked patterns replace the focused fallback.
     state.setChecked(1, true);
     state.setChecked(2, true);
     const selMany = state.getSelectionIndexes();
@@ -652,6 +653,25 @@ test('dual-timeline: clearChecked drains timelineChecked completely', () => {
     assert(JSON.stringify(state.getTimeline()) === '[1]', 'checked tl restarted fresh');
 });
 
+test('dual-timeline: setAllChecked selects every pattern in pattern order', () => {
+    reset();
+    for (let i = 0; i < 4; i++) state.addPattern();
+    state.setChecked(2, true);
+    state.setTimeline([3, 3, 3]);
+    state.setAllChecked(true);
+    assert(JSON.stringify(state.getCheckedArray()) === '[0,1,2,3,4]', 'all patterns checked');
+    assert(JSON.stringify(state.getTimelineChecked()) === '[1,2,3,4,5]', 'checked timeline reset to pattern order');
+});
+
+test('dual-timeline: setAllChecked false clears every checked pattern', () => {
+    reset();
+    state.addPattern(); state.addPattern();
+    state.setAllChecked(true);
+    state.setAllChecked(false);
+    assert(JSON.stringify(state.getCheckedArray()) === '[]', 'all checks cleared');
+    assert(JSON.stringify(state.getTimelineChecked()) === '[]', 'checked timeline cleared');
+});
+
 test('dual-timeline: ADD appends to default only, leaves checked arrangement alone', () => {
     reset();
     state.addPattern(); state.addPattern(); // N=3, default tl=[1,2,3]
@@ -865,7 +885,6 @@ test('duplicateCheckedToBottom: appends to timelineDefault, not timelineChecked'
     reset();
     state.addPattern(); // P2
     state.setChecked(0, true);
-    const tlCheckedBefore = state.getTimelineChecked().slice();
     const tlDefaultBefore = state.getTimelineDefault().slice();
     state.duplicateCheckedToBottom();
     const tlDefaultAfter = state.getTimelineDefault();

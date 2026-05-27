@@ -17,7 +17,13 @@
 // The module deliberately re-renders the whole container on each call
 // instead of diffing - consistent with the other bank-* modules.
 
-import { state, setState, toggleSnapshotSlotSelection, clearSnapshotSlotSelection } from './bank-state.js';
+import {
+    state,
+    setState,
+    toggleSnapshotSelection,
+    toggleSnapshotSlotSelection,
+    clearSnapshotSlotSelection,
+} from './bank-state.js';
 import { bankApi } from './bank-api.js';
 import { toast } from './bank-toast.js';
 import { confirmModal, openModal } from './bank-modal.js';
@@ -28,6 +34,7 @@ import { attachExportDropdown } from './bank-snapshot-export.js';
 import { bankButton } from './bank-buttons.js';
 import { buildSnapshotGrid } from '../shared/snapshot-grid.js';
 import { addItemsToControl } from '../shared/add-to-control.js';
+import { TD3_CHECKBOX } from '../shared/button-classes.js';
 
 export async function render(container, { onRefreshLibrary } = {}) {
     container.textContent = '';
@@ -79,13 +86,16 @@ function renderList(container, { onRefreshLibrary }) {
 function buildSnapshotCard(snap, { onRefreshLibrary } = {}) {
     const card = document.createElement('div');
     card.className = 'bank-card snapshot-card';
+    if (state.selectedSnapshotIds.has(snap.snapshot_id)) card.classList.add('selected');
     card.setAttribute('role', 'button');
     card.tabIndex = 0;
 
     const top = document.createElement('div');
     top.className = 'snapshot-card-top';
+    top.appendChild(buildSnapshotSelectionCheckbox(snap));
     const title = document.createElement('div');
     title.className = 'bank-card-title';
+    title.style.flex = '1';
     title.textContent = snap.name || '(unnamed)';
     top.appendChild(title);
     const topActions = document.createElement('div');
@@ -137,6 +147,20 @@ function buildSnapshotCard(snap, { onRefreshLibrary } = {}) {
         if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); }
     });
     return card;
+}
+
+function buildSnapshotSelectionCheckbox(snap) {
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = TD3_CHECKBOX;
+    box.checked = state.selectedSnapshotIds.has(snap.snapshot_id);
+    box.title = 'Toggle snapshot selection';
+    box.setAttribute('aria-label', `Select snapshot ${snap.name || snap.snapshot_id}`);
+    box.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        toggleSnapshotSelection(snap.snapshot_id);
+    });
+    return box;
 }
 
 function buildSnapshotDeleteButton(snap, { onRefreshLibrary } = {}) {

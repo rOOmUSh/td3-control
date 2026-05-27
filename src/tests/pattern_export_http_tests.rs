@@ -60,12 +60,55 @@ fn test_router() -> axum::Router {
 }
 
 fn valid_web_pattern_json() -> String {
-    let step = r#"{"note":"C","transpose":"NORMAL","accent":false,"slide":false,"time":"NORMAL"}"#;
-    let steps: Vec<&str> = (0..16).map(|_| step).collect();
+    web_pattern_json_with_note("C")
+}
+
+fn web_pattern_json_with_note(note: &str) -> String {
+    let step = format!(
+        r#"{{"note":"{}","transpose":"NORMAL","accent":false,"slide":false,"time":"NORMAL"}}"#,
+        note
+    );
+    let steps: Vec<String> = (0..16).map(|_| step.clone()).collect();
     format!(
         r#"{{"active_steps":16,"triplet":false,"steps":[{}]}}"#,
         steps.join(",")
     )
+}
+
+fn export_rbs_multi_request(notes: &[&str], mode: &str) -> Request<Body> {
+    let patterns: Vec<String> = notes
+        .iter()
+        .map(|note| web_pattern_json_with_note(note))
+        .collect();
+    let body = format!(
+        r#"{{"pattern":{},"patterns":[{}],"format":"rbs","rbs_mode":"{}"}}"#,
+        patterns[0],
+        patterns.join(","),
+        mode
+    );
+    Request::builder()
+        .method("POST")
+        .uri("/api/pattern/export")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap()
+}
+
+async fn do_rbs_multi_export(notes: &[&str], mode: &str) -> (StatusCode, Vec<u8>) {
+    let app = test_router();
+    let resp = app
+        .oneshot(export_rbs_multi_request(notes, mode))
+        .await
+        .unwrap();
+    let status = resp.status();
+    let bytes = resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes()
+        .to_vec();
+    (status, bytes)
 }
 
 fn export_request(format: &str) -> Request<Body> {
@@ -384,6 +427,35 @@ async fn http_pattern_export_rbs_leaves_other_slots_silent() {
     );
 }
 
+#[tokio::test]
+async fn http_pattern_export_rbs_multi_serial_places_patterns_in_device_one_order() {
+    let (status, rbs_bytes) = do_rbs_multi_export(&["D", "E", "F"], "SERIAL").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let song = crate::formats::rbs::RbsSong::parse(&rbs_bytes).expect("parse exported rbs");
+    assert_eq!(song.pattern_at(0, 0, 0).step[0].note, 2);
+    assert_eq!(song.pattern_at(0, 0, 1).step[0].note, 4);
+    assert_eq!(song.pattern_at(0, 0, 2).step[0].note, 5);
+}
+
+#[tokio::test]
+async fn http_pattern_export_rbs_multi_alternate_places_patterns_across_devices() {
+    let (status, rbs_bytes) = do_rbs_multi_export(&["D", "E", "F", "G"], "ALTERNATE").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let song = crate::formats::rbs::RbsSong::parse(&rbs_bytes).expect("parse exported rbs");
+    assert_eq!(song.pattern_at(0, 0, 0).step[0].note, 2);
+    assert_eq!(song.pattern_at(1, 0, 0).step[0].note, 4);
+    assert_eq!(song.pattern_at(0, 0, 1).step[0].note, 5);
+    assert_eq!(song.pattern_at(1, 0, 1).step[0].note, 7);
+}
+
+#[tokio::test]
+async fn http_pattern_export_rbs_multi_rejects_invalid_mode() {
+    let (status, _rbs_bytes) = do_rbs_multi_export(&["D"], "BAD").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
 // ---------------------------------------------------------------------------
 // parse-bank: sqs / rbs files → 64-slot preview grid
 // ---------------------------------------------------------------------------
@@ -503,4 +575,3 @@ async fn http_pattern_parse_bank_missing_bytes_is_rejected() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
-

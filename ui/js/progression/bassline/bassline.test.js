@@ -9,14 +9,11 @@ import { simplifiedShadow } from './archetypes/simplified-shadow.js';
 import { acidArpeggio }     from './archetypes/acid-arpeggio.js';
 import { selectDefaultArchetype } from './selector.js';
 import { generateAllBasslines } from './generator-v2.js';
-import {
-    pcToNoteName, scaleDegreesPc, approachBelowPc,
-} from './home-movement-approach.js';
+import { scaleDegreesPc } from './home-movement-approach.js';
 
 // --- Scales ------------------------------------------------------------------
 
 const NATURAL_MINOR = [0, 2, 3, 5, 7, 8, 10];
-const MAJOR         = [0, 2, 4, 5, 7, 9, 11];
 
 // --- Fixtures ----------------------------------------------------------------
 

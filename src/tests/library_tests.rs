@@ -543,6 +543,106 @@ fn candidate_filename_filter() {
     assert!(!is_candidate_filename("image.png"));
 }
 
+#[test]
+fn candidate_scan_skips_oversized_json_and_toml() {
+    let dir = fresh_tmp_dir("candidate-size-limits");
+
+    std::fs::write(dir.join("G1P1A.json"), vec![b' '; 2550]).unwrap();
+    std::fs::write(dir.join("G1P1B.json"), vec![b' '; 2551]).unwrap();
+    std::fs::write(dir.join("G1P2A.toml"), vec![b' '; 1900]).unwrap();
+    std::fs::write(dir.join("G1P2B.toml"), vec![b' '; 1901]).unwrap();
+    std::fs::write(dir.join("bank.sqs"), vec![0u8; 3000]).unwrap();
+
+    let paths = crate::library::ingest::list_candidate_files(&dir, false).unwrap();
+    let names: std::collections::HashSet<String> = paths
+        .iter()
+        .filter_map(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.to_string())
+        })
+        .collect();
+
+    assert!(names.contains("G1P1A.json"));
+    assert!(!names.contains("G1P1B.json"));
+    assert!(names.contains("G1P2A.toml"));
+    assert!(!names.contains("G1P2B.toml"));
+    assert!(names.contains("bank.sqs"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn candidate_scan_orders_formats_by_import_priority() {
+    let dir = fresh_tmp_dir("candidate-priority");
+    let files = [
+        "G4P2A.mid",
+        "G4P2A.pat",
+        "G4P2A.toml",
+        "G4P2A.json",
+        "G4P2A.steps.txt",
+        "G4P2A.syx",
+        "G4P2A.seq",
+        "bank.sqs",
+    ];
+    for name in files {
+        std::fs::write(dir.join(name), b"").unwrap();
+    }
+
+    let paths = crate::library::ingest::list_candidate_files(&dir, false).unwrap();
+    let names: Vec<String> = paths
+        .iter()
+        .filter_map(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.to_string())
+        })
+        .collect();
+
+    assert_eq!(
+        names,
+        vec![
+            "G4P2A.seq",
+            "G4P2A.syx",
+            "G4P2A.steps.txt",
+            "G4P2A.json",
+            "G4P2A.toml",
+            "G4P2A.pat",
+            "G4P2A.mid",
+            "bank.sqs",
+        ]
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn derived_duplicate_truth_matches_same_folder_native_file() {
+    let dir = fresh_tmp_dir("derived-truth");
+    let other_dir = fresh_tmp_dir("derived-truth-other");
+    let pat_path = dir.join("G1P1A.pat");
+    let seq_path = dir.join("G1P1A.seq");
+    let other_seq_path = other_dir.join("G1P1A.seq");
+
+    std::fs::write(&pat_path, b"pat").unwrap();
+    std::fs::write(&other_seq_path, b"seq").unwrap();
+    assert!(crate::library::ingest::native_truth_for_derived_path(
+        &pat_path,
+        std::slice::from_ref(&other_seq_path)
+    )
+    .is_none());
+
+    std::fs::write(&seq_path, b"seq").unwrap();
+    let truth = crate::library::ingest::native_truth_for_derived_path(
+        &pat_path,
+        &[other_seq_path.clone(), seq_path.clone()],
+    );
+    assert_eq!(truth.as_deref(), Some(seq_path.as_path()));
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&other_dir);
+}
+
 // ---------------------------------------------------------------------------
 // Backup inventory → snapshot sync
 // ---------------------------------------------------------------------------
@@ -856,6 +956,7 @@ fn now_iso_has_expected_shape() {
 use crate::formats::rbs as rbs_format;
 use crate::formats::seq as seq_format;
 use crate::formats::sqs as sqs_format;
+use crate::formats::syx as syx_format;
 use crate::library::ingest;
 use crate::pattern::pattern_to_sysex;
 
@@ -930,6 +1031,44 @@ fn ingest_seq_file_creates_item() {
 }
 
 #[test]
+fn ingest_steps_file_accepts_rows_only_through_active_steps() {
+    let dir = fresh_tmp_dir("steps-active-only");
+    let lib_path = temp_library_path("steps-active-only-ingest");
+    let store = LibraryStore::load_or_create(&lib_path).unwrap();
+
+    let steps_path = dir.join("active-only.steps.txt");
+    std::fs::write(
+        &steps_path,
+        include_str!("../../tests/fixtures/eight_step_active_only.steps.txt"),
+    )
+    .expect("write steps txt");
+    let batch = store
+        .create_import_batch(Some(dir.to_string_lossy().to_string()))
+        .unwrap();
+
+    let outcome = ingest::ingest_path(
+        &store,
+        &steps_path,
+        &batch.batch_id,
+        &MidiImportOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(outcome.entry.status, FileIngestStatus::Imported);
+    assert_eq!(outcome.entry.format.as_deref(), Some("steps"));
+    assert!(outcome.entry.item_id.is_some(), "item_id must be wired");
+
+    let items = store.list_items(&ItemFilter::default()).unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].format.as_deref(), Some("steps"));
+    assert!(items[0].tags.iter().any(|t| t == "format:steps"));
+
+    let sidecar_dir = store.pattern_sidecar_dir();
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&lib_path);
+    let _ = std::fs::remove_dir_all(&sidecar_dir);
+}
+
+#[test]
 fn ingest_duplicate_file_marked_skipped() {
     let dir = fresh_tmp_dir("dup");
     let lib_path = temp_library_path("dup-ingest");
@@ -958,6 +1097,57 @@ fn ingest_duplicate_file_marked_skipped() {
 
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_file(&lib_path);
+}
+
+#[test]
+fn ingest_duplicate_priority_prefers_seq_over_syx() {
+    let dir = fresh_tmp_dir("priority-dup");
+    let lib_path = temp_library_path("priority-dup-ingest");
+    let store = LibraryStore::load_or_create(&lib_path).unwrap();
+
+    let pattern = make_pattern(&[0, 2, 4, 5, 7, 9, 11, 12]);
+    let seq_path = dir.join("G1P1A.seq");
+    let syx_path = dir.join("G1P1A.syx");
+    std::fs::write(&seq_path, seq_format::export(&pattern).unwrap()).unwrap();
+    std::fs::write(&syx_path, syx_format::export(&pattern, 0, 0, 0).unwrap()).unwrap();
+
+    let mut paths = vec![syx_path.clone(), seq_path.clone()];
+    ingest::sort_import_paths(&mut paths);
+    assert_eq!(
+        paths[0].file_name().and_then(|name| name.to_str()),
+        Some("G1P1A.seq")
+    );
+    assert_eq!(
+        paths[1].file_name().and_then(|name| name.to_str()),
+        Some("G1P1A.syx")
+    );
+
+    let batch = store.create_import_batch(None).unwrap();
+    let mut entries = Vec::new();
+    for path in paths {
+        let outcome = ingest::ingest_path(
+            &store,
+            &path,
+            &batch.batch_id,
+            &MidiImportOptions::default(),
+        )
+        .unwrap();
+        entries.push(outcome.entry);
+    }
+
+    assert_eq!(entries[0].format.as_deref(), Some("seq"));
+    assert_eq!(entries[0].status, FileIngestStatus::Imported);
+    assert_eq!(entries[1].format.as_deref(), Some("syx"));
+    assert_eq!(entries[1].status, FileIngestStatus::DuplicateSkipped);
+
+    let items = store.list_items(&ItemFilter::default()).unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].format.as_deref(), Some("seq"));
+
+    let sidecar_dir = store.pattern_sidecar_dir();
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&lib_path);
+    let _ = std::fs::remove_dir_all(&sidecar_dir);
 }
 
 #[test]

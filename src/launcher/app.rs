@@ -289,6 +289,14 @@ fn slot_button(ui: &mut egui::Ui, label: &str, selected: bool, mut on_click: imp
 }
 
 fn render_warning(ui: &mut egui::Ui, slot_label: &str) {
+    let warning = [
+        "Pattern slot ",
+        slot_label,
+        " will be used as the scratch buffer and WILL BE OVERWRITTEN \
+         during normal operation. A full device bank backup is created automatically \
+         before any write occurs, so the original contents can be restored later.",
+    ]
+    .concat();
     egui::Frame::new()
         .fill(egui::Color32::from_rgb(255, 246, 220))
         .stroke(egui::Stroke::new(
@@ -304,11 +312,6 @@ fn render_warning(ui: &mut egui::Ui, slot_label: &str) {
                     .color(egui::Color32::from_rgb(140, 70, 0)),
             );
             ui.add_space(2.0);
-            ui.label(format!(
-                "Pattern slot {} will be used as the scratch buffer and WILL BE OVERWRITTEN \
-                 during normal operation. A full device bank backup is created automatically \
-                 before any write occurs, so the original contents can be restored later.",
-                slot_label
-            ));
+            ui.label(warning);
         });
 }

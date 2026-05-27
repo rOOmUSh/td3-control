@@ -9,6 +9,7 @@ import { makePlayButton } from './bank-play.js';
 import { renderEmptyPanel } from './bank-empty.js';
 import { bankButton } from './bank-buttons.js';
 import { addItemsToControl } from '../shared/add-to-control.js';
+import { TD3_CHECKBOX } from '../shared/button-classes.js';
 
 export function renderCards(root, { onReload }) {
     root.textContent = '';
@@ -50,6 +51,7 @@ function renderCard(item, index, ids, onReload) {
     topActions.style.display = 'flex';
     topActions.style.alignItems = 'center';
     topActions.style.gap = '0.35rem';
+    topActions.appendChild(buildItemSelectionCheckbox(item, index, ids));
     topActions.appendChild(makePlayButton(item.item_id, { size: 'sm' }));
 	
 	// Hover actions (right side)
@@ -72,10 +74,6 @@ function renderCard(item, index, ids, onReload) {
             toast('Tag added', 'success');
             onReload?.();
         } catch (e) { toast(e.message, 'error'); }
-    }));
-    actions.appendChild(miniAction('check_box', 'Toggle selection', (ev) => {
-        ev.stopPropagation();
-        toggleSelection(item.item_id, { index, ids, shiftKey: ev.shiftKey });
     }));
     topActions.appendChild(actions);
 
@@ -187,6 +185,20 @@ function renderCard(item, index, ids, onReload) {
         if (ev.key === ' ')     { ev.preventDefault(); toggleSelection(item.item_id, { index, ids }); }
     });
     return card;
+}
+
+function buildItemSelectionCheckbox(item, index, ids) {
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = TD3_CHECKBOX;
+    box.checked = state.selectedIds.has(item.item_id);
+    box.title = 'Toggle selection';
+    box.setAttribute('aria-label', `Select ${item.display_name || item.item_id}`);
+    box.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        toggleSelection(item.item_id, { index, ids, shiftKey: ev.shiftKey });
+    });
+    return box;
 }
 
 function renderEmpty() {

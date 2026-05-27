@@ -45,6 +45,8 @@ let wrapSync = {
     transportId: 0,
     wrapIndex: 0,
 };
+let hostAuditionUpdatePendingIdx = null;
+let hostAuditionUpdateInFlight = false;
 
 /**
  * Initialize with a status callback and scratch slot.
@@ -111,6 +113,7 @@ export function stop() {
     localWrapCount = 0;
     nextPatternSent = false;
     pendingRandomizeReset = false;
+    clearHostAuditionUpdateQueue();
     highlightStep(-1, -1);
     highlightColumn(-1);
     stopWrapSync();
@@ -161,6 +164,15 @@ export function nextTimelinePosAfterWrap(tl, currentPos, pendingReset) {
     return -1;
 }
 
+export function shouldUpdateHostAuditionPattern(liveUpdate, connected, previousPatIdx, nextPatIdx) {
+    return !liveUpdate
+        && connected
+        && Number.isInteger(previousPatIdx)
+        && Number.isInteger(nextPatIdx)
+        && nextPatIdx >= 0
+        && nextPatIdx !== previousPatIdx;
+}
+
 /**
  * Restart the beat timer (call after BPM changes).
  * Also sends the new BPM to the device.
@@ -169,8 +181,8 @@ export function restartTimer() {
     if (!state.isPlaying() || !beatTimer) return;
     clearTimeout(beatTimer);
     scheduleNextBeat();
-    // Sync BPM to device
-    if (state.isConnected()) {
+    // Sync BPM to the device-clock path only.
+    if (state.isConnected() && state.isLiveUpdate()) {
         api.transportBpm(state.getBpm()).catch(() => {});
     }
 }
@@ -251,6 +263,7 @@ function handlePatternWrap(rustWrapIndex) {
     }
     const tl = state.getTimeline();
     const pos = state.getCurrentTimelinePos();
+    const previousPatIdx = state.getActivePatternIndex();
     nextPatternSent = false;
 
     const wasPendingReset = pendingRandomizeReset;
@@ -262,6 +275,14 @@ function handlePatternWrap(rustWrapIndex) {
     state.setCurrentTimelinePos(nextPos);
     state.setActivePatternIndex(newPatIdx);
     highlightColumn(nextPos);
+    if (shouldUpdateHostAuditionPattern(
+        state.isLiveUpdate(),
+        state.isConnected(),
+        previousPatIdx,
+        newPatIdx,
+    )) {
+        scheduleHostAuditionUpdate(newPatIdx);
+    }
 
     if (wasPendingReset) {
         setStatus(`Playing P${newPatIdx + 1} - regenerated`);
@@ -269,6 +290,43 @@ function handlePatternWrap(rustWrapIndex) {
         const loopNum = countLoopsUpTo(tl, nextPos) + 1;
         const totalLoops = countNonEmpty();
         setStatus(`Playing P${newPatIdx + 1} - loop ${loopNum}/${totalLoops}`);
+    }
+}
+
+function clearHostAuditionUpdateQueue() {
+    hostAuditionUpdatePendingIdx = null;
+}
+
+function scheduleHostAuditionUpdate(patIdx) {
+    hostAuditionUpdatePendingIdx = patIdx;
+    if (!hostAuditionUpdateInFlight) {
+        flushHostAuditionUpdate();
+    }
+}
+
+async function flushHostAuditionUpdate() {
+    hostAuditionUpdateInFlight = true;
+    try {
+        while (hostAuditionUpdatePendingIdx !== null) {
+            const patIdx = hostAuditionUpdatePendingIdx;
+            hostAuditionUpdatePendingIdx = null;
+            if (!state.isPlaying() || state.isLiveUpdate() || !state.isConnected()) break;
+            const pattern = state.getPattern(patIdx);
+            if (!pattern) break;
+            await api.auditionUpdate(pattern, state.getBpm(), true);
+        }
+    } catch (err) {
+        if (state.isPlaying() && !state.isLiveUpdate()) {
+            setStatus('Audition update error: ' + err.message);
+        }
+    } finally {
+        hostAuditionUpdateInFlight = false;
+        if (hostAuditionUpdatePendingIdx !== null
+            && state.isPlaying()
+            && !state.isLiveUpdate()
+            && state.isConnected()) {
+            flushHostAuditionUpdate();
+        }
     }
 }
 

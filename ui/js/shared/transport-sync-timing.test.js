@@ -30,8 +30,8 @@ test('delayToNextStep aligns to the next step boundary', () => {
     assert.equal(delayToNextStep(startSync, 125, 1126), 125);
 });
 
-test('delayToNextStep treats clock skew as the next full interval', () => {
-    assert.equal(delayToNextStep({ startedAtEpochMs: 2000 }, 125, 1000), 125);
+test('delayToNextStep waits for a scheduled start before the next step', () => {
+    assert.equal(delayToNextStep({ startedAtEpochMs: 2000 }, 125, 1000), 1125);
 });
 
 test('delayToNextStep returns zero for invalid intervals', () => {

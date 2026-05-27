@@ -120,7 +120,12 @@ async fn run() -> Result<(), error::Td3Error> {
                 tokio::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                     if let Err(e) = webbrowser::open(&url) {
-                        log::warn!("failed to open browser at {}: {}", url, e);
+                        let error_text = e.to_string();
+                        let mut message = String::from("failed to open browser at ");
+                        message.push_str(&url);
+                        message.push_str(": ");
+                        message.push_str(&error_text);
+                        log::warn!("{}", message);
                     }
                 });
             }

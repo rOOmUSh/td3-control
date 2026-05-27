@@ -112,6 +112,37 @@ export function needsImmediateScratchSave(tl, cursor, queuedPatIdx) {
 }
 
 /**
+ * Decide whether a host-sequenced no-save transport needs to replace the
+ * active audition schedule at a wrap boundary.
+ *
+ * LIVE UPDATE ON uses scratch pre-load plus device clock, so host audition
+ * updates are only valid in audition mode with MIDI connected. Repeated
+ * timeline slots for the same pattern do not need a schedule replacement.
+ *
+ * @param {boolean} liveUpdate
+ * @param {boolean} connected
+ * @param {boolean} auditionMode
+ * @param {number|null|undefined} previousPatIdx
+ * @param {number|null|undefined} nextPatIdx
+ * @returns {boolean}
+ */
+export function shouldUpdateHostAuditionPattern(
+    liveUpdate,
+    connected,
+    auditionMode,
+    previousPatIdx,
+    nextPatIdx,
+) {
+    return !liveUpdate
+        && connected
+        && auditionMode
+        && Number.isInteger(previousPatIdx)
+        && Number.isInteger(nextPatIdx)
+        && nextPatIdx >= 0
+        && nextPatIdx !== previousPatIdx;
+}
+
+/**
  * Count the non-empty slots in the timeline. Used for user-facing loop
  * counters ("loop 3/12"). Empty (0) slots are skipped.
  *

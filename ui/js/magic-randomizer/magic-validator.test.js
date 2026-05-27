@@ -112,13 +112,6 @@ test('validator: micro pattern (1-3 active) waives content rules', () => {
 
 test('validator: enormous final-leap to unstable rejected', () => {
     const a = analyzeScale(0, C_MAJOR);
-    // Last note far from first, first not stable
-    const pitches = [
-        2, 4, 5, 7,  9, 11, 9, 7,
-        5, 4, 2, 4,  5, 7, 9, -7,  // last note -7 is below; first is 2 (D, color, not stable)
-    ];
-    // Loop: |-7 - 2| = 9 > 12? It's 9 - under 12. We need >12 leap.
-    // Replace last with -10 → |2 - -10| = 12 → still not >12. With 24:
     const pitches2 = [
         2, 4, 5, 7,  9, 11, 9, 7,
         5, 4, 2, 4,  5, 7, 9, 24,

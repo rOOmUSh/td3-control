@@ -663,6 +663,15 @@ fn build_test_router() -> axum::Router {
             "/api/pattern/play-preview",
             post(handlers::pattern_play_preview),
         )
+        .route("/api/pattern/audition", post(handlers::pattern_audition))
+        .route(
+            "/api/pattern/audition/update",
+            post(handlers::pattern_audition_update),
+        )
+        .route(
+            "/api/pattern/audition/stop",
+            post(handlers::pattern_audition_stop),
+        )
         .route("/api/pattern/export-pool", post(handlers::export_pool))
         .route("/api/pattern/export", post(handlers::pattern_export))
         .route("/api/transport/start", post(handlers::transport_start))
@@ -804,6 +813,23 @@ async fn http_transport_start_requires_connection() {
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
     // Should fail because no MIDI session
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn http_transport_start_rejects_far_scheduled_target() {
+    let app = build_test_router();
+    let target = crate::web::start_schedule::current_epoch_micros() + 61_000_000;
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/transport/start")
+        .header("content-type", "application/json")
+        .body(Body::from(format!(
+            r#"{{"centibpm":12000,"targetEpochMicros":{}}}"#,
+            target
+        )))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -982,6 +1008,25 @@ async fn http_pattern_save_requires_connection() {
         "error should mention connection: {}",
         err.error
     );
+}
+
+#[tokio::test]
+async fn http_pattern_audition_rejects_far_scheduled_target() {
+    let app = build_test_router();
+    let target = crate::web::start_schedule::current_epoch_micros() + 61_000_000;
+    let body = format!(
+        r#"{{"pattern":{},"centibpm":12000,"targetEpochMicros":{}}}"#,
+        valid_web_pattern_json(),
+        target
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/audition")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -1400,19 +1445,7 @@ triplet_time=on\n\
 01 A#:UAS:R\n\
 02  C:---:N\n\
 03  E:D--:T\n\
-04  G:--S:TR\n\
-05  C:---:N\n\
-06  C:---:N\n\
-07  C:---:N\n\
-08  C:---:N\n\
-09  C:---:N\n\
-10  C:---:N\n\
-11  C:---:N\n\
-12  C:---:N\n\
-13  C:---:N\n\
-14  C:---:N\n\
-15  C:---:N\n\
-16  C:---:N\n";
+04  G:--S:TR\n";
     let app = build_test_router();
     let body = serde_json::json!({ "content": steps_content, "format": "steps" }).to_string();
     let req = Request::builder()
@@ -2410,6 +2443,144 @@ async fn http_pattern_play_preview_defaults_bpm_when_missing() {
     assert!(
         err.error.contains("not connected"),
         "default-bpm path should reach not-connected: {}",
+        err.error
+    );
+}
+
+// =========================================================================
+// HTTP: /api/pattern/audition (host-sequenced, non-saving audition)
+// =========================================================================
+//
+// The happy path needs a live MIDI session, so these cover the validation
+// layer: connection presence, BPM range, WebPattern shape, and that the stop
+// endpoint is a no-op when nothing is auditioning.
+
+#[tokio::test]
+async fn http_pattern_audition_requires_connection() {
+    let app = build_test_router();
+    let body = format!(r#"{{"pattern":{},"bpm":120}}"#, valid_web_pattern_json());
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/audition")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let err: ErrorBody = serde_json::from_slice(&body).unwrap();
+    assert!(
+        err.error.contains("not connected"),
+        "error should mention connection: {}",
+        err.error
+    );
+}
+
+#[tokio::test]
+async fn http_pattern_audition_rejects_bpm_zero() {
+    let app = build_test_router();
+    let body = format!(r#"{{"pattern":{},"bpm":0}}"#, valid_web_pattern_json());
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/audition")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn http_pattern_audition_rejects_bpm_over_300() {
+    let app = build_test_router();
+    let body = format!(r#"{{"pattern":{},"bpm":301}}"#, valid_web_pattern_json());
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/audition")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn http_pattern_audition_rejects_wrong_step_count() {
+    // 15 steps instead of 16 - web_to_pattern rejects this before any device
+    // interaction is attempted.
+    let step = r#"{"note":"C","transpose":"NORMAL","accent":false,"slide":false,"time":"NORMAL"}"#;
+    let steps: Vec<&str> = (0..15).map(|_| step).collect();
+    let pattern = format!(
+        r#"{{"active_steps":16,"triplet":false,"steps":[{}]}}"#,
+        steps.join(",")
+    );
+    let body = format!(r#"{{"pattern":{},"bpm":120}}"#, pattern);
+    let app = build_test_router();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/audition")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn http_pattern_audition_defaults_bpm_when_missing() {
+    // Without `bpm` the handler defaults to the UI default; with no session
+    // it still reaches the not-connected branch (no serde 422, no panic).
+    let app = build_test_router();
+    let body = format!(r#"{{"pattern":{}}}"#, valid_web_pattern_json());
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/audition")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let err: ErrorBody = serde_json::from_slice(&body).unwrap();
+    assert!(
+        err.error.contains("not connected"),
+        "default-bpm path should reach not-connected: {}",
+        err.error
+    );
+}
+
+#[tokio::test]
+async fn http_pattern_audition_stop_is_noop_when_idle() {
+    // Stopping with no audition running succeeds and reports not playing,
+    // rather than erroring.
+    let app = build_test_router();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/audition/stop")
+        .header("content-type", "application/json")
+        .body(Body::from("{}"))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn http_pattern_audition_update_rejects_when_idle() {
+    let app = build_test_router();
+    let body = format!(r#"{{"pattern":{},"bpm":120}}"#, valid_web_pattern_json());
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/audition/update")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let err: ErrorBody = serde_json::from_slice(&body).unwrap();
+    assert!(
+        err.error.contains("audition is not running"),
+        "error should mention idle audition: {}",
         err.error
     );
 }

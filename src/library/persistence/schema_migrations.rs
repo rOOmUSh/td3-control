@@ -92,7 +92,10 @@ pub(super) fn apply_schema_migrations(conn: &Connection) -> Result<(), Td3Error>
 
 fn migrate_v1_to_v2(conn: &Connection) -> Result<(), Td3Error> {
     let tx = conn.unchecked_transaction().map_err(|e| {
-        Td3Error::Other(format!("library: begin v1->v2 migration transaction: {}", e))
+        Td3Error::Other(format!(
+            "library: begin v1->v2 migration transaction: {}",
+            e
+        ))
     })?;
 
     ensure_v2_item_columns(&tx)?;
@@ -134,8 +137,9 @@ fn ensure_v2_item_columns(conn: &Connection) -> Result<(), Td3Error> {
     for (name, decl) in V2_ITEM_COLUMNS {
         if !existing.iter().any(|c| c == name) {
             let sql = format!("ALTER TABLE items ADD COLUMN {} {}", name, decl);
-            conn.execute(&sql, [])
-                .map_err(|e| Td3Error::Other(format!("library: alter items add '{}': {}", name, e)))?;
+            conn.execute(&sql, []).map_err(|e| {
+                Td3Error::Other(format!("library: alter items add '{}': {}", name, e))
+            })?;
         }
     }
     Ok(())
@@ -190,8 +194,9 @@ fn populate_v2_item_columns_from_json(conn: &Connection) -> Result<(), Td3Error>
 fn ensure_v2_item_indexes(conn: &Connection) -> Result<(), Td3Error> {
     for name in LEGACY_ITEM_INDEXES {
         let sql = format!("DROP INDEX IF EXISTS {}", name);
-        conn.execute(&sql, [])
-            .map_err(|e| Td3Error::Other(format!("library: drop legacy index '{}': {}", name, e)))?;
+        conn.execute(&sql, []).map_err(|e| {
+            Td3Error::Other(format!("library: drop legacy index '{}': {}", name, e))
+        })?;
     }
 
     conn.execute_batch(

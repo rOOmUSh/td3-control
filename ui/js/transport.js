@@ -1,5 +1,7 @@
 // Main-page transport - BPM knob, play toggle, and the timeline-aware beat
-// loop that cycles patterns through the device scratch slot.
+// loop. LIVE UPDATE ON cycles patterns through the device scratch slot.
+// LIVE UPDATE OFF follows the same timeline with host-sequenced no-save
+// audition updates.
 //
 // Dual-tracker playback model (per the GROUND TRUTH RULE): the TD-3 always
 // plays its in-flight buffer until wrap, even after a new SysEx save. So:
@@ -7,9 +9,10 @@
 //   currentDevicePatternIdx  - what the device is audibly looping right
 //                              now. Updates at wrap (device swaps in the
 //                              scratch contents). Drives step highlighting.
-//   queuedPatternIdx         - what the scratch slot currently holds.
-//                              Updates on every savePattern call. Becomes
-//                              currentDevicePatternIdx at the next wrap.
+//   queuedPatternIdx         - what the next wrap should adopt. In LIVE
+//                              UPDATE ON this mirrors the scratch slot. In
+//                              no-save audition it mirrors the pending host
+//                              schedule update.
 //
 // Timeline cursor (currentTlPos) is used for pre-load math ("what slot
 // comes next after the currently-playing one?") and for the column
@@ -19,11 +22,12 @@
 // past it on a checkbox-driven timeline rearrangement.
 //
 // Playback contract:
-//   1. Start finds the first non-empty timeline slot and saves that pattern
-//      to the scratch (LIVE UPDATE ON). Seeds both trackers to that pattern.
-//   2. At the configured pre-load step we save the next-in-timeline pattern
-//      to scratch, unless it matches the current one. queuedPatternIdx
-//      updates to reflect the save.
+//   1. Start finds the first non-empty timeline slot. LIVE UPDATE ON saves
+//      that pattern to scratch; no-save audition starts that host schedule.
+//      Both seed the trackers to that pattern.
+//   2. At the configured pre-load step we queue the next-in-timeline pattern,
+//      unless it matches the current one. LIVE UPDATE ON writes scratch;
+//      no-save audition records the pending host schedule swap.
 //   3. At the active-steps wrap: currentDevicePatternIdx adopts
 //      queuedPatternIdx (device just swapped buffers), and the cursor is
 //      re-synced via advanceCursorToDevicePattern - in the uninterrupted
@@ -33,11 +37,11 @@
 //   4. Mid-play structural changes (checkbox toggles, drag-to-reorder,
 //      timeline edits) fire through onStateChangeDuringPlay:
 //        • 0→1 checked-mode transition ("first checkbox"): immediately
-//          save the first slot of the new checked timeline to scratch so
-//          the device swaps to it at the next wrap; suppress further
-//          pre-loads this cycle.
-//        • Any other structural change: just clamp the cursor so pre-load
-//          math and column highlight stay valid.
+//          queue the first slot of the new checked timeline so playback
+//          swaps to it at the next wrap; suppress further pre-loads this
+//          cycle.
+//        • Any other structural change: clamp the cursor so pre-load math
+//          and column highlight stay valid.
 
 import * as state from './multipattern/multipattern-state.js';
 import { api } from './api.js';
@@ -51,11 +55,23 @@ import {
     preloadStep,
 } from './shared/transport-sync-timing.js';
 import {
+    adoptQueuedTiming,
+    playbackTiming,
+    snapshotTiming,
+} from './shared/audible-timing.js';
+import {
+    startSyncFromTargetMicros,
+    targetEpochMicrosForPlay,
+} from './remote-sync-timing.js';
+import * as remoteSync from './remote-sync.js';
+import { applyRemoteTripletCommand } from './remote-sync-triplet.js';
+import {
     firstTimelinePos,
     nextTimelinePos,
     advanceCursorToDevicePattern,
     countNonEmpty,
     needsImmediateScratchSave,
+    shouldUpdateHostAuditionPattern,
 } from './multipattern/multipattern-transport-helpers.js';
 import { bindPointerPressActivation } from './shared/pointer-activation.js';
 
@@ -82,11 +98,19 @@ let currentStep = -1;
 let localWrapCount = 0;
 let currentTlPos = -1;            // -1 means single-pattern loop mode
 let nextPatternSent = false;      // guards pre-load from double-firing
+// True while the main transport is running host-sequenced no-save audition:
+// the active timeline is followed with timed Note On/Off, no scratch write,
+// and no device clock. Drives which stop endpoint is called.
+let auditionMode = false;
+let auditionUpdateInFlight = false;
+let auditionUpdatePending = false;
 let scratchSlot = { group: 1, pattern: 1, side: 'A' };
 
 // Dual-tracker model - see module header.
 let currentDevicePatternIdx = null;   // what device is audibly looping
 let queuedPatternIdx = null;          // what's in scratch right now
+let currentDeviceTiming = null;       // active steps/triplet audibly in flight
+let queuedDeviceTiming = null;        // active steps/triplet queued for wrap
 
 // Checked-mode transition detector. True = checked mode was active on the
 // last structural change. Flipping false→true is the "first checkbox"
@@ -126,6 +150,11 @@ export function init(statusFn, scratch) {
 
     state.onChange(onStateChangeDuringPlay);
 
+    remoteSync.init({
+        setStatus,
+        onCommand: handleRemoteCommand,
+    });
+
     bindPointerPressActivation(btnPlay, togglePlay);
 
     // BPM knob: scroll wheel. Coarse = ±1 BPM, fine = ±0.01 BPM.
@@ -136,8 +165,13 @@ export function init(statusFn, scratch) {
         state.setBpm(state.getBpm() + delta);
         updateBpmDisplay();
         if (state.isPlaying()) restartBeatTimer();
+        mirrorRemoteBpm();
         if (state.isPlaying() && state.isConnected()) {
-            api.transportBpm(state.getBpm()).catch(err => setStatus('BPM error: ' + err.message));
+            if (auditionMode) {
+                syncAuditionPattern();
+            } else {
+                api.transportBpm(state.getBpm()).catch(err => setStatus('BPM error: ' + err.message));
+            }
         }
     });
 
@@ -154,8 +188,13 @@ export function init(statusFn, scratch) {
                 state.setBpm(Math.trunc(state.getBpm()));
             }
             updateBpmDisplay();
+            mirrorRemoteBpm();
             if (state.isPlaying() && state.isConnected()) {
-                api.transportBpm(state.getBpm()).catch(err => setStatus('BPM error: ' + err.message));
+                if (auditionMode) {
+                    syncAuditionPattern();
+                } else {
+                    api.transportBpm(state.getBpm()).catch(err => setStatus('BPM error: ' + err.message));
+                }
             }
         });
     }
@@ -180,17 +219,115 @@ export function init(statusFn, scratch) {
         if (!dragging) return;
         dragging = false;
         if (state.isPlaying()) restartBeatTimer();
+        mirrorRemoteBpm();
         if (state.isPlaying() && state.isConnected()) {
-            api.transportBpm(state.getBpm()).catch(err => setStatus('BPM error: ' + err.message));
+            if (auditionMode) {
+                syncAuditionPattern();
+            } else {
+                api.transportBpm(state.getBpm()).catch(err => setStatus('BPM error: ' + err.message));
+            }
         }
     });
+}
+
+export async function stopPlaybackForModeChange() {
+    if (!state.isPlaying()) return;
+    stopWrapSync();
+    if (auditionMode) {
+        await api.auditionStop();
+    } else {
+        await api.transportStop();
+    }
+    state.setPlaying(false);
+    stopBeatTimer();
+    auditionMode = false;
+    auditionUpdatePending = false;
+    auditionUpdateInFlight = false;
+    currentTlPos = -1;
+    currentStep = -1;
+    nextPatternSent = false;
+    updatePlayButton();
+}
+
+export function syncAuditionPattern() {
+    if (!state.isPlaying() || !auditionMode || !state.isConnected()) return;
+    auditionUpdatePending = true;
+    if (auditionUpdateInFlight) return;
+    flushAuditionUpdate();
+}
+
+export function isAuditionActive() {
+    return state.isPlaying() && auditionMode;
+}
+
+async function flushAuditionUpdate() {
+    auditionUpdateInFlight = true;
+    try {
+        while (auditionUpdatePending) {
+            auditionUpdatePending = false;
+            if (!state.isPlaying() || !auditionMode || !state.isConnected()) break;
+            const pat = state.getPattern(playingPatternIdx());
+            if (!pat) break;
+            await api.auditionUpdate(pat, state.getBpm(), true);
+        }
+    } catch (err) {
+        setStatus('Audition update error: ' + err.message);
+    } finally {
+        auditionUpdateInFlight = false;
+        if (auditionUpdatePending && state.isPlaying() && auditionMode && state.isConnected()) {
+            flushAuditionUpdate();
+        }
+    }
+}
+
+async function handleRemoteCommand(command) {
+    if (!command || !command.command) return;
+    if (command.command === 'play') {
+        if (Number.isFinite(command.centibpm)) {
+            state.setBpm(command.centibpm / 100);
+            updateBpmDisplay();
+        }
+        if (!state.isPlaying()) {
+            await togglePlay(null, {
+                remoteTriggered: true,
+                targetEpochMicros: command.targetEpochMicros,
+            });
+        }
+    } else if (command.command === 'stop') {
+        if (state.isPlaying()) {
+            await togglePlay(null, { remoteTriggered: true });
+        }
+    } else if (command.command === 'bpm') {
+        if (!Number.isFinite(command.centibpm)) return;
+        state.setBpm(command.centibpm / 100);
+        updateBpmDisplay();
+        if (state.isPlaying()) restartBeatTimer();
+        if (state.isPlaying() && state.isConnected()) {
+            if (auditionMode) {
+                syncAuditionPattern();
+            } else {
+                api.transportBpm(state.getBpm()).catch(err => setStatus('BPM error: ' + err.message));
+            }
+        }
+    } else if (command.command === 'triplet') {
+        if (applyRemoteTripletCommand(command, state)) {
+            setStatus(`Remote triplet ${command.triplet ? 'ON' : 'OFF'}`);
+        }
+    }
+}
+
+function mirrorRemoteBpm() {
+    if (!state.isPlaying() || !remoteSync.isEnabled()) return;
+    remoteSync.relayBpm(Math.round(state.getBpm() * 100))
+        .catch(err => setStatus('Remote BPM error: ' + err.message));
 }
 
 // ---------------------------------------------------------------------------
 // Play toggle
 // ---------------------------------------------------------------------------
 
-async function togglePlay() {
+async function togglePlay(event, options = {}) {
+    const remoteTriggered = !!options.remoteTriggered;
     if (!state.isConnected()) {
         setStatus('Connect MIDI first');
         return;
@@ -198,21 +335,70 @@ async function togglePlay() {
     try {
         if (state.isPlaying()) {
             stopWrapSync();
-            await api.transportStop();
+            if (auditionMode) {
+                await api.auditionStop();
+            } else {
+                await api.transportStop();
+            }
             state.setPlaying(false);
             stopBeatTimer();
+            auditionMode = false;
+            auditionUpdatePending = false;
+            auditionUpdateInFlight = false;
             setStatus('Stopped');
+            if (!remoteTriggered && remoteSync.isEnabled()) {
+                remoteSync.relayStop()
+                    .catch(err => setStatus('Remote stop error: ' + err.message));
+            }
         } else {
             // Stop any active per-card preview first - they share the
-            // device transport, so starting main play over a preview would
-            // double-send transportStart and leave the preview button lit.
+            // device output, so starting main play over a preview would
+            // double-send and leave the preview button lit.
             await preview.stop();
-            await startTimelinePlayback();
-            primeFirstStepHighlight();
-            const startSync = await api.transportStart(state.getBpm());
-            state.setPlaying(true);
-            startBeatTimer(startSync);
-            startWrapSync(startSync);
+
+            let targetEpochMicros = Number.isFinite(options.targetEpochMicros)
+                ? options.targetEpochMicros
+                : null;
+            if (!remoteTriggered && remoteSync.isEnabled()) {
+                targetEpochMicros = plannedStartTargetEpochMicros(event);
+                await remoteSync.relayPlay({
+                    centibpm: Math.round(state.getBpm() * 100),
+                    targetEpochMicros,
+                });
+            }
+
+            // LIVE UPDATE off: host-sequence the active timeline with timed
+            // Note On/Off, no scratch write, and no device clock.
+            if (!state.isLiveUpdate()) {
+                auditionMode = false;
+                await startTimelinePlayback();
+                const patIdx = currentDevicePatternIdx !== null
+                    ? currentDevicePatternIdx
+                    : playingPatternIdx();
+                const pat = state.getPattern(patIdx);
+                if (!pat) { setStatus('No pattern to audition'); return; }
+                await api.auditionPattern(pat, state.getBpm(), true, targetEpochMicros);
+                auditionMode = true;
+                auditionUpdatePending = false;
+                auditionUpdateInFlight = false;
+                state.setPlaying(true);
+                primeFirstStepHighlight();
+                startBeatTimer(startSyncFromTargetMicros(targetEpochMicros));
+                const activeTimelineSlots = countNonEmpty(state.getTimeline());
+                if (currentTlPos >= 0 && activeTimelineSlots > 1) {
+                    setStatus(`Host audition P${patIdx + 1} - loop 1/${activeTimelineSlots}`);
+                } else {
+                    setStatus(`Host audition: P${patIdx + 1} (no save)`);
+                }
+            } else {
+                auditionMode = false;
+                await startTimelinePlayback();
+                primeFirstStepHighlight();
+                const startSync = await api.transportStart(state.getBpm(), targetEpochMicros);
+                state.setPlaying(true);
+                startBeatTimer(startSync);
+                startWrapSync(startSync);
+            }
         }
         updatePlayButton();
     } catch (err) {
@@ -220,8 +406,79 @@ async function togglePlay() {
     }
 }
 
+function plannedStartPatternIdx() {
+    const tl = state.getTimeline();
+    const start = firstTimelinePos(tl);
+    const activeTimelineSlots = countNonEmpty(tl);
+    if (activeTimelineSlots >= 1 && start >= 0) {
+        const patIdx = tl[start] - 1;
+        if (patIdx >= 0 && patIdx < state.getPatternCount()) return patIdx;
+    }
+    return state.getFocusedIdx();
+}
+
+function plannedStartTargetEpochMicros(event) {
+    const patIdx = plannedStartPatternIdx();
+    const activeSteps = patIdx !== null ? state.getActiveSteps(patIdx) : state.getActiveSteps();
+    const triplet = patIdx !== null ? state.getTriplet(patIdx) : state.getTriplet();
+    return targetEpochMicrosForPlay(event, state.getBpm(), activeSteps, triplet);
+}
+
+function timingForPattern(patIdx) {
+    const fallback = {
+        activeSteps: patIdx !== null ? state.getActiveSteps(patIdx) : state.getActiveSteps(),
+        triplet: patIdx !== null ? state.getTriplet(patIdx) : state.getTriplet(),
+    };
+    const pat = patIdx !== null ? state.getPattern(patIdx) : null;
+    return snapshotTiming(pat, fallback);
+}
+
+function currentPlaybackTiming() {
+    return playbackTiming({
+        liveUpdate: state.isLiveUpdate(),
+        auditionMode,
+        audibleTiming: currentDeviceTiming,
+        fallbackTiming: timingForPattern(playingPatternIdx()),
+    });
+}
+
+function seedDeviceTiming(patIdx) {
+    if (patIdx === null || patIdx === undefined) {
+        currentDeviceTiming = null;
+        queuedDeviceTiming = null;
+        return;
+    }
+    currentDeviceTiming = timingForPattern(patIdx);
+    queuedDeviceTiming = currentDeviceTiming;
+}
+
+function noteQueuedDeviceTiming(patIdx, pattern = null) {
+    if (patIdx === null || patIdx === undefined) return;
+    queuedPatternIdx = patIdx;
+    queuedDeviceTiming = snapshotTiming(pattern || state.getPattern(patIdx), {
+        activeSteps: state.getActiveSteps(patIdx),
+        triplet: state.getTriplet(patIdx),
+    });
+}
+
+function adoptQueuedDeviceTiming() {
+    if (queuedPatternIdx !== null) {
+        currentDevicePatternIdx = queuedPatternIdx;
+        currentDeviceTiming = adoptQueuedTiming(currentDeviceTiming, queuedDeviceTiming)
+            || timingForPattern(currentDevicePatternIdx);
+    }
+}
+
+export function noteLiveScratchPatternQueued(patIdx, pattern = null) {
+    if (!state.isPlaying() || !state.isLiveUpdate() || auditionMode) return;
+    noteQueuedDeviceTiming(patIdx, pattern);
+}
+
 /**
- * Prime the timeline cursor + send the first pattern to the scratch slot.
+ * Prime the timeline cursor and playback trackers. In LIVE UPDATE ON mode
+ * this also sends the first pattern to the scratch slot. In no-save host
+ * audition mode it only chooses the first pattern to audition.
+ *
  * Called once on play-start. When the timeline is empty or single-slot we
  * fall back to focused-pattern loop mode: currentTlPos stays -1, advanceBeat
  * will leave it alone.
@@ -238,8 +495,29 @@ async function startTimelinePlayback() {
         currentTlPos = -1;
         currentStep = -1;
         nextPatternSent = false;
-        currentDevicePatternIdx = null;
-        queuedPatternIdx = null;
+        const focused = state.getFocusedIdx();
+        const patIdx = start >= 0 ? tl[start] - 1 : focused;
+        const validPatIdx = Number.isInteger(patIdx)
+            && patIdx >= 0
+            && patIdx < state.getPatternCount();
+        currentDevicePatternIdx = validPatIdx ? patIdx : null;
+        queuedPatternIdx = validPatIdx ? patIdx : null;
+        seedDeviceTiming(validPatIdx ? patIdx : null);
+        if (validPatIdx && state.isLiveUpdate() && state.isConnected()) {
+            try {
+                const pat = state.getPattern(patIdx);
+                if (pat) {
+                    await api.savePattern(
+                        scratchSlot.group, scratchSlot.pattern, scratchSlot.side, pat,
+                    );
+                    setStatus(`Playing P${patIdx + 1}`);
+                    return;
+                }
+            } catch (err) {
+                setStatus('Timeline save error: ' + err.message);
+                return;
+            }
+        }
         return;
     }
 
@@ -251,6 +529,7 @@ async function startTimelinePlayback() {
     const firstPatIdx = tl[start] - 1;
     currentDevicePatternIdx = firstPatIdx;
     queuedPatternIdx = firstPatIdx;
+    seedDeviceTiming(firstPatIdx);
 
     if (state.isLiveUpdate() && state.isConnected()) {
         try {
@@ -281,9 +560,7 @@ async function startTimelinePlayback() {
  */
 function stepIntervalMs() {
     const bpm = state.getBpm();
-    const patIdx = playingPatternIdx();
-    const triplet = patIdx !== null ? state.getTriplet(patIdx) : state.getTriplet();
-    return timingStepIntervalMs(bpm, triplet);
+    return timingStepIntervalMs(bpm, currentPlaybackTiming().triplet);
 }
 
 function startBeatTimer(startSync) {
@@ -312,6 +589,8 @@ function stopBeatTimer() {
     nextPatternSent = false;
     currentDevicePatternIdx = null;
     queuedPatternIdx = null;
+    currentDeviceTiming = null;
+    queuedDeviceTiming = null;
     prevCheckedMode = false;
     lastSeenTl = null;
     highlightStep(-1);
@@ -333,11 +612,11 @@ function primeFirstStepHighlight() {
 
 /**
  * Resolve which pattern is audibly playing right now. In timeline mode
- * this is currentDevicePatternIdx (last adopted at wrap); in single-pattern
- * mode it's the focused card.
+ * this is currentDevicePatternIdx (last adopted at wrap). When no device
+ * tracker has been seeded, fall back to the focused card.
  */
 function playingPatternIdx() {
-    if (currentTlPos >= 0 && currentDevicePatternIdx !== null) {
+    if (currentDevicePatternIdx !== null) {
         return currentDevicePatternIdx;
     }
     return state.getFocusedIdx();
@@ -348,18 +627,17 @@ function playingPatternIdx() {
  * to the current pattern's active-step window.
  */
 function advanceBeat() {
-    const patIdx = playingPatternIdx();
-    const activeSteps = patIdx !== null ? state.getActiveSteps(patIdx) : state.getActiveSteps();
+    const activeSteps = currentPlaybackTiming().activeSteps;
     const nextStep = currentStep + 1;
 
-    // --- Pre-load window: save the next timeline pattern to scratch ------
+    // --- Pre-load window: queue the next timeline pattern ----------------
     if (currentTlPos >= 0) {
         const preStep = preloadStep(activeSteps, ENV_PRELOAD_SAVE_STEP);
         if (nextStep === preStep && !nextPatternSent) {
             nextPatternSent = true;
             const tl = state.getTimeline();
             const target = nextTimelinePos(tl, currentTlPos);
-            if (target >= 0 && state.isLiveUpdate() && state.isConnected()) {
+            if (target >= 0) {
                 const nextNum = tl[target];
                 const curNum = tl[currentTlPos];
                 if (nextNum !== curNum && nextNum >= 1) {
@@ -367,10 +645,19 @@ function advanceBeat() {
                     const pat = state.getPattern(nextPatIdx);
                     if (pat) {
                         queuedPatternIdx = nextPatIdx;
-                        api.savePattern(
-                            scratchSlot.group, scratchSlot.pattern, scratchSlot.side, pat,
-                        ).then(() => setStatus(`Pre-loaded P${nextPatIdx + 1}`))
-                         .catch(err => setStatus('Pre-load error: ' + err.message));
+                        const queuedTiming = snapshotTiming(pat, {
+                            activeSteps: state.getActiveSteps(nextPatIdx),
+                            triplet: state.getTriplet(nextPatIdx),
+                        });
+                        if (state.isLiveUpdate() && state.isConnected()) {
+                            api.savePattern(
+                                scratchSlot.group, scratchSlot.pattern, scratchSlot.side, pat,
+                            ).then(() => {
+                                queuedDeviceTiming = queuedTiming;
+                                setStatus(`Pre-loaded P${nextPatIdx + 1}`);
+                            })
+                             .catch(err => setStatus('Pre-load error: ' + err.message));
+                        }
                     }
                 }
             }
@@ -399,10 +686,18 @@ function handlePatternWrap(rustWrapIndex) {
     }
     nextPatternSent = false;
 
-    if (currentTlPos < 0) return;
-    if (queuedPatternIdx !== null) {
-        currentDevicePatternIdx = queuedPatternIdx;
+    const previousPatIdx = currentDevicePatternIdx;
+    adoptQueuedDeviceTiming();
+    if (shouldUpdateHostAuditionPattern(
+        state.isLiveUpdate(),
+        state.isConnected(),
+        auditionMode,
+        previousPatIdx,
+        currentDevicePatternIdx,
+    )) {
+        syncAuditionPattern();
     }
+    if (currentTlPos < 0) return;
     const tl = state.getTimeline();
     const next = advanceCursorToDevicePattern(
         tl, currentTlPos, currentDevicePatternIdx,
@@ -442,16 +737,14 @@ function stopWrapSync() {
 
 async function pollWrapSync() {
     if (!state.isPlaying() || !wrapSync.transportId) return;
-    const patIdx = playingPatternIdx();
-    const activeSteps = patIdx !== null ? state.getActiveSteps(patIdx) : state.getActiveSteps();
-    const triplet = patIdx !== null ? state.getTriplet(patIdx) : state.getTriplet();
+    const timing = currentPlaybackTiming();
     try {
         const pulse = await api.transportWrapPulse({
             transportId: wrapSync.transportId,
             anchorEpochMs: wrapSync.anchorEpochMs,
             wrapIndex: wrapSync.wrapIndex,
-            activeSteps,
-            triplet,
+            activeSteps: timing.activeSteps,
+            triplet: timing.triplet,
         });
         if (!pulse.ok) return;
         if (!state.isPlaying() || pulse.transportId !== wrapSync.transportId) return;
@@ -534,6 +827,8 @@ function onStateChangeDuringPlay(_patternChanged, structuralChange) {
         currentTlPos = -1;
         currentDevicePatternIdx = null;
         queuedPatternIdx = null;
+        currentDeviceTiming = null;
+        queuedDeviceTiming = null;
         highlightColumn(-1);
         return;
     }
@@ -546,6 +841,7 @@ function onStateChangeDuringPlay(_patternChanged, structuralChange) {
     if (currentTlPos < 0 || currentDevicePatternIdx === null) {
         currentDevicePatternIdx = state.getFocusedIdx();
         queuedPatternIdx = currentDevicePatternIdx;
+        seedDeviceTiming(currentDevicePatternIdx);
     }
 
     // Clamp cursor to a slot that matches what the device is playing.
@@ -565,12 +861,13 @@ function onStateChangeDuringPlay(_patternChanged, structuralChange) {
 }
 
 /**
- * Save the given timeline slot's pattern to the scratch slot immediately.
- * Used whenever a structural change leaves the scratch buffer pointing at a
- * pattern that the new timeline no longer wants the device to play (first
- * checkbox, last uncheck, mid-mode uncheck of the playing pattern, etc.).
- * Sets nextPatternSent=true to block pre-load from firing a second save in
- * the current cycle.
+ * Queue the given timeline slot's pattern immediately. LIVE UPDATE ON also
+ * writes the scratch slot. No-save audition records the same queued pattern
+ * so the host schedule can swap at the next wrap.
+ *
+ * Used whenever a structural change leaves the queued pattern different from
+ * the new timeline target. Sets nextPatternSent=true to block pre-load from
+ * firing a second queue operation in the current cycle.
  */
 function immediateScratchSave(tl, slot) {
     const num = tl[slot];
@@ -581,9 +878,16 @@ function immediateScratchSave(tl, slot) {
     if (!state.isLiveUpdate() || !state.isConnected()) return;
     const pat = state.getPattern(patIdx);
     if (!pat) return;
+    const queuedTiming = snapshotTiming(pat, {
+        activeSteps: state.getActiveSteps(patIdx),
+        triplet: state.getTriplet(patIdx),
+    });
     api.savePattern(
         scratchSlot.group, scratchSlot.pattern, scratchSlot.side, pat,
-    ).then(() => setStatus(`P${patIdx + 1} scratched (timeline sync)`))
+    ).then(() => {
+        queuedDeviceTiming = queuedTiming;
+        setStatus(`P${patIdx + 1} scratched (timeline sync)`);
+    })
      .catch(err => setStatus('Scratch error: ' + err.message));
 }
 
@@ -612,9 +916,16 @@ export function rescratchUpcoming() {
     const pat = state.getPattern(nextPatIdx);
     if (!pat) return;
     queuedPatternIdx = nextPatIdx;
+    const queuedTiming = snapshotTiming(pat, {
+        activeSteps: state.getActiveSteps(nextPatIdx),
+        triplet: state.getTriplet(nextPatIdx),
+    });
     api.savePattern(
         scratchSlot.group, scratchSlot.pattern, scratchSlot.side, pat,
-    ).then(() => setStatus(`Re-scratched P${nextPatIdx + 1}`))
+    ).then(() => {
+        queuedDeviceTiming = queuedTiming;
+        setStatus(`Re-scratched P${nextPatIdx + 1}`);
+    })
      .catch(err => setStatus('Re-scratch error: ' + err.message));
 }
 

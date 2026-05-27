@@ -155,10 +155,9 @@ export function setPackage(pkg) {
     // through to the backend for combined-format placement. If the caller
     // omits it or hands a wrong-length array we simply fall back to the 4
     // active basslines (combined exports will use legacy G1 B-side layout).
-    let basslinesFull;
-    if (Array.isArray(pkg.basslinesFull) && pkg.basslinesFull.length === 20) {
-        basslinesFull = pkg.basslinesFull;
-    }
+    const basslinesFull = Array.isArray(pkg.basslinesFull) && pkg.basslinesFull.length === 20
+        ? pkg.basslinesFull
+        : undefined;
     pkgState = {
         packageId: pkg.packageId,
         label: pkg.label || '',

@@ -27,7 +27,6 @@ import {
     buildActiveMask,
     generatePitchSequence,
     encodeStepsFromPitches,
-    generateCandidate,
 } from './magic-generator.js';
 import { computeMetrics, validateCandidate } from './magic-validator.js';
 import { scoreCandidate } from './magic-scorer.js';
@@ -38,7 +37,6 @@ import { decodePitch, nearestPitch } from './magic-pitch-encoding.js';
 
 const TOTAL_STEPS = 16;
 const ACCEPTANCE_THRESHOLD = 65;
-const REPAIR_THRESHOLD = 50; // candidates scoring at least this get repaired
 
 // Candidate budgets per the user-approved hand-off:
 //   single-shot control RANDOMIZE → 50

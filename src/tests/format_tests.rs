@@ -201,6 +201,26 @@ fn steps_rejects_missing_steps() {
 }
 
 #[test]
+fn steps_accepts_rows_only_through_active_steps() {
+    let data = include_str!("../../tests/fixtures/eight_step_active_only.steps.txt");
+    let pat = steps_txt::import(data).unwrap();
+    assert_eq!(pat.active_steps, 8);
+    assert!(!pat.triplet);
+    assert_eq!(pat.step[4].slide, crate::step::Slide::On);
+    assert_eq!(pat.step[8].note, 0);
+    assert_eq!(pat.step[8].time, crate::step::Time::Normal);
+}
+
+#[test]
+fn steps_rejects_missing_declared_active_step() {
+    let data = "format=td3-stepdsl-v1\nactive_steps=8\ntriplet_time=off\n\n\
+        01  C:---:N\n02  C:---:N\n03  C:---:N\n04  C:---:N\n\
+        05  C:---:N\n06  C:---:N\n07  C:---:N\n";
+    let err = steps_txt::import(data).unwrap_err().to_string();
+    assert!(err.contains("missing steps: [8]"), "got: {}", err);
+}
+
+#[test]
 fn steps_rejects_invalid_time() {
     let mut lines = String::from("format=td3-stepdsl-v1\nactive_steps=16\ntriplet_time=off\n\n");
     for i in 1..=16 {

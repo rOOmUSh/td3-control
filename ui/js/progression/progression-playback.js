@@ -21,6 +21,7 @@ export async function startPlayback({
     bpm,
     transport,
     stopAllPreviews,
+    liveUpdate = true,
     setPlaying,
     setStatus,
 }) {
@@ -29,6 +30,14 @@ export async function startPlayback({
     }
 
     const firstPatIdx = firstTimelinePatternIndex(timeline);
+    if (!liveUpdate) {
+        await api.auditionPattern(getPattern(firstPatIdx), bpm, true);
+        setPlaying(true);
+        await transport.start(null);
+        setStatus(`Host audition: P${firstPatIdx + 1} (no save)`);
+        return firstPatIdx;
+    }
+
     await api.savePattern(
         scratch.group, scratch.pattern, scratch.side,
         getPattern(firstPatIdx)
@@ -44,13 +53,18 @@ export async function stopPlayback({
     api,
     transport,
     resetTimeline,
+    auditionMode = false,
     setPlaying,
     setStatus,
 }) {
     if (typeof transport.stopWrapSync === 'function') {
         transport.stopWrapSync();
     }
-    await api.transportStop();
+    if (auditionMode) {
+        await api.auditionStop();
+    } else {
+        await api.transportStop();
+    }
     setPlaying(false);
     transport.stop();
     resetTimeline();

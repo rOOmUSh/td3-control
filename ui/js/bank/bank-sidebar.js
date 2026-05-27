@@ -2,7 +2,7 @@
 // state.activeSidebar and nudge filters as appropriate. Kept dumb: the
 // actual data refresh is driven by bank-main's subscription.
 
-import { state, setState, setFilter, clearSelection } from './bank-state.js';
+import { state, setState, setFilter, clearAllSelections } from './bank-state.js';
 
 const ENTRIES = [
     { id: 'all',            label: 'All Items',       icon: 'library_music',       hash: '#items' },
@@ -78,7 +78,7 @@ function renderItem(entry) {
 
     const activate = () => {
         if (state.activeSidebar === entry.id) return;
-        clearSelection();
+        clearAllSelections();
         // Leaving the Snapshots view discards its transient detail state so
         // that re-entering the view starts from the card list again.
         const patch = { activeSidebar: entry.id };

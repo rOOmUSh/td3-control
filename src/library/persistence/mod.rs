@@ -19,7 +19,6 @@ use std::time::Duration;
 
 use rusqlite::{params, params_from_iter, types::Value, Connection};
 use serde::de::DeserializeOwned;
-use serde::Serialize;
 
 use crate::error::Td3Error;
 

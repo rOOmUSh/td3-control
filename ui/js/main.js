@@ -9,13 +9,18 @@ import * as multipatternBank from './multipattern/multipattern-bank.js';
 import * as multipatternDeviceIo from './multipattern/multipattern-device-io.js';
 import * as multipatternTimeline from './multipattern/multipattern-timeline.js';
 import * as multipatternPreview from './multipattern/multipattern-preview.js';
+import * as multipatternReset from './multipattern/multipattern-reset.js';
+import { buildRbsExportPayload, buildSingleFileExportPlan } from './multipattern/multipattern-export.js';
+import { detectImportFormat, unsupportedImportMessage } from './multipattern/multipattern-import.js';
 import * as transport from './transport.js';
+import * as remoteSync from './remote-sync.js';
 import * as selectors from './selectors.js';
 import * as randomize from './randomize.js';
 import * as midiStatus from './midi-status.js';
 import * as keyboard from './keyboard.js';
 import * as history from './history.js';
 import * as deviceBackup from './device-backup.js';
+import { resolveLiveUpdateTargetIndex } from './multipattern/live-update-target.js';
 import { api } from './api.js';
 import { bankApi } from './bank/bank-api.js';
 import { subscribeControlQueue } from './shared/add-to-control.js';
@@ -69,9 +74,6 @@ const btnReset = document.getElementById('btn-reset');
 const btnLive = document.getElementById('btn-live');
 const slicerInput = document.getElementById('slicer-input');
 const btnSlicer = document.getElementById('btn-slicer');
-const bankCount = document.getElementById('bank-count');
-const bankSizeInput = document.getElementById('bank-size');
-const btnSavePool = document.getElementById('btn-save-pool');
 const btnRandSl = document.getElementById('btn-rand-sl');
 const btnRandAcc = document.getElementById('btn-rand-acc');
 const btnRandRst = document.getElementById('btn-rand-rst');
@@ -104,20 +106,83 @@ let scratch = { group: 1, pattern: 1, side: 'A' };
 
 // Debounced live-update save - always writes to scratch slot
 let liveTimer = null;
+function cancelLiveSave() {
+    if (liveTimer) {
+        clearTimeout(liveTimer);
+        liveTimer = null;
+    }
+}
+
+function liveUpdateTargetIndex() {
+    return resolveLiveUpdateTargetIndex(
+        state.getCheckedArray(),
+        state.getFocusedIdx(),
+        state.getPatternCount(),
+    );
+}
+
+function hostAuditionIsActive() {
+    return transport.isAuditionActive() || multipatternPreview.isAuditionActive();
+}
+
+async function saveLivePatternNow(statusPrefix = 'Live sent') {
+    const patIdx = liveUpdateTargetIndex();
+    if (patIdx < 0) {
+        setStatus('Live update ON: no pattern to send');
+        return false;
+    }
+    if (!state.isConnected()) {
+        setStatus('Live update ON: connect MIDI to send scratch');
+        return false;
+    }
+    const pat = state.getPattern(patIdx);
+    if (!pat) {
+        setStatus('Live update ON: no pattern to send');
+        return false;
+    }
+    const sentTiming = {
+        active_steps: pat.active_steps,
+        triplet: pat.triplet,
+    };
+    await api.savePattern(
+        scratch.group, scratch.pattern, scratch.side,
+        pat,
+    );
+    transport.noteLiveScratchPatternQueued(patIdx, sentTiming);
+    setStatus(`${statusPrefix} P${patIdx + 1} to ${scratch.label}`);
+    return true;
+}
+
 function scheduleLiveSave() {
-    if (!state.isLiveUpdate() || !state.isConnected()) return;
-    clearTimeout(liveTimer);
+    if (!state.isLiveUpdate() || !state.isConnected() || hostAuditionIsActive()) return;
+    cancelLiveSave();
     liveTimer = setTimeout(async () => {
+        liveTimer = null;
+        if (!state.isLiveUpdate() || !state.isConnected() || hostAuditionIsActive()) return;
         try {
-            await api.savePattern(
-                scratch.group, scratch.pattern, scratch.side,
-                state.getPattern()
-            );
-            setStatus('Live sent → ' + scratch.label);
+            await saveLivePatternNow('Live sent');
         } catch (err) {
             setStatus('Live error: ' + err.message);
         }
     }, 150);
+}
+
+async function toggleLiveUpdate() {
+    const next = !state.isLiveUpdate();
+    state.setLiveUpdate(next);
+    if (!next) {
+        cancelLiveSave();
+        setStatus('Live update OFF');
+        return;
+    }
+
+    try {
+        await multipatternPreview.stop();
+        await transport.stopPlaybackForModeChange();
+        await saveLivePatternNow('Live update ON, sent');
+    } catch (err) {
+        setStatus('Live update ON, send error: ' + err.message);
+    }
 }
 
 // Update the LIVE button appearance
@@ -151,11 +216,6 @@ function updateKbToggles() {
     kbStepDisplay.textContent = 'STEP: ' + String(state.getSelectedStep() + 1).padStart(2, '0');
 }
 
-// Update bank counter display
-// function updateBankDisplay() {
-//     bankCount.textContent = state.getBankCount();
-// }
-
 // --- Undo/Redo with debounce ---
 
 let historyDebounce = null;
@@ -187,6 +247,8 @@ state.onChange((patternChanged) => {
     tripletToggle.textContent = tripletAllOn ? 'ON' : 'OFF';
     tripletToggle.classList.toggle('is-active', tripletAllOn);
     if (patternChanged) {
+        transport.syncAuditionPattern();
+        multipatternPreview.syncActiveAudition();
         scheduleLiveSave();
         recordHistory();
     }
@@ -292,6 +354,10 @@ tripletToggle.addEventListener('click', () => {
     if (targets.length === 0) return;
     const next = !targets.every((i) => state.getTriplet(i));
     state.setTripletBulk(targets, next);
+    if (remoteSync.isEnabled()) {
+        remoteSync.relayTriplet(next)
+            .catch(err => setStatus('Remote triplet error: ' + err.message));
+    }
     setStatus(bulkLabel(`Triplet ${next ? 'ON' : 'OFF'}`));
 });
 
@@ -303,8 +369,7 @@ function isTripletAllOnForTargets() {
 
 // Live update toggle
 btnLive.addEventListener('click', () => {
-    state.setLiveUpdate(!state.isLiveUpdate());
-    setStatus(state.isLiveUpdate() ? 'Live update ON' : 'Live update OFF');
+    toggleLiveUpdate();
 });
 
 // Slicer toggle
@@ -369,17 +434,23 @@ btnAutoStep.addEventListener('click', () => {
 });
 
 // Bank size
-// bankSizeInput.addEventListener('change', () => {
-//     state.setBankSize(parseInt(bankSizeInput.value) || 100);
-// });
 
-// RESET ALL PATTERNS - destructive, clears every card in the multipattern
-// list back to the factory default. The secondary toolbar's narrower
-// RESET PATTERN (N) button targets only the current selection.
+// RESET button uses checked patterns when checks are active, otherwise the
+// full pattern list.
 btnReset.addEventListener('click', () => {
-    state.resetAllPatterns();
-    setStatus('All patterns reset');
+    const result = multipatternReset.resetCheckedOrAll(state);
+    setStatus(result.mode === 'all'
+        ? 'All patterns reset'
+        : `Reset ${result.count} checked pattern${result.count === 1 ? '' : 's'}`);
 });
+
+function syncResetButtonChrome() {
+    const checkedCount = state.getCheckedSet().size;
+    btnReset.textContent = multipatternReset.resetToolbarLabel(checkedCount);
+    btnReset.title = multipatternReset.resetToolbarTitle(checkedCount);
+}
+state.onChange(syncResetButtonChrome);
+syncResetButtonChrome();
 
 // SEND TO PROGRESSION - write the current single pattern + sidebar-selected
 // root/scale into a one-shot sessionStorage handoff and navigate to the
@@ -492,82 +563,88 @@ const fileImport = document.getElementById('file-import');
 btnImport.addEventListener('click', () => fileImport.click());
 
 fileImport.addEventListener('change', async () => {
-    const file = fileImport.files[0];
-    if (!file) return;
-    const name = file.name.toLowerCase();
-    // fmt → backend format key. `binary` selects file.arrayBuffer() vs
-    // file.text() and routes the payload into `bytes` vs `content`.
-    // Bank formats (.sqs/.rbs) hold up to 64 patterns and take the picker
-    // path below instead of routing through /api/pattern/import.
-    let fmt, binary = false, bank = false;
-    if (name.endsWith('.toml')) fmt = 'toml';
-    else if (name.endsWith('.json')) fmt = 'json';
-    else if (name.endsWith('.steps.txt') || name.endsWith('.txt')) fmt = 'steps';
-    else if (name.endsWith('.pat')) fmt = 'pat';
-    else if (name.endsWith('.seq')) { fmt = 'seq'; binary = true; }
-    else if (name.endsWith('.mid') || name.endsWith('.midi')) { fmt = 'mid'; binary = true; }
-    else if (name.endsWith('.sqs')) { fmt = 'sqs'; bank = true; }
-    else if (name.endsWith('.rbs')) { fmt = 'rbs'; bank = true; }
-    else {
-        setStatus('Unsupported file type (use .toml, .json, .steps.txt, .pat, .seq, .mid, .sqs, or .rbs)');
+    const files = Array.from(fileImport.files || []);
+    if (files.length === 0) return;
+
+    const jobs = files.map((file) => ({ file, info: detectImportFormat(file.name) }));
+    const unsupported = jobs.find(job => job.info.error);
+    if (unsupported) {
+        setStatus(`${unsupportedImportMessage()}: ${unsupported.file.name}`);
         fileImport.value = '';
         return;
     }
+
     try {
-        if (bank) {
-            // Bank files (.sqs/.rbs) may hold up to 64 patterns. Use the
-            // multi-select picker - Ctrl/Shift click picks an arbitrary
-            // subset, each chosen pattern is appended at the end of the
-            // multipattern list. Focus lands on the first imported
-            // pattern so the card list scrolls to the newcomer.
-            setStatus(`Parsing ${file.name}...`);
-            const buf = await file.arrayBuffer();
-            const bytes = Array.from(new Uint8Array(buf));
-            const res = await api.parsePatternBank(bytes, fmt);
-            await openImportBankPicker({
-                slots: res.slots,
-                title: `Import from ${file.name}`,
-                multi: true,
-                onImport: (patterns) => {
-                    if (!Array.isArray(patterns) || patterns.length === 0) return;
-                    let firstIdx = null;
-                    let appended = 0;
-                    for (const pat of patterns) {
-                        const idx = state.appendPattern(pat);
-                        if (idx == null) break;      // hit 64-cap
-                        if (firstIdx === null) firstIdx = idx;
-                        appended++;
-                    }
-                    if (firstIdx !== null) state.setFocused(firstIdx);
-                    const keyNote = firstIdx !== null
-                        ? applyKeyDetection(patterns[0])
-                        : '';
-                    if (appended < patterns.length) {
-                        setStatus(`Imported ${appended}/${patterns.length} from ${file.name} (64-pattern cap reached)${keyNote}`);
-                    } else {
-                        setStatus(`Imported ${appended} from ${file.name}${keyNote}`);
-                    }
-                },
-            });
-        } else {
-            setStatus('Importing...');
-            const payload = { format: fmt };
-            if (binary) {
+        let imported = 0;
+        let firstPattern = null;
+        let capHit = false;
+
+        for (let fileIndex = 0; fileIndex < jobs.length; fileIndex++) {
+            const { file, info } = jobs[fileIndex];
+            const fmt = info.format;
+            if (info.bank) {
+                // Bank files (.sqs/.rbs) may hold up to 64 patterns. Use the
+                // multi-select picker so each chosen pattern is appended at
+                // the end of the multipattern list.
+                setStatus(`Parsing ${file.name} (${fileIndex + 1}/${jobs.length})...`);
                 const buf = await file.arrayBuffer();
-                payload.bytes = Array.from(new Uint8Array(buf));
+                const bytes = Array.from(new Uint8Array(buf));
+                const res = await api.parsePatternBank(bytes, fmt);
+                await openImportBankPicker({
+                    slots: res.slots,
+                    title: `Import from ${file.name}`,
+                    multi: true,
+                    onImport: (patterns) => {
+                        if (!Array.isArray(patterns) || patterns.length === 0) return;
+                        let firstIdx = null;
+                        let appended = 0;
+                        for (const pat of patterns) {
+                            const idx = state.appendPattern(pat);
+                            if (idx == null) {
+                                capHit = true;
+                                break;
+                            }
+                            if (firstIdx === null) firstIdx = idx;
+                            if (!firstPattern) firstPattern = pat;
+                            appended++;
+                            imported++;
+                        }
+                        if (firstIdx !== null) state.setFocused(firstIdx);
+                        setStatus(`Imported ${appended} from ${file.name}`);
+                    },
+                });
             } else {
-                payload.content = await file.text();
+                setStatus(`Importing ${file.name} (${fileIndex + 1}/${jobs.length})...`);
+                const payload = { format: fmt };
+                if (info.binary) {
+                    const buf = await file.arrayBuffer();
+                    payload.bytes = Array.from(new Uint8Array(buf));
+                } else {
+                    payload.content = await file.text();
+                }
+                const res = await api.importPattern(payload);
+                const idx = state.appendPattern(res.pattern);
+                if (idx == null) {
+                    capHit = true;
+                    break;
+                } else {
+                    if (!firstPattern) firstPattern = res.pattern;
+                    imported++;
+                    setStatus(`Imported ${file.name}`);
+                }
             }
-            const res = await api.importPattern(payload);
-            // Single-format import appends one new pattern at the end of
-            // the multipattern list. Focus follows the newcomer.
-            const idx = state.appendPattern(res.pattern);
-            if (idx == null) {
-                setStatus('Cannot import: 64-pattern cap reached');
-            } else {
-                const keyNote = applyKeyDetection(res.pattern);
-                setStatus(`Imported ${file.name}${keyNote}`);
-            }
+            if (capHit) break;
+        }
+
+        const keyNote = firstPattern ? applyKeyDetection(firstPattern) : '';
+        if (imported === 0 && capHit) {
+            setStatus('Cannot import: 64-pattern cap reached');
+        } else if (imported === 0) {
+            setStatus('No patterns imported');
+        } else if (capHit) {
+            setStatus(`Imported ${imported} pattern${imported === 1 ? '' : 's'} (64-pattern cap reached)${keyNote}`);
+        } else {
+            setStatus(`Imported ${imported} pattern${imported === 1 ? '' : 's'} from ${jobs.length} file${jobs.length === 1 ? '' : 's'}${keyNote}`);
         }
     } catch (err) {
         setStatus('Import error: ' + err.message);
@@ -587,24 +664,61 @@ if (exportPanel) {
         const ext = btn.dataset.ext || format;
         try {
             setStatus(`Exporting ${format}...`);
-            const blob = await api.exportPattern(state.getPattern(), format);
             const g = state.getGroup();
             const p = state.getPatternNum();
             const s = state.getSide();
-            const filename = `pattern_G${g}P${p}${s}.${ext}`;
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            URL.revokeObjectURL(url);
-            setStatus(`Exported ${filename}`);
+            if (format === 'rbs') {
+                const exportData = buildRbsExportPayload(
+                    state.getPatterns(),
+                    state.getCheckedArray(),
+                    state.getAbMode(),
+                );
+                if (exportData.error) {
+                    throw new Error(`RBS export failed: ${exportData.error}`);
+                }
+                const blob = await api.exportPattern(exportData.payload.pattern, format, {
+                    patterns: exportData.payload.patterns,
+                    rbs_mode: exportData.payload.rbs_mode,
+                });
+                const mode = exportData.payload.rbs_mode.toLowerCase();
+                const filename = exportData.count > 1
+                    ? `patterns_${mode}_${exportData.count}.${ext}`
+                    : `pattern_G${g}P${p}${s}.${ext}`;
+                downloadBlob(blob, filename);
+                setStatus(`Exported ${filename}`);
+            } else {
+                const exportPlan = buildSingleFileExportPlan(
+                    state.getPatterns(),
+                    state.getCheckedArray(),
+                    ext,
+                    { group: g, pattern: p, side: s },
+                );
+                if (exportPlan.error) {
+                    throw new Error(`Export failed: ${exportPlan.error}`);
+                }
+                for (const file of exportPlan.files) {
+                    const blob = await api.exportPattern(file.pattern, format);
+                    downloadBlob(blob, file.filename);
+                }
+                setStatus(exportPlan.count === 1
+                    ? `Exported ${exportPlan.files[0].filename}`
+                    : `Exported ${exportPlan.count} ${format} files`);
+            }
         } catch (err) {
             setStatus('Export error: ' + err.message);
         }
     });
+}
+
+function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
 }
 
 // LOAD / LOAD ALL / SAVE are owned by multipattern-device-io.js.
@@ -703,7 +817,8 @@ midiStatus.init(state, setStatus, async () => {
 keyboard.init(
     setStatus,
     () => document.getElementById('btn-randomize').click(),
-    () => document.getElementById('btn-play').click()
+    () => document.getElementById('btn-play').click(),
+    toggleLiveUpdate,
 );
 
 // Initial chrome paint - the card list already rendered via
@@ -713,7 +828,6 @@ updateSlicerBtn();
 updateKbToggles();
 // updateBankDisplay();
 slicerInput.value = state.getSliceText();
-// bankSizeInput.value = state.getBankSize();
 setStatus('Ready');
 
 // Add-to-Control handoff. Drains the server-side queue once on boot, and

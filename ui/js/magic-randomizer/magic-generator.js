@@ -27,9 +27,8 @@
 // pitch's encoding) so the rendered pattern is well-formed. Validator and
 // scorer ignore REST steps.
 
-import { encodePitch, decodePitch, nearestPitch } from './magic-pitch-encoding.js';
-import { ROLE_STABLE } from './magic-scale-analysis.js';
-import { createRng, pickOne, pickWeighted, shuffleInPlace } from './magic-rng.js';
+import { encodePitch, nearestPitch } from './magic-pitch-encoding.js';
+import { pickOne, shuffleInPlace } from './magic-rng.js';
 
 const TOTAL_STEPS = 16;
 const STRONG_BEATS = [0, 4, 8, 12];
@@ -139,7 +138,7 @@ export function generatePitchSequence(opts) {
 function chooseNextPitch(ctx) {
     const {
         prevPitch, isStrong, isFinalStrong, isFirstActive,
-        stable, color, tension, weakStable, all,
+        stable, tension, weakStable, all,
         centerPitches, registerCenter, rng, forbidPitch,
     } = ctx;
 

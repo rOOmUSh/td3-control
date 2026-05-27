@@ -2,7 +2,7 @@
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
@@ -55,13 +55,17 @@ impl From<Td3Error> for AppError {
     }
 }
 
-fn json_payload<T>(
+pub(crate) fn json_payload<T>(
     payload: Result<Json<T>, JsonRejection>,
     name: &'static str,
 ) -> Result<T, AppError> {
-    payload
-        .map(|Json(req)| req)
-        .map_err(|err| AppError::BadRequest(format!("invalid {} JSON: {}", name, err)))
+    payload.map(|Json(req)| req).map_err(|err| {
+        let mut message = String::from("invalid ");
+        message.push_str(name);
+        message.push_str(" JSON: ");
+        message.push_str(&err.to_string());
+        AppError::BadRequest(message)
+    })
 }
 
 mod audition;

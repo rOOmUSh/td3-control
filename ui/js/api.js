@@ -39,12 +39,31 @@ export const api = {
         '/pattern/play-preview',
         bpm != null ? { pattern, centibpm: Math.round(bpm * 100) } : { pattern },
     ),
+    // Host-sequenced, non-saving audition: plays the pattern as timed Note
+    // On/Off from the host with no MIDI Start and no scratch-slot write, so
+    // the device sequencer stays idle and device memory is untouched. Stop
+    // is /pattern/audition/stop. `looping` defaults to true server-side.
+    auditionPattern:(pattern, bpm, looping = true, targetEpochMicros = null) => {
+        const body = bpm != null
+            ? { pattern, centibpm: Math.round(bpm * 100), looping }
+            : { pattern, looping };
+        if (targetEpochMicros != null) body.targetEpochMicros = targetEpochMicros;
+        return request('POST', '/pattern/audition', body);
+    },
+    auditionUpdate:(pattern, bpm, looping = true) => request(
+        'POST',
+        '/pattern/audition/update',
+        bpm != null
+            ? { pattern, centibpm: Math.round(bpm * 100), looping }
+            : { pattern, looping },
+    ),
+    auditionStop: () => request('POST', '/pattern/audition/stop', {}),
     exportPool:(patterns) => request('POST', '/pattern/export-pool', { patterns }),
-    exportPattern: async (pattern, format) => {
+    exportPattern: async (pattern, format, extra = {}) => {
         const res = await fetch(BASE + '/pattern/export', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pattern, format }),
+            body: JSON.stringify({ pattern, format, ...extra }),
         });
         if (!res.ok) {
             let msg = `HTTP ${res.status}`;
@@ -53,7 +72,11 @@ export const api = {
         }
         return await res.blob();
     },
-    transportStart:(bpm)=> request('POST', '/transport/start', { centibpm: Math.round(bpm * 100) }),
+    transportStart:(bpm, targetEpochMicros = null)=> {
+        const body = { centibpm: Math.round(bpm * 100) };
+        if (targetEpochMicros != null) body.targetEpochMicros = targetEpochMicros;
+        return request('POST', '/transport/start', body);
+    },
     transportStop: ()   => request('POST', '/transport/stop', {}),
     transportBpm:  (bpm)=> request('POST', '/transport/bpm', { centibpm: Math.round(bpm * 100) }),
     transportWrapPulse: (body, signal) => request('POST', '/transport/wrap-pulse', body, signal),
@@ -74,4 +97,7 @@ export const api = {
     exportProgressionPackage: (payload) => request('POST', '/progression/export-package', payload),
     appendControlQueue: (patterns) => request('POST', '/control/queue/append', { patterns }),
     consumeControlQueue: () => request('GET', '/control/queue/consume'),
+    remoteSyncRelay: (body) => request('POST', '/remote-sync/relay', body),
+    remoteSyncProbe: (body) => request('POST', '/remote-sync/probe', body),
+    remoteSyncPoll: () => request('GET', '/remote-sync/poll'),
 };

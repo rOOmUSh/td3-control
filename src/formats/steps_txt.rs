@@ -186,9 +186,17 @@ pub fn import(data: &str) -> Result<Pattern, Td3Error> {
         seen[step_index - 1] = true;
     }
 
-    if seen.iter().any(|present| !present) {
+    let declared_active_steps = active_steps.unwrap_or(16);
+    if !(1..=step::Step::COUNT as u8).contains(&declared_active_steps) {
+        return Pattern::new(triplet.unwrap_or(false), declared_active_steps, steps);
+    }
+
+    let active_range = usize::from(declared_active_steps);
+
+    if seen[..active_range].iter().any(|present| !present) {
         let missing: Vec<u8> = seen
             .iter()
+            .take(active_range)
             .enumerate()
             .filter_map(|(idx, present)| {
                 if *present {
@@ -204,5 +212,5 @@ pub fn import(data: &str) -> Result<Pattern, Td3Error> {
         )));
     }
 
-    Pattern::new(triplet.unwrap_or(false), active_steps.unwrap_or(16), steps)
+    Pattern::new(triplet.unwrap_or(false), declared_active_steps, steps)
 }

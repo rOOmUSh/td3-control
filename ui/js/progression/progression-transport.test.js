@@ -51,6 +51,15 @@ function nextTimelinePosAfterWrap(tl, currentPos, pendingReset) {
     return -1;
 }
 
+function shouldUpdateHostAuditionPattern(liveUpdate, connected, previousPatIdx, nextPatIdx) {
+    return !liveUpdate
+        && connected
+        && Number.isInteger(previousPatIdx)
+        && Number.isInteger(nextPatIdx)
+        && nextPatIdx >= 0
+        && nextPatIdx !== previousPatIdx;
+}
+
 // --- Test runner ---
 
 let passed = 0, failed = 0;
@@ -344,6 +353,32 @@ test('nextTimelinePosAfterWrap: pendingReset overrides normal walk', () => {
     const tl = [1, 0, 2, 0];
     assert(nextTimelinePosAfterWrap(tl, 0, false) === 2, 'no-reset: 0 → 2');
     assert(nextTimelinePosAfterWrap(tl, 0, true) === 0, 'reset:    0 → 0');
+});
+
+// --- shouldUpdateHostAuditionPattern ---
+
+test('shouldUpdateHostAuditionPattern: updates on no-save pattern change', () => {
+    assert(shouldUpdateHostAuditionPattern(false, true, 0, 1) === true,
+        'live off connected P1 to P2 updates');
+});
+
+test('shouldUpdateHostAuditionPattern: skips live-update device path', () => {
+    assert(shouldUpdateHostAuditionPattern(true, true, 0, 1) === false,
+        'live on uses scratch preload path');
+});
+
+test('shouldUpdateHostAuditionPattern: skips disconnected and repeated pattern', () => {
+    assert(shouldUpdateHostAuditionPattern(false, false, 0, 1) === false,
+        'disconnected cannot update');
+    assert(shouldUpdateHostAuditionPattern(false, true, 2, 2) === false,
+        'same pattern needs no schedule replacement');
+});
+
+test('shouldUpdateHostAuditionPattern: rejects invalid indexes', () => {
+    assert(shouldUpdateHostAuditionPattern(false, true, null, 1) === false,
+        'invalid previous index');
+    assert(shouldUpdateHostAuditionPattern(false, true, 1, -1) === false,
+        'invalid next index');
 });
 
 // --- Summary ---

@@ -1,6 +1,8 @@
 /target
 /dist
 /node_modules
+/backups
+/tmp
 *.syx
 *.pat
 *.mid
@@ -15,10 +17,3 @@ config/scales-config.json
 config/progression-config.json
 PG_*.zip
 PG_*/
-TD3_CONFIG.env
-TD3_CONFIG.env.bak
-release.bat
-/node_modules
-/target
-/dist
-TD3_CONFIG.env.bak

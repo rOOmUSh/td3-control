@@ -138,20 +138,6 @@ function nearestScaleNote(targetPc, sourceNoteIdx, allowedNotes) {
     return best;
 }
 
-/**
- * Find the nearest in-scale note to a target index, preserving contour.
- */
-function nearestContourNote(sourceNoteIdx, delta, allowedNotes) {
-    const target = sourceNoteIdx + delta;
-    let best = allowedNotes[0];
-    let bestDist = 999;
-    for (const n of allowedNotes) {
-        const d = Math.abs(n - target);
-        if (d < bestDist) { bestDist = d; best = n; }
-    }
-    return Math.max(0, Math.min(12, best));
-}
-
 // ---------------------------------------------------------------------------
 // P1 generation - DNA source pattern
 // ---------------------------------------------------------------------------
@@ -168,11 +154,10 @@ function nearestContourNote(sourceNoteIdx, delta, allowedNotes) {
  * @param {number} opts.accPercent - Accent density 0-1
  * @param {number[]} opts.anchorSteps - Anchor step positions [0,4,8,12]
  * @param {object} opts.rng - RNG object with .next()
- * @param {string} opts.profile - Progression profile (safe/dark/tension/jazz)
  * @returns {object} Pattern object {active_steps, triplet, steps}
  */
 export function generateBasePattern(opts) {
-    const { root, scale, degree, notePercent, slidePercent, accPercent, anchorSteps, rng, profile } = opts;
+    const { root, scale, degree, notePercent, slidePercent, accPercent, anchorSteps, rng } = opts;
     const notes = scaleNotes(root, scale);
     if (notes.length === 0) return null;
 
@@ -513,9 +498,8 @@ function rewriteEnding(steps, activeIndices, nextCenterPc, notes, rng, profile) 
     if (activeIndices.length >= 2) {
         const secondLast = activeIndices[activeIndices.length - 2];
         const approachDir = rng.next() < 0.5 ? -1 : 1; // below or above
-        let approachNote = targetNote + approachDir;
-
         // For dark/tension profiles, allow chromatic approach
+        let approachNote;
         if ((profile === 'tension' || profile === 'dark') && rng.next() < 0.3) {
             approachNote = targetNote + approachDir; // semitone approach
         } else {

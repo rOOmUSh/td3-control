@@ -1,6 +1,6 @@
 [package]
 name = "td3-control"
-version = "1.0.1"
+version = "1.1.0"
 edition = "2021"
 license = "GPL-3.0-only"
 
@@ -10,20 +10,21 @@ license = "GPL-3.0-only"
 midir = "0.11"
 clap = { version = "4", features = ["derive"] }
 thiserror = "2"
-log = "0.4"
+log = "0.4.30"
 env_logger = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1"
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
+reqwest = { version = "0.13.4", default-features = false, features = ["json"] }
 rust-embed = { version = "8", features = ["mime-guess", "include-exclude"] }
 mime_guess = "2"
 eframe = { version = "0.34", default-features = false, features = ["default_fonts", "glow"] }
 webbrowser = "1"
 zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 sha2 = "0.11"
-rusqlite = { version = "0.39", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 rfd = { version = "0.17.2", default-features = false, features = ["common-controls-v6", "xdg-portal"] }
 
 # Windows-only: raise the system timer resolution to 1 ms and bump the

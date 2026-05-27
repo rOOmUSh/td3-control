@@ -2,7 +2,7 @@
 // behavior of each button into small handlers so bank-main can wire them
 // together without this module knowing about load/refresh internals.
 
-import { state, setState, setFilter, clearSelection } from './bank-state.js';
+import { state, setState, setFilter } from './bank-state.js';
 import { parseQuery, mergeQueryIntoFilter } from './bank-search.js';
 import { toast } from './bank-toast.js';
 import { bankApi } from './bank-api.js';
@@ -13,6 +13,7 @@ import { openMergeDialog } from './bank-merge.js';
 import { bankButton } from './bank-buttons.js';
 import { addItemsToControl } from '../shared/add-to-control.js';
 import { TD3_CHECKBOX } from '../shared/button-classes.js';
+import { buildSelectionToolbarControls } from './bank-selection-toolbar.js';
 
 const DEBOUNCE_MS = 200;
 
@@ -22,6 +23,9 @@ const DEBOUNCE_MS = 200;
  */
 export function renderToolbar(root, { onReload }) {
     root.textContent = '';
+
+    const selectionControls = buildSelectionToolbarControls({ onReload });
+    root.appendChild(selectionControls.checkAll);
 
     const search = document.createElement('input');
     search.type = 'search';
@@ -140,9 +144,7 @@ export function renderToolbar(root, { onReload }) {
     if (state.dense) denseBtn.classList.add('is-active');
     root.appendChild(denseBtn);
 
-    // Clear selection
-    const clearBtn = toolbarButton('deselect', 'CLEAR', () => { clearSelection(); });
-    root.appendChild(clearBtn);
+    root.appendChild(selectionControls.deleteButton);
 }
 
 function buildBulkAddToControlButton() {

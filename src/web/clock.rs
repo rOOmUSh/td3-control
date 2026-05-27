@@ -65,9 +65,16 @@
 //!    then spins the last sub-millisecond on `Instant::now()`. On
 //!    modern Windows 10/11 this path is never taken.
 
+mod audition_runner;
 mod runner;
 mod timing;
 
 #[allow(unused_imports)]
 pub use runner::tick_interval;
 pub use runner::{pattern_wrap_duration, ClockRunner, PPQN};
+
+#[allow(unused_imports)]
+pub use audition_runner::{prepare_schedule, AuditionRunner, AuditionSchedule, ScheduledMidi};
+
+#[cfg(test)]
+pub(crate) use audition_runner::{send_due_events_until_update_boundary, DueEventsResult};

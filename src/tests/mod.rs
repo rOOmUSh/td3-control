@@ -1,5 +1,6 @@
 mod app_env_tests;
 mod app_tests;
+mod audition_tests;
 mod bank_address_tests;
 mod bank_api_tests;
 mod bank_backup_tests;
@@ -34,6 +35,7 @@ mod pattern_export_http_tests;
 mod pattern_tests;
 mod protocol_tests;
 mod rbs_tests;
+mod remote_sync_tests;
 mod robustness_tests;
 mod seq_tests;
 mod snapshot_export_tests;

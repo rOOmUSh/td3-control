@@ -8,8 +8,9 @@ use std::time::Duration;
 use axum::extract::FromRef;
 use tokio::sync::Mutex;
 
-use super::clock::ClockRunner;
+use super::clock::{AuditionRunner, ClockRunner};
 use super::control_queue::ControlQueue;
+use super::remote_sync::RemoteSyncQueue;
 use super::scan_jobs::ScanJobRegistry;
 use crate::formats::mid::MidiExportOptions;
 use crate::formats::mid_import::MidiImportOptions;
@@ -153,6 +154,10 @@ pub struct ConfigState {
 #[derive(Clone)]
 pub struct PlaybackState {
     pub clock: Arc<Mutex<Option<ClockState>>>,
+    /// Host-sequenced audition runner. `Some` while a non-saving
+    /// pattern audition is playing; mutually exclusive with `clock`.
+    /// The thread silences sounding notes when stopped or dropped.
+    pub audition: Arc<Mutex<Option<AuditionRunner>>>,
     pub transport_generation: Arc<AtomicU64>,
     /// Item ID of the LibraryItem currently being auditioned on the device.
     /// Set when the Bank UI asks to play a pattern; cleared on transport stop
@@ -163,6 +168,9 @@ pub struct PlaybackState {
     /// The Control page consumes this queue on boot and on
     /// `BroadcastChannel('td3-control-queue')` notifications.
     pub control_queue: Arc<ControlQueue>,
+    /// Local command queue used by another td3-control server to trigger
+    /// this page's browser-owned transport path.
+    pub remote_sync: Arc<RemoteSyncQueue>,
 }
 
 /// Bank scan progress and asynchronous job registry.
@@ -346,9 +354,11 @@ impl AppState {
             },
             playback: PlaybackState {
                 clock: Arc::new(Mutex::new(None)),
+                audition: Arc::new(Mutex::new(None)),
                 transport_generation: Arc::new(AtomicU64::new(1)),
                 playing_item_id: Arc::new(Mutex::new(None)),
                 control_queue: Arc::new(ControlQueue::new()),
+                remote_sync: Arc::new(RemoteSyncQueue::new()),
             },
             scan: ScanState {
                 progress: Arc::new(ScanProgress::new()),

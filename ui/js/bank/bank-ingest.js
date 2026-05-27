@@ -9,13 +9,14 @@
 // transient (module-scoped) so clicks on "view details" don't bleed into the
 // global state.js - it's read-only from the app's perspective.
 
-import { state, setState, defaultFilter } from './bank-state.js';
+import { state, setState, defaultFilter, toggleImportBatchSelection } from './bank-state.js';
 import { bankApi } from './bank-api.js';
 import { toast } from './bank-toast.js';
 import { confirmModal } from './bank-modal.js';
 import { decorateItems } from './bank-derived.js';
 import { makePlayButton } from './bank-play.js';
 import { bankButton, menuButton } from './bank-buttons.js';
+import { TD3_CHECKBOX } from '../shared/button-classes.js';
 
 // Local transient UI state: which batch is drilled into (null = list mode).
 // Kept module-local so the main `state` stays focused on library data.
@@ -48,6 +49,7 @@ export function render(container, mode) {
 export function resetView() {
     detailBatchId = null;
     detailBatchData = null;
+    state.activeImportBatchId = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -82,12 +84,18 @@ function renderBatchesList(container) {
 function renderBatchCard(b) {
     const card = document.createElement('div');
     card.className = 'ingest-batch-card bank-card';
+    if (state.selectedImportBatchIds.has(b.batch_id)) card.classList.add('selected');
     card.tabIndex = 0;
 
+    const top = document.createElement('div');
+    top.className = 'snapshot-card-top';
+    top.appendChild(buildBatchSelectionCheckbox(b));
     const title = document.createElement('div');
     title.className = 'bank-card-title';
+    title.style.flex = '1';
     title.textContent = b.scan_root ? b.scan_root : `batch ${shortId(b.batch_id)}`;
-    card.appendChild(title);
+    top.appendChild(title);
+    card.appendChild(top);
 
     const meta = document.createElement('div');
     meta.className = 'bank-card-meta';
@@ -141,7 +149,7 @@ async function openBatchDetail(batchId) {
     // Trigger a state tick so the container re-renders via bank-main's
     // subscriber. We don't mutate real state keys, but setState({}) would
     // spam unnecessary renders - instead toggle a tiny marker.
-    setState({ _ingestTick: (state._ingestTick || 0) + 1 });
+    setState({ activeImportBatchId: batchId, _ingestTick: (state._ingestTick || 0) + 1 });
     try {
         const res = await bankApi.getImportBatch(batchId);
         if (state.activeSidebar !== 'folder' || detailBatchId !== batchId) return;
@@ -150,7 +158,7 @@ async function openBatchDetail(batchId) {
     } catch (e) {
         toast(`Load batch failed: ${e.message}`, 'error');
         detailBatchId = null;
-        setState({ _ingestTick: (state._ingestTick || 0) + 1 });
+        setState({ activeImportBatchId: null, _ingestTick: (state._ingestTick || 0) + 1 });
     }
 }
 
@@ -169,7 +177,7 @@ function renderBatchDetail(container) {
         onClick: () => {
         detailBatchId = null;
         detailBatchData = null;
-        setState({ _ingestTick: (state._ingestTick || 0) + 1 });
+        setState({ activeImportBatchId: null, _ingestTick: (state._ingestTick || 0) + 1 });
         },
     });
     header.appendChild(back);
@@ -503,6 +511,7 @@ async function deleteBatch(batchId, { label = '', fromDetail = false } = {}) {
         if (fromDetail || detailBatchId === batchId) {
             detailBatchId = null;
             detailBatchData = null;
+            state.activeImportBatchId = null;
         }
         await refreshLibraryState();
     } catch (e) {
@@ -572,6 +581,20 @@ function emptyState(iconName, title, hint) {
 
 function actionBtn(iconName, label, onClick) {
     return bankButton({ icon: iconName, label, onClick });
+}
+
+function buildBatchSelectionCheckbox(batch) {
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = TD3_CHECKBOX;
+    box.checked = state.selectedImportBatchIds.has(batch.batch_id);
+    box.title = 'Toggle imported folder selection';
+    box.setAttribute('aria-label', `Select imported folder ${batch.scan_root || shortId(batch.batch_id)}`);
+    box.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        toggleImportBatchSelection(batch.batch_id);
+    });
+    return box;
 }
 
 function statusBadge(status) {
