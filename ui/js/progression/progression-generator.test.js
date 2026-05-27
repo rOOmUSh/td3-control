@@ -6,8 +6,6 @@
 // --- Stub scaleNotes (normally imported from scales.js) ---
 // We monkey-patch the import by defining the functions inline.
 
-const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B', 'C^'];
-
 function scaleNotesLocal(root, scale) {
     const allowed = new Set();
     for (const interval of scale.intervals) {

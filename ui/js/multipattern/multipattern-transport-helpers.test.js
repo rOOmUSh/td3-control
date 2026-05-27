@@ -12,6 +12,7 @@ import {
     nextTimelinePos,
     advanceCursorToDevicePattern,
     needsImmediateScratchSave,
+    shouldUpdateHostAuditionPattern,
     countNonEmpty,
     repeatFill,
     randomFill,
@@ -128,6 +129,16 @@ test('needsImmediateScratchSave returns false on empty/invalid input', () => {
     assert.equal(needsImmediateScratchSave([1, 2], 5, 0), false);
     // Empty (zero) cursor slot: nothing to save.
     assert.equal(needsImmediateScratchSave([0, 1, 2], 0, 0), false);
+});
+
+test('shouldUpdateHostAuditionPattern updates only no-save pattern changes', () => {
+    assert.equal(shouldUpdateHostAuditionPattern(false, true, true, 0, 1), true);
+    assert.equal(shouldUpdateHostAuditionPattern(true, true, true, 0, 1), false);
+    assert.equal(shouldUpdateHostAuditionPattern(false, false, true, 0, 1), false);
+    assert.equal(shouldUpdateHostAuditionPattern(false, true, false, 0, 1), false);
+    assert.equal(shouldUpdateHostAuditionPattern(false, true, true, 2, 2), false);
+    assert.equal(shouldUpdateHostAuditionPattern(false, true, true, null, 1), false);
+    assert.equal(shouldUpdateHostAuditionPattern(false, true, true, 1, -1), false);
 });
 
 test('countNonEmpty counts populated slots only', () => {

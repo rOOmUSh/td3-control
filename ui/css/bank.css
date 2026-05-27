@@ -346,6 +346,19 @@
     height: 24px;
     background: #282a2a;
 }
+.bank-toolbar-check-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    height: 32px;
+    padding: 0 0.35rem;
+    color: #b8c4b8;
+    font-weight: 800;
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    cursor: pointer;
+}
 .bank-toolbar-btn {
     display: inline-flex;
     align-items: center;

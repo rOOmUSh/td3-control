@@ -1,23 +1,22 @@
 <!-- Main-page toolbar. Mirrors the progression toolbar layout so both pages
-     feel like siblings. Controls here all act on the current single
-     pattern: import/export move it to/from disk, KB EDIT / AUTO-STEP FWD
+     feel like siblings. Controls here handle pattern files, KB EDIT / AUTO-STEP FWD
      toggle the keyboard edit mode, and RESET PATTERN (right-aligned)
-     clears the working pattern back to its default. The EXPORT dropdown
+     clears checked patterns, or every pattern when none are checked. The EXPORT dropdown
      is hover-revealed, matching the SAVE PACKAGE idiom on the progression
      page. Device I/O (LOAD / LOAD ALL / SAVE) now lives inside the
      sidebar's PATTERN selector - co-located with the slot picker it acts
      on. SHIFT STEPS and TRNSPS moved to a pair of columns beside the grid
      - see ui/index.html. -->
 <div class="flex items-center gap-3 px-6 py-2 border-b border-surface-container bg-surface-container-low flex-wrap">
-  <!-- IMPORT / EXPORT - file I/O for the current pattern -->
+  <!-- IMPORT / EXPORT - file I/O for selected patterns, or all patterns when no checks are active -->
   <button id="btn-import" class="td3-toolbar-btn td3-toolbar-btn--neutral tactile-button">
     <span class="material-symbols-outlined text-sm">file_open</span> IMPORT
   </button>
   <!-- EXPORT - hover to reveal format picker. Same `group` + `group-hover:block`
        pattern used by SAVE PACKAGE on the progression page. Each item is a
        click-to-download; SQS is omitted (bank-only) and SYX is omitted
-       because save-to-device covers that case. RBS places the pattern at
-       G1P1A for ReBirth-338 preview. -->
+       because save-to-device covers that case. RBS can export the current
+       checked-or-all pattern set into one ReBirth-338 song file. -->
   <div class="relative group inline-flex h-8 items-center">
     <button id="btn-export" class="td3-toolbar-btn td3-toolbar-btn--neutral tactile-button">
       <span class="material-symbols-outlined text-sm">file_download</span> EXPORT
@@ -26,13 +25,13 @@
       <button type="button" data-format="toml" data-ext="toml" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--menu tactile-button" title="Re-importable TOML">toml</button>
       <button type="button" data-format="json" data-ext="json" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--menu tactile-button" title="Re-importable JSON">json</button>
       <button type="button" data-format="steps_txt" data-ext="steps.txt" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--menu tactile-button" title="Human-readable step text">steps_txt</button>
-      <button type="button" data-format="pat" data-ext="pat" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--menu tactile-button" title="ABL3 .pat">pat</button>
+      <button type="button" data-format="pat" data-ext="pat" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--menu tactile-button" title="Ableton Live 3 .pat">pat</button>
       <button type="button" data-format="seq" data-ext="seq" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--menu tactile-button" title="Behringer SynthTribe .seq">seq</button>
       <button type="button" data-format="mid" data-ext="mid" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--menu tactile-button" title="Standard MIDI file - DAW import">mid</button>
-      <button type="button" data-format="rbs" data-ext="rbs" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--menu tactile-button" title="ReBirth-338 .rbs (pattern placed at G1P1A)">rbs</button>
+      <button type="button" data-format="rbs" data-ext="rbs" class="td3-toolbar-btn td3-toolbar-btn--neutral td3-toolbar-btn--menu tactile-button" title="ReBirth-338 .rbs (checked patterns, or all patterns if none checked)">rbs</button>
     </div>
   </div>
-  <input id="file-import" type="file" accept=".toml,.json,.steps.txt,.txt,.pat,.seq,.mid,.midi,.sqs,.rbs" class="hidden"/>
+  <input id="file-import" type="file" accept=".toml,.json,.steps.txt,.txt,.pat,.seq,.mid,.midi,.sqs,.rbs" multiple class="hidden"/>
 
   <div class="w-px h-5 bg-surface-container-highest"></div>
 
@@ -85,11 +84,9 @@
   <button id="btn-push-td3" class="td3-toolbar-btn td3-toolbar-btn--secondary tactile-button" title="Push every UI pattern to TD-3 in the canonical A/B order">
     <span class="material-symbols-outlined text-sm">upload</span>PUSH TO TD-3
   </button>
-  <!-- RESET ALL PATTERNS - right-aligned destructive action. Clears every
-       card in the multipattern list back to the default pattern. The
-       secondary toolbar owns the narrower RESET PATTERN (N) button that
-       targets only the current selection. -->
-  <button id="btn-reset" class="td3-toolbar-btn td3-toolbar-btn--secondary tactile-button">
+  <!-- RESET ALL PATTERNS - right-aligned destructive action. Clears checked
+       patterns, or every pattern when none are checked. -->
+  <button id="btn-reset" class="td3-toolbar-btn td3-toolbar-btn--secondary tactile-button" title="Reset every pattern to a blank pattern">
     RESET ALL PATTERNS
   </button>
 </div>

@@ -103,7 +103,10 @@ fn accepts_file_with_no_note_ons_as_empty_pattern() {
     let mut resolver = RejectPolyphonyResolver;
     let pattern = import(&bytes, &MidiImportOptions::default(), &mut resolver).unwrap();
     assert!(!pattern.triplet);
-    assert_eq!(pattern.active_steps, 1, "EOT at delta 0 collapses to 1 step");
+    assert_eq!(
+        pattern.active_steps, 1,
+        "EOT at delta 0 collapses to 1 step"
+    );
     for (i, s) in pattern.step.iter().enumerate() {
         assert_eq!(s.time, Time::TieRest, "step {} should be TieRest", i + 1);
     }

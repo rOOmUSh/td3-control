@@ -99,6 +99,14 @@ export function renderCard(index) {
         box.addEventListener('change', () => state.setChecked(index, box.checked));
     }
 
+    // NO SAVE checkbox - same explicit-handler pattern as the selection
+    // checkbox above (delegated click dispatch doesn't suit checkboxes).
+    const noSaveBox = root.querySelector(`input[data-action="preview-nosave"]`);
+    if (noSaveBox) {
+        noSaveBox.addEventListener('click', (e) => e.stopPropagation());
+        noSaveBox.addEventListener('change', () => state.setNoSave(index, noSaveBox.checked));
+    }
+
     // Per-pattern STEPS input - `change` commits on Enter / blur (so free
     // typing isn't interrupted by a re-render mid-keystroke); the wheel
     // handler nudges by 1 like the global STEPS field. Garbage typed
@@ -166,10 +174,23 @@ function previewCol(i) {
     const on = preview.isActive(i);
     const trip = state.getTriplet(i);
     const tripCls = trip ? BTN_TRIPLET : BTN_NEUTRAL;
+    // NO SAVE auditions the pattern from the host (timed Note On/Off) without
+    // writing it to the device. Forced on - and the box disabled - when live
+    // update is off, since edits aren't on the device to play any other way.
+    const noSave = state.isNoSave(i);
+    const noSaveForced = !state.isLiveUpdate();
+    const noSaveTitle = noSaveForced
+        ? 'Live update is off: PREVIEW auditions without saving to the device'
+        : 'Audition this pattern without saving it to the device';
+    const noSaveLabelClass = `${COL_LABEL} flex items-center justify-center gap-1 cursor-pointer select-none`;
     return `
       <div class="flex flex-col items-stretch gap-1">
         <span class="${COL_LABEL}">PREVIEW</span>
         <button data-action="preview" data-pattern-idx="${esc(i)}" class="${BTN_NEUTRAL}${on ? PREVIEW_ON : ''}" title="TD-3 hardware preview">&#9654; P${esc(p)}</button>
+        <label class="${noSaveLabelClass}" title="${esc(noSaveTitle)}">
+          <input type="checkbox" data-action="preview-nosave" data-pattern-idx="${esc(i)}" class="${CHECKBOX}" ${noSave ? 'checked' : ''} ${noSaveForced ? 'disabled' : ''}>
+          NO SAVE
+        </label>
         <div class="self-stretch h-px bg-outline-variant opacity-40 my-0.5"></div>
         <span class="${COL_LABEL}">TRIPLET</span>
         <button data-action="triplet" data-pattern-idx="${esc(i)}" class="${tripCls}" title="Toggle triplet timing for P${esc(p)}">${trip ? 'ON' : 'OFF'}</button>

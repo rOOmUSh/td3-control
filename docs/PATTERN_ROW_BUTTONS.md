@@ -93,19 +93,34 @@ Reordering changes the visual pattern order and can affect timeline playback ord
 
 ## Preview
 
-The `PREVIEW` button plays this pattern on the TD-3 through the configured scratch slot.
+The `PREVIEW` button auditions this pattern on the TD-3.
 
-Clicking preview:
+There are two preview paths:
 
-1. sends this pattern to the scratch slot
-2. starts TD-3 transport at the current BPM
-3. highlights the playing steps in this row
+- normal preview writes this pattern to the configured scratch slot, starts TD-3 transport at the current BPM, and highlights the playing steps in this row
+- `NO SAVE` preview plays the row from the host as timed MIDI Note On and Note Off messages without writing the scratch slot or starting the TD-3 sequencer
 
 Clicking the active preview again stops it.
 
 Only one row preview can run at a time. Starting preview on another row stops the previous row preview first.
 
-Preview requires a MIDI connection and an available scratch slot. It will not start while the main transport is already playing.
+Preview requires a MIDI connection. Normal preview also needs an available scratch slot. It will not start while the main transport is already playing.
+
+## No Save
+
+The row `NO SAVE` checkbox changes what `PREVIEW` does for that one pattern row.
+
+When `NO SAVE` is checked, the row preview uses host-sequenced audition:
+
+1. the app converts the current row pattern into timed note events
+2. the app sends those notes directly to the TD-3 over MIDI
+3. the TD-3 pattern memory and configured scratch slot are not written
+
+When Live Update is off, row preview also uses the same non-saving audition path even if the row `NO SAVE` checkbox is not checked. This keeps Live Update off as a no-write editing mode.
+
+During non-saving audition, changes to the row pattern are heard during playback without stopping and starting preview again. The update is applied at a safe note boundary so the currently sounding note is not cut short by the edit.
+
+Use `NO SAVE` when you want to hear a row on the hardware without replacing the configured scratch pattern. Use normal preview when you want the TD-3 sequencer and scratch-slot playback behavior.
 
 ## Progression Page BASSLINE
 

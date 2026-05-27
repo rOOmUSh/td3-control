@@ -50,13 +50,33 @@ pub(super) fn run_ingest_batch(
     paths: &[PathBuf],
     scan_job_id: Option<&str>,
 ) -> Result<Vec<FileIndexEntry>, AppError> {
+    use std::collections::HashMap;
     use std::sync::atomic::Ordering;
-    let total = paths.len();
+
+    let mut ordered_paths = paths.to_vec();
+    ingest::sort_import_paths(&mut ordered_paths);
+
+    let total = ordered_paths.len();
     let mut entries: Vec<FileIndexEntry> = Vec::with_capacity(total);
+    let mut resolved_items_by_path: HashMap<PathBuf, String> = HashMap::new();
     let import_opts = state.midi.import_options.clone();
-    for (idx, p) in paths.iter().enumerate() {
-        let outcome = ingest::ingest_path(&state.library.store, p, batch_id, &import_opts)
-            .map_err(AppError::Midi)?;
+    for (idx, p) in ordered_paths.iter().enumerate() {
+        let outcome =
+            match ingest::native_truth_for_derived_path(p, &ordered_paths).and_then(|truth_path| {
+                resolved_items_by_path
+                    .get(&truth_path)
+                    .map(|item_id| (truth_path, item_id.clone()))
+            }) {
+                Some((_truth_path, duplicate_of)) => ingest::record_derived_duplicate_path(
+                    &state.library.store,
+                    p,
+                    batch_id,
+                    &duplicate_of,
+                )
+                .map_err(AppError::Midi)?,
+                None => ingest::ingest_path(&state.library.store, p, batch_id, &import_opts)
+                    .map_err(AppError::Midi)?,
+            };
         eprintln!(
             "[scan] {}/{} {:?}: {}",
             idx + 1,
@@ -64,6 +84,14 @@ pub(super) fn run_ingest_batch(
             outcome.entry.status,
             p.display()
         );
+        if let Some(item_id) = outcome
+            .entry
+            .item_id
+            .clone()
+            .or_else(|| outcome.entry.duplicate_of.clone())
+        {
+            resolved_items_by_path.insert(p.clone(), item_id);
+        }
         entries.push(outcome.entry);
         // Publish the running total so the UI's progress poll can draw a
         // live status bar ("Parsing N/M"). Ordering::SeqCst - correctness

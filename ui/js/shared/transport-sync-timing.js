@@ -12,6 +12,8 @@ export function delayToNextStep(startSync, intervalMs, nowMs = Date.now()) {
         : 0;
     if (startedAt <= 0) return interval;
 
+    if (startedAt > nowMs) return (startedAt - nowMs) + interval;
+
     const elapsed = Math.max(0, nowMs - startedAt);
     const remainder = elapsed % interval;
     return remainder <= 1 ? interval : interval - remainder;

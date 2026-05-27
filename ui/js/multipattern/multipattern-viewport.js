@@ -45,7 +45,7 @@ export function init({ setStatus } = {}) {
     const syncChrome = () => {
         // A/B label + button tint.
         const mode = state.getAbMode();
-        if (abLabel) abLabel.textContent = mode === 'ALTERNATE' ? 'A/B ALT' : 'As→Bs SER';
+        if (abLabel) abLabel.textContent = mode === 'ALTERNATE' ? 'A/B ALT' : 'AsBs SER';
         btnAb.classList.toggle('is-active', mode === 'SERIAL');
 
         // Viewport chip highlight - the matching chip gets the active tint.

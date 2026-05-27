@@ -18,6 +18,8 @@ pub struct BpmRequest {
     /// fractional precision required for the .00 BPM toggle.
     #[serde(default)]
     pub centibpm: Option<u32>,
+    #[serde(default)]
+    pub target_epoch_micros: Option<u64>,
 }
 
 impl BpmRequest {

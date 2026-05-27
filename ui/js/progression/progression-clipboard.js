@@ -71,7 +71,7 @@ export function copy(kind, pattern) {
             const blob = raw ? JSON.parse(raw) : null;
             const next = (blob && Array.isArray(blob.patterns) && blob.patterns.length > 0)
                 ? blob
-                : { patterns: [], focusedIdx: 0, checked: [], timeline: [], abMode: 'ALTERNATE',
+                : { patterns: [], focusedIdx: 0, checked: [], timeline: [], abMode: 'SERIAL',
                     viewport: { group: 'ALL', side: 'ALL' } };
             if (!Array.isArray(next.patterns) || next.patterns.length === 0) {
                 next.patterns = [JSON.parse(JSON.stringify(pattern))];

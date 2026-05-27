@@ -34,10 +34,12 @@ pub(super) async fn play_item(
     let scratch = state.midi.scratch;
     let slot_addr = scratch.slot + (scratch.side << 3);
 
-    // Stop any currently-running clock before we retarget the scratch slot -
-    // otherwise the device could emit ticks for the old pattern between our
-    // upload and the fresh MIDI Start below.
+    // Stop any currently-running clock or host audition before we retarget
+    // the scratch slot - otherwise the device could emit ticks for the old
+    // pattern between our upload and the fresh MIDI Start below, and a host
+    // audition would still own the output port.
     stop_clock(&state).await;
+    stop_audition(&state).await;
 
     // Upload the raw bytes. The session guard is held only for the blocking
     // MIDI exchange, then dropped before we touch the clock (which also
@@ -70,7 +72,7 @@ pub(super) async fn play_item(
     // `/api/transport/start` path produces.
     let started_at_epoch_ms = crate::web::handlers::current_epoch_millis_for_clock();
     let transport_id = crate::web::handlers::next_transport_id(&state);
-    let runner = spawn_clock_runner(&state, centibpm).await?;
+    let runner = spawn_clock_runner(&state, centibpm, std::time::Duration::ZERO).await?;
     *state.playback.clock.lock().await = Some(ClockState {
         centibpm,
         started_at_epoch_ms,

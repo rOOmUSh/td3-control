@@ -12,14 +12,16 @@ let autoStepKeys = new Set();
 let setStatus = () => {};
 let triggerRandomize = () => {};
 let triggerPlay = () => {};
+let triggerLiveToggle = null;
 
 // Empty fallback (used if config fetch fails - keyboard won't work until config is fixed)
 const EMPTY_CONFIG = { notes: {}, actions: {} };
 
-export function init(statusFn, randomizeFn, playFn) {
+export function init(statusFn, randomizeFn, playFn, liveToggleFn) {
     setStatus = statusFn;
     triggerRandomize = randomizeFn;
     triggerPlay = playFn;
+    triggerLiveToggle = typeof liveToggleFn === 'function' ? liveToggleFn : null;
 
     loadConfig().then(() => {
         document.addEventListener('keydown', handleKeyDown);
@@ -84,8 +86,12 @@ function handleKeyDown(e) {
         const liveKey = liveToggle.slice(5).toLowerCase();
         if (e.ctrlKey && key === liveKey) {
             e.preventDefault();
-            state.setLiveUpdate(!state.isLiveUpdate());
-            setStatus(state.isLiveUpdate() ? 'Live update ON' : 'Live update OFF');
+            if (triggerLiveToggle) {
+                triggerLiveToggle();
+            } else {
+                state.setLiveUpdate(!state.isLiveUpdate());
+                setStatus(state.isLiveUpdate() ? 'Live update ON' : 'Live update OFF');
+            }
             return;
         }
     }

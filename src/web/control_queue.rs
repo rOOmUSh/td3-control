@@ -75,8 +75,13 @@ async fn append(
         return Err(AppError::BadRequest("patterns must be non-empty".into()));
     }
     for (idx, pat) in req.patterns.iter().enumerate() {
-        pat.to_pattern()
-            .map_err(|e| AppError::BadRequest(format!("pattern[{}] invalid: {}", idx, e)))?;
+        pat.to_pattern().map_err(|e| {
+            let mut message = String::from("pattern[");
+            message.push_str(&idx.to_string());
+            message.push_str("] invalid: ");
+            message.push_str(&e.to_string());
+            AppError::BadRequest(message)
+        })?;
     }
 
     let mut q = state.control_queue.inner.lock().await;

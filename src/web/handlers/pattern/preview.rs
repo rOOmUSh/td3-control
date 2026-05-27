@@ -28,6 +28,7 @@ pub async fn pattern_play_preview(
     let slot_addr = scratch.slot + (scratch.side << 3);
 
     stop_clock(&state).await;
+    stop_audition(&state).await;
 
     {
         let mut guard = state.midi.session.lock().await;
@@ -53,7 +54,7 @@ pub async fn pattern_play_preview(
 
     let started_at_epoch_ms = current_epoch_millis();
     let transport_id = next_transport_id(&state);
-    let runner = spawn_clock_runner(&state, centibpm).await?;
+    let runner = spawn_clock_runner(&state, centibpm, Duration::ZERO).await?;
     *state.playback.clock.lock().await = Some(ClockState {
         centibpm,
         started_at_epoch_ms,

@@ -1,6 +1,7 @@
 # TD-3 Control
 
 [![Release](https://github.com/roomush/td3-control/actions/workflows/release.yml/badge.svg)](https://github.com/roomush/td3-control/actions/workflows/release.yml)
+[![Downloads](https://img.shields.io/github/downloads/rOOmUSh/td3-control/total.svg)](https://github.com/rOOmUSh/td3-control/releases)
 
 `td3-control` is a local-first control surface, pattern editor, format toolkit, and pattern library for the Behringer TD-3.
 
@@ -10,16 +11,28 @@ It combines:
 - a browser-based pattern editor
 - multi-pattern composition tools
 - progression and bassline generation
+- non-saving hardware audition with host-sequenced Note On and Note Off playback
+- local Remote Sync for starting a second TD-3 device from another app instance
 - local Bank and snapshot management
 - import, export, and conversion between TD-3, DAW, and legacy pattern formats
 
 The app runs locally. There is no cloud account, no remote service, and no browser extension.
 
+## Demo Video
+
+The demonstration video includes subtitles explaining the actions shown.
+
+[![TD-3 Control demonstration video with subtitles](https://img.youtube.com/vi/gVzc7TDkym4/hqdefault.jpg)](https://www.youtube.com/watch?v=gVzc7TDkym4)
+
+[Watch the demo on YouTube](https://www.youtube.com/watch?v=gVzc7TDkym4)
+
+GitHub README pages do not allow inline YouTube players, so the thumbnail opens the playable video on YouTube.
+
 User-confirmed hardware reports:
 
-| Device             | Firmware | Reported working workflow                                      |
-| ------------------ | -------- | -------------------------------------------------------------- |
-| Behringer TD-3-MO  | 2.0.1    | Windows x86_64 release, USB MIDI connection, Start/Stop works  |
+| Device            | Firmware | Reported working workflow                                     |
+| ----------------- | -------- | ------------------------------------------------------------- |
+| Behringer TD-3-MO | 2.0.1    | Windows x86_64 release, USB MIDI connection, Start/Stop works |
 
 ---
 
@@ -121,10 +134,10 @@ The main workflow is:
 1. Connect the TD-3
 2. Load or import a pattern
 3. Edit one or more patterns
-4. Preview through the scratch slot
+4. Preview through the scratch slot, or use non-save audition when you do not want to write the scratch slot
 5. Save to the TD-3, export to files, send to Progressions, or store in the Bank
 6. Optionally go to DUCKTRONICS Youtube channel, screenshot a pattern, paste the screenshot to any AI chat, provide AI the .steps.txt format, ask the AI to give you a .steps.txt formatted pattern.
-6.1 Copy the pattern text CTRL+C, paste it into the focused pattern CTRL+V, enable clipboard sharing when the browser pop-up appears.
+   6.1 Copy the pattern text CTRL+C, paste it into the focused pattern CTRL+V, enable clipboard sharing when the browser pop-up appears.
 
 You can also use the app without hardware for file conversion, pattern editing, Bank work, and progression generation.
 
@@ -139,12 +152,14 @@ TD-3 Control is designed around explicit device writes.
 The scratch slot is the device slot used for temporary hardware playback workflows:
 
 - live update
-- preview
+- normal preview
 - Bank audition
 - Progression preview
 - transport-driven playback handoff
 
 The slot is shown in the launcher and UI so it is never hidden.
+
+Non-save audition is different. When Live Update is off, or when a pattern row has `NO SAVE` checked, the app can audition a pattern by sending timed MIDI Note On and Note Off messages directly to the TD-3. That path does not write the scratch slot and does not start the TD-3 sequencer.
 
 ### Backups
 
@@ -159,13 +174,14 @@ If the TD-3 is not found during `control` startup, the app enters offline mode a
 
 The main write paths are:
 
-| Action             | What it can write                    |
-| ------------------ | ------------------------------------ |
-| Live Update        | configured scratch slot              |
-| Preview / Audition | configured scratch slot              |
-| Save               | selected TD-3 slot or assigned slots |
-| CLI `import`       | one target slot                      |
-| CLI `import-bank`  | many slots, with mandatory backup    |
+| Action                    | What it can write                    |
+| ------------------------- | ------------------------------------ |
+| Live Update               | configured scratch slot              |
+| Normal preview / audition | configured scratch slot              |
+| NO SAVE audition          | nothing, MIDI notes only             |
+| Save                      | selected TD-3 slot or assigned slots |
+| CLI `import`              | one target slot                      |
+| CLI `import-bank`         | many slots, with mandatory backup    |
 
 ---
 
@@ -191,9 +207,11 @@ It supports:
 
 - TD-3 MIDI connect and disconnect
 - transport start and stop
+- Remote Sync start, stop, and BPM mirroring between two local app instances
 - BPM control
 - TD-3 sync source switching: `INT`, `USB`, `DIN`, `TRIG`
 - note preview
+- non-saving pattern audition when Live Update is off or row `NO SAVE` is checked
 - pattern load and save
 - live update through the scratch slot
 - import and export
@@ -397,6 +415,43 @@ Important keys include:
 Most runtime config changes take effect after restart.
 
 Safety note: binding to `0.0.0.0` makes the local web UI reachable from other machines on the network.
+
+### Multi-device playability
+
+Multiple TD-3 devices can be used at the same time by running separate copies of the app from separate folders. Each folder has its own `TD3_CONFIG.env`, local database paths, and scratch-slot setting.
+
+Use different MIDI port matching and different web ports for each copy. For example:
+
+```text
+# Folder A: TD-3-MO
+MIDI_PORT_SUBSTRING="TD-3-MO"
+WEB_PORT=3030
+
+# Folder B: TD-3
+MIDI_PORT_SUBSTRING="TD-3"
+WEB_PORT=3031
+```
+
+Then open:
+
+```text
+http://127.0.0.1:3030
+http://127.0.0.1:3031
+```
+
+Each running copy owns its matched MIDI device and serves a separate local web UI. Use distinct scratch slots per device when the devices contain different saved patterns.
+
+Remote Sync can start two local app instances from one bottom toolbar. Open both local UIs, enter the other instance's web port in the source toolbar's `REMOTE` port field, turn `REMOTE` on, then press Play on the source instance. For example, from `http://127.0.0.1:3030`, enter `3031` to trigger the app on port `3031`. If no local server is listening on that port, the button stays off and the status shows `No server on port 3031`.
+
+When Play is pressed, the source app sends the remote command first and waits for the remote server to accept it before starting local playback. On a local `127.0.0.1` pair, this makes the two app instances start almost together. Stop, BPM, and main top toolbar Triplet changes are mirrored while `REMOTE` is on.
+
+The remote browser page must be open because that UI owns its own timeline, Live Update state, and no-save audition behavior. If Live Update is off on either side, that instance follows its normal no-save audition path instead of writing the scratch slot. Each instance still uses its own selected patterns, scratch slot, MIDI device, and pattern rules. Per-pattern row Triplet buttons remain local to their own app instance. See [Bottom Toolbar](docs/BOTTOM_TOOLBAR.md#remote-sync) for screenshots and setup details.
+
+Known limitations:
+
+- Remote Sync does not promise continued sync when the two devices play patterns with different active step counts. In that case the devices can drift or land off sync.
+- If the two devices go off sync, stop playback and press Play again to realign them.
+- When both devices play patterns with the same active step count, local two-device testing stayed in sync during mirrored Play, Stop, and BPM operation.
 
 ---
 
@@ -657,6 +712,8 @@ You do not need it for:
 ### Will it overwrite my TD-3 patterns?
 
 It can overwrite the configured scratch slot during normal preview and live workflows.
+
+Non-save audition does not write TD-3 pattern memory. It sends timed MIDI notes directly to the connected device.
 
 The app warns about this and uses backups for larger write operations.
 

@@ -1,7 +1,7 @@
 // Usage: node ui/js/magic-randomizer/magic-pitch-encoding.test.js
 
 import {
-    NOTE_NAMES, TD3_PITCH_MIN, TD3_PITCH_MAX,
+    TD3_PITCH_MIN, TD3_PITCH_MAX,
     isPitchInRange, encodePitch, decodePitch,
     buildScalePitches, nearestPitch,
 } from './magic-pitch-encoding.js';

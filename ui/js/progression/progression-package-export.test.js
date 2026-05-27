@@ -137,8 +137,7 @@ await test('DEFAULT_FORMATS', () => {
 });
 
 await test('DEFAULT_FORMATS is frozen (prevents accidental mutation)', () => {
-    let threw = false;
-    try { DEFAULT_FORMATS.mid = false; } catch (_) { threw = true; }
+    try { DEFAULT_FORMATS.mid = false; } catch (_) {}
     // In non-strict mode the assignment silently fails; just verify the value
     // didn't change.
     assert(DEFAULT_FORMATS.mid === true, 'mid stays true');

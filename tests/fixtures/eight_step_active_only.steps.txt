@@ -1,0 +1,18 @@
+format=td3-stepdsl-v1
+active_steps=8
+triplet_time=off
+
+01 C#:D--:N
+02 C#:U--:N
+03 C#:D--:N
+04 A#:---:N
+05  A:U-S:N
+06  A:---:N
+07 C#:DA-:N
+08 A#:-A-:N
+
+# NOTE:TAS:TIME
+# transpose: U|D|-
+# accent: A|-
+# slide: S|-
+# time: N|T|R|TR

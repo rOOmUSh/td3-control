@@ -146,7 +146,7 @@ test('linear timeline: undo 10 from 100, push new = 91 entries', () => {
     for (let i = 1; i <= 100; i++) h.push({ v: i });
     for (let i = 0; i < 10; i++) h.undo();
     // cursor at 90
-    const s = h.push({ v: 'new' });
+    h.push({ v: 'new' });
     assert(h.getEntries().length === 91, `expected 91, got ${h.getEntries().length}`);
     assert(h.getEntries()[90].state.v === 'new', 'last entry is new');
 });

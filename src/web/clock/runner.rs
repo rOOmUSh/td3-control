@@ -93,15 +93,12 @@ pub struct ClockRunner {
 }
 
 impl ClockRunner {
-    /// Spawn the clock thread, borrowing an already-open
-    /// `MidiOutputConnection` to the TD-3. The thread owns the
-    /// connection for its lifetime; `stop()` returns it so the caller
-    /// can put it back into the session. The thread emits MIDI Start
-    /// (0xFA) immediately, then ticks at 24 PPQN. Tempo is given in
-    /// centi-BPM (BPM x 100).
-    pub fn spawn(
+    /// Spawn the clock thread and wait for `start_delay` before sending
+    /// MIDI Start. A zero delay starts immediately.
+    pub fn spawn_scheduled(
         out_conn: midir::MidiOutputConnection,
         initial_centibpm: u32,
+        start_delay: Duration,
     ) -> Result<Self, Td3Error> {
         let centibpm = Arc::new(AtomicU32::new(initial_centibpm.max(1)));
         let stop = Arc::new(AtomicBool::new(false));
@@ -114,7 +111,7 @@ impl ClockRunner {
                 .name("td3-midi-clock".into())
                 .spawn(move || {
                     let mut out = out_conn;
-                    run_clock(&mut out, centibpm, stop, send_rx);
+                    run_clock(&mut out, centibpm, stop, send_rx, start_delay);
                     out
                 })
                 .map_err(|e| Td3Error::Midi(format!("failed to spawn MIDI clock thread: {}", e)))?
@@ -200,6 +197,7 @@ fn run_clock(
     centibpm: Arc<AtomicU32>,
     stop: Arc<AtomicBool>,
     send_rx: Receiver<SendRequest>,
+    start_delay: Duration,
 ) {
     // Raise Windows timer resolution to 1 ms for the whole playback
     // session. Kept alive in a local so `Drop` runs when this function
@@ -215,6 +213,14 @@ fn run_clock(
     // elsewhere (and on failure) `sleep_until` is used instead.
     #[cfg(windows)]
     let hr_timer: Option<WaitableTimer> = WaitableTimer::try_new();
+
+    if !start_delay.is_zero() {
+        let start_at = Instant::now() + start_delay;
+        sleep_until(start_at, &stop);
+        if stop.load(Ordering::Acquire) {
+            return;
+        }
+    }
 
     // Fire MIDI Start first so the device resets its clock division
     // before the first 0xF8 arrives. Failure is logged but not fatal:

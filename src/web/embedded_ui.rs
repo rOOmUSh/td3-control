@@ -22,8 +22,16 @@ pub async fn serve_asset(uri: Uri) -> Response {
     match UiAssets::get(path) {
         Some(content) => {
             let mime = mime_guess::from_path(path).first_or_octet_stream();
-            Response::builder()
-                .header(header::CONTENT_TYPE, mime.as_ref())
+            let mut builder = Response::builder().header(header::CONTENT_TYPE, mime.as_ref());
+            // In debug builds assets are read fresh from `ui/` on disk so
+            // frontend edits reload without a rebuild. Tell the browser not
+            // to reuse a cached copy, otherwise edited JS/CSS modules keep
+            // running stale across a server restart until a hard refresh.
+            // Release builds bake the assets in and serve them cacheable.
+            if cfg!(debug_assertions) {
+                builder = builder.header(header::CACHE_CONTROL, "no-store, must-revalidate");
+            }
+            builder
                 .body(Body::from(content.data.into_owned()))
                 .unwrap_or_else(|_| internal_error())
         }

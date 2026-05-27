@@ -23,10 +23,7 @@ pub async fn status(
     };
     let (playing, centibpm) = match clock_guard.as_ref() {
         Some(c) => (c.playing, c.centibpm),
-        None => (
-            false,
-            config.ui_config.ui_default_bpm.saturating_mul(100),
-        ),
+        None => (false, config.ui_config.ui_default_bpm.saturating_mul(100)),
     };
     let bpm = centibpm / 100;
 

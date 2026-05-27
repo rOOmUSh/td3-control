@@ -50,7 +50,7 @@ export function repairCandidate(candidate, analysis, rng) {
 
     // 1. Missing root → seed a strong-beat with root.
     if (budget > 0 && metrics.rootCount === 0 && metrics.activeCount >= 4) {
-        if (insertRoot(pitches, mask, analysis, /*zone*/ 'first-or-last', rng)) {
+        if (insertRoot(pitches, mask, analysis, /*zone*/ 'first-or-last')) {
             actions.push('insert-root');
             budget--;
             metrics = computeMetrics({ pitches, mask }, analysis);
@@ -59,7 +59,7 @@ export function repairCandidate(candidate, analysis, rng) {
 
     // 2. Root in first half missing.
     if (budget > 0 && !metrics.rootInFirstHalf && metrics.rootCount > 0) {
-        if (insertRoot(pitches, mask, analysis, 'first-half', rng)) {
+        if (insertRoot(pitches, mask, analysis, 'first-half')) {
             actions.push('place-root-first-half');
             budget--;
             metrics = computeMetrics({ pitches, mask }, analysis);
@@ -68,7 +68,7 @@ export function repairCandidate(candidate, analysis, rng) {
 
     // 3. Root in last quarter missing.
     if (budget > 0 && !metrics.rootInLastQuarter && metrics.rootCount > 0) {
-        if (insertRoot(pitches, mask, analysis, 'last-quarter', rng)) {
+        if (insertRoot(pitches, mask, analysis, 'last-quarter')) {
             actions.push('place-root-last-quarter');
             budget--;
             metrics = computeMetrics({ pitches, mask }, analysis);
@@ -108,7 +108,7 @@ export function repairCandidate(candidate, analysis, rng) {
     // 7. Weak strong-beat swap - replace one unstable strong beat with
     // its nearest stable.
     if (budget > 0 && metrics.activeCount >= 4) {
-        if (improveWeakStrongBeat(pitches, mask, analysis, rng)) {
+        if (improveWeakStrongBeat(pitches, mask, analysis)) {
             actions.push('improve-weak-strong-beat');
             budget--;
             metrics = computeMetrics({ pitches, mask }, analysis);
@@ -117,7 +117,7 @@ export function repairCandidate(candidate, analysis, rng) {
 
     // 8. Bad final-loop leap.
     if (budget > 0 && metrics.loopMovement != null && metrics.loopMovement > 12 && !metrics.loopLandsOnStable) {
-        if (smoothFinalLoop(pitches, mask, analysis, rng)) {
+        if (smoothFinalLoop(pitches, mask, analysis)) {
             actions.push('smooth-final-loop');
             budget--;
         }
@@ -137,7 +137,7 @@ function activeIndices(mask) {
     return out;
 }
 
-function insertRoot(pitches, mask, analysis, zone, rng) {
+function insertRoot(pitches, mask, analysis, zone) {
     if (analysis.pitches.stable.length === 0) return false;
     const rootPitches = analysis.pitches.all.filter(p => analysis.isRootPitch(p));
     if (rootPitches.length === 0) return false;
@@ -221,7 +221,8 @@ function reduceDominantAbsPitch(pitches, mask, analysis, rng) {
 
 function breakRun(pitches, mask, analysis, rng) {
     const idxs = activeIndices(mask);
-    let runStart = 0, runLen = 1, runPitch = idxs.length > 0 ? pitches[idxs[0]] : null;
+    let runLen = 1;
+    let runPitch = idxs.length > 0 ? pitches[idxs[0]] : null;
     for (let n = 1; n < idxs.length; n++) {
         if (pitches[idxs[n]] === runPitch) {
             runLen++;
@@ -234,13 +235,14 @@ function breakRun(pitches, mask, analysis, rng) {
                 return true;
             }
         } else {
-            runStart = n; runLen = 1; runPitch = pitches[idxs[n]];
+            runLen = 1;
+            runPitch = pitches[idxs[n]];
         }
     }
     return false;
 }
 
-function improveWeakStrongBeat(pitches, mask, analysis, rng) {
+function improveWeakStrongBeat(pitches, mask, analysis) {
     const stable = analysis.pitches.stable;
     if (stable.length === 0) return false;
     const activeStrong = STRONG_BEATS.filter(i => mask[i]);
@@ -253,7 +255,7 @@ function improveWeakStrongBeat(pitches, mask, analysis, rng) {
     return false;
 }
 
-function smoothFinalLoop(pitches, mask, analysis, rng) {
+function smoothFinalLoop(pitches, mask, analysis) {
     const idxs = activeIndices(mask);
     if (idxs.length < 2) return false;
     const last = idxs[idxs.length - 1];

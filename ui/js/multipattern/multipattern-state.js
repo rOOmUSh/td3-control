@@ -57,7 +57,7 @@ let focusedIdx = 0;
 let checkedSet = new Set();
 let timelineDefault = [1];
 let timelineChecked = [];
-let abMode = 'ALTERNATE';
+let abMode = 'SERIAL';
 let viewport = { group: 'ALL', side: 'ALL' };
 let clipboard = null;
 
@@ -76,6 +76,11 @@ let bankSize = ENV_BANK_SIZE;
 let kbEditEnabled = false;
 let autoStepFwd = false;
 let selectedStep = 0;
+// Transient per-pattern-index "NO SAVE" flags for the PREVIEW button.
+// Not persisted and not part of the pattern data model: when set (or when
+// live update is off) PREVIEW auditions the pattern without saving it to the
+// device. Indexed positionally, like the preview controller's active index.
+let noSaveFlags = [];
 
 // Scratch slot descriptor fetched from backend (sidebar selector) - drives
 // slot-badge recomputation and PUSH TO TD-3 target resolution. Transient:
@@ -204,7 +209,7 @@ function load() {
                 checkedSet = new Set();
                 timelineDefault = [1];
                 timelineChecked = [];
-                abMode = 'ALTERNATE';
+                abMode = 'SERIAL';
                 viewport = { group: 'ALL', side: 'ALL' };
                 group = d.group || 1;
                 patternNum = d.patternNum || 1;
@@ -311,6 +316,30 @@ export function getTriplet(patIdx) {
     const i = (patIdx === undefined) ? focusedIdx : patIdx;
     if (i === null || i === undefined) return false;
     return patterns[i].triplet;
+}
+
+/**
+ * Effective NO SAVE state for pattern `patIdx`: true when the per-row flag is
+ * set OR live update is off. When live update is off, auditioning must never
+ * write the pattern to the device, so the non-saving path is forced.
+ */
+export function isNoSave(patIdx) {
+    const i = (patIdx === undefined) ? focusedIdx : patIdx;
+    if (i === null || i === undefined) return !liveUpdate;
+    return !!noSaveFlags[i] || !liveUpdate;
+}
+
+/** Raw per-row NO SAVE checkbox state (independent of live update). */
+export function isNoSaveChecked(patIdx) {
+    const i = (patIdx === undefined) ? focusedIdx : patIdx;
+    if (i === null || i === undefined) return false;
+    return !!noSaveFlags[i];
+}
+
+export function setNoSave(patIdx, v) {
+    if (patIdx === null || patIdx === undefined) return;
+    noSaveFlags[patIdx] = !!v;
+    notify();
 }
 
 export function getFocusedIdx() { return focusedIdx; }
@@ -545,6 +574,20 @@ export function clearChecked() {
     // check starts the arrangement fresh (consistent with the
     // per-pattern rule "uncheck strips every entry").
     timelineChecked = [];
+    notify(false, true);
+}
+
+export function setAllChecked(on) {
+    if (patterns.length === 0) return;
+    if (on) {
+        if (checkedSet.size === patterns.length) return;
+        checkedSet = new Set(patterns.map((_pattern, index) => index));
+        timelineChecked = patterns.map((_pattern, index) => index + 1);
+    } else {
+        if (checkedSet.size === 0) return;
+        checkedSet = new Set();
+        timelineChecked = [];
+    }
     notify(false, true);
 }
 

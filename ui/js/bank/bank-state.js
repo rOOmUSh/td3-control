@@ -41,6 +41,8 @@ export const state = {
 
     // Selection + focus
     selectedIds: new Set(),      // multi-select in cards + table
+    selectedSnapshotIds: new Set(),
+    selectedImportBatchIds: new Set(),
     lastSelectedIndex: -1,       // for shift-click range selection
     focusedId: null,             // drives drawer
 
@@ -66,6 +68,7 @@ export const state = {
     // holds slot keys like "G1-P1A". Cleared when leaving detail mode
     // (BACK button) or when switching to a different snapshot.
     selectedSnapshotSlots: new Set(),
+    activeImportBatchId: null,
 };
 
 const listeners = new Set();
@@ -126,6 +129,60 @@ export function clearSelection() {
 
 export function selectAllVisible(ids) {
     for (const id of ids) state.selectedIds.add(id);
+    notify();
+}
+
+export function setVisibleItemSelection(ids, on) {
+    const list = Array.isArray(ids) ? ids.filter(Boolean) : [];
+    if (on) {
+        for (const id of list) state.selectedIds.add(id);
+    } else {
+        for (const id of list) state.selectedIds.delete(id);
+        state.lastSelectedIndex = -1;
+    }
+    notify();
+}
+
+export function toggleSnapshotSelection(id) {
+    if (!id) return;
+    if (state.selectedSnapshotIds.has(id)) state.selectedSnapshotIds.delete(id);
+    else state.selectedSnapshotIds.add(id);
+    notify();
+}
+
+export function setSnapshotSelection(ids, on) {
+    const list = Array.isArray(ids) ? ids.filter(Boolean) : [];
+    if (on) {
+        for (const id of list) state.selectedSnapshotIds.add(id);
+    } else {
+        for (const id of list) state.selectedSnapshotIds.delete(id);
+    }
+    notify();
+}
+
+export function toggleImportBatchSelection(id) {
+    if (!id) return;
+    if (state.selectedImportBatchIds.has(id)) state.selectedImportBatchIds.delete(id);
+    else state.selectedImportBatchIds.add(id);
+    notify();
+}
+
+export function setImportBatchSelection(ids, on) {
+    const list = Array.isArray(ids) ? ids.filter(Boolean) : [];
+    if (on) {
+        for (const id of list) state.selectedImportBatchIds.add(id);
+    } else {
+        for (const id of list) state.selectedImportBatchIds.delete(id);
+    }
+    notify();
+}
+
+export function clearAllSelections() {
+    state.selectedIds.clear();
+    state.selectedSnapshotIds.clear();
+    state.selectedImportBatchIds.clear();
+    state.selectedSnapshotSlots.clear();
+    state.lastSelectedIndex = -1;
     notify();
 }
 

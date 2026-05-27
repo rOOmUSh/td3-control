@@ -10,7 +10,7 @@ import {
     buildActiveMask, generatePitchSequence, generateCandidate, generateCandidates,
     encodeStepsFromPitches,
 } from './magic-generator.js';
-import { computeMetrics, validateCandidate } from './magic-validator.js';
+import { validateCandidate } from './magic-validator.js';
 import { scoreCandidate } from './magic-scorer.js';
 import { isPitchInRange, decodePitch } from './magic-pitch-encoding.js';
 

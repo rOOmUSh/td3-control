@@ -93,6 +93,52 @@ pub struct PatternPlayPreviewResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Pattern audition (host-sequenced, non-saving)
+// ---------------------------------------------------------------------------
+//
+// Plays the supplied WebPattern by sending timed Note On/Off from the host,
+// with no MIDI Start and no scratch-slot write - the device sequencer stays
+// idle and device pattern memory is untouched. The opposite of
+// PatternPlayPreviewRequest, which uploads to the scratch slot and starts the
+// device clock.
+
+#[derive(Deserialize)]
+pub struct PatternAuditionRequest {
+    pub pattern: WebPattern,
+    /// Legacy integer BPM. Kept for wire compatibility; if `centibpm` is
+    /// supplied it wins.
+    #[serde(default)]
+    pub bpm: Option<u32>,
+    /// Tempo in centi-BPM (BPM x 100).
+    #[serde(default)]
+    pub centibpm: Option<u32>,
+    /// Repeat the active-step cycle until stopped. Defaults to true.
+    #[serde(default = "default_audition_looping")]
+    pub looping: bool,
+    #[serde(default)]
+    pub target_epoch_micros: Option<u64>,
+}
+
+fn default_audition_looping() -> bool {
+    true
+}
+
+impl PatternAuditionRequest {
+    pub fn resolve_centibpm(&self) -> Option<u32> {
+        self.centibpm
+            .or_else(|| self.bpm.map(|b| b.saturating_mul(100)))
+    }
+}
+
+#[derive(Serialize)]
+pub struct PatternAuditionResponse {
+    pub ok: bool,
+    pub bpm: u32,
+    pub centibpm: u32,
+    pub looping: bool,
+}
+
+// ---------------------------------------------------------------------------
 // Pattern export pool (batch → text formats)
 // ---------------------------------------------------------------------------
 
@@ -127,6 +173,10 @@ pub struct ExportPoolResponse {
 pub struct PatternExportRequest {
     pub pattern: WebPattern,
     pub format: String,
+    #[serde(default)]
+    pub patterns: Vec<WebPattern>,
+    #[serde(default)]
+    pub rbs_mode: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

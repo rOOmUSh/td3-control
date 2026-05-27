@@ -17,8 +17,6 @@
 // shapes. The best matching template wins. This way the scorer rewards
 // shape without flattening output.
 
-import { ROLE_STABLE } from './magic-scale-analysis.js';
-
 const STRONG_BEATS = [0, 4, 8, 12];
 
 export const SCORE_WEIGHTS = {
@@ -43,7 +41,7 @@ export function scoreCandidate(candidate, analysis, metrics) {
     breakdown.phraseShape     = scorePhraseShape(candidate, analysis, m);
     breakdown.motif           = scoreMotif(candidate, m);
     breakdown.antiStuck       = scoreAntiStuck(m);
-    breakdown.loop            = scoreLoop(m, analysis);
+    breakdown.loop            = scoreLoop(m);
     breakdown.register        = scoreRegister(m);
 
     let total = 0;
@@ -201,16 +199,18 @@ function scoreAntiStuck(m) {
     return clamp01(s);
 }
 
-function scoreLoop(m, analysis) {
+function scoreLoop(m) {
     if (m.loopMovement == null) return 0.5;
-    let s = 0.6;
-    if (m.loopMovement === 0) s = 1.0;
-    else if (m.loopMovement <= 2) s = 0.95;
-    else if (m.loopMovement <= 4) s = 0.8;
-    else if (m.loopMovement <= 7) s = 0.6;
-    else s = 0.35;
-    if (m.loopLandsOnStable) s = Math.min(1, s + 0.1);
-    return s;
+    const base = m.loopMovement === 0
+        ? 1.0
+        : m.loopMovement <= 2
+            ? 0.95
+            : m.loopMovement <= 4
+                ? 0.8
+                : m.loopMovement <= 7
+                    ? 0.6
+                    : 0.35;
+    return m.loopLandsOnStable ? Math.min(1, base + 0.1) : base;
 }
 
 function scoreRegister(m) {

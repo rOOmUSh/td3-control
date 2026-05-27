@@ -84,11 +84,12 @@ pub(crate) fn read_user_config<T>(dir: &Path) -> Result<T, UserConfigStorageErro
 where
     T: UserConfigFile + DeserializeOwned,
 {
-    let dir =
-        crate::path_safety::require_safe_user_path(dir).map_err(|e| UserConfigStorageError::Read {
+    let dir = crate::path_safety::require_safe_user_path(dir).map_err(|e| {
+        UserConfigStorageError::Read {
             path: dir.to_path_buf(),
             source: std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()),
-        })?;
+        }
+    })?;
     let path = user_config_path(&dir, T::NAME);
     let raw = match fs::read_to_string(&path) {
         Ok(content) => (content, path.display().to_string()),

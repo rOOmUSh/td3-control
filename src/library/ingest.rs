@@ -24,15 +24,19 @@ use super::scanner;
 use super::store::{self, LibraryStore};
 
 mod candidates;
+mod derived_duplicates;
 mod full_bank;
 mod helpers;
+mod import_order;
 mod single_pattern;
 
 #[allow(unused_imports)]
 pub use candidates::is_candidate_filename;
 pub use candidates::list_candidate_files;
+pub use derived_duplicates::{native_truth_for_derived_path, record_derived_duplicate_path};
 #[allow(unused_imports)]
 pub(crate) use helpers::persist_snapshot_slot;
+pub use import_order::sort_import_paths;
 
 use full_bank::{process_rbs, process_sqs};
 use helpers::truncate_err;

@@ -14,13 +14,18 @@ pub async fn transport_start(
         )));
     }
 
-    // Stop any existing clock so its thread releases the MIDI port
-    // before we open a fresh output connection for the new one.
-    stop_clock(&state).await;
+    let (start_epoch_micros, start_delay) =
+        super::super::start_schedule::resolve_start_target(req.target_epoch_micros)
+            .map_err(AppError::BadRequest)?;
 
-    let started_at_epoch_ms = current_epoch_millis();
+    // Stop any existing clock or host audition so their threads release
+    // the MIDI port before we open a fresh output connection.
+    stop_clock(&state).await;
+    stop_audition(&state).await;
+
+    let started_at_epoch_ms = start_epoch_micros / 1_000;
     let transport_id = next_transport_id(&state);
-    let runner = spawn_clock_runner(&state, centibpm).await?;
+    let runner = spawn_clock_runner(&state, centibpm, start_delay).await?;
 
     let mut clock_guard = state.playback.clock.lock().await;
     *clock_guard = Some(ClockState {
@@ -54,6 +59,7 @@ pub async fn transport_stop(
     // The clock thread emits MIDI Stop (0xFC) on its own as part of
     // the shutdown sequence, so no separate `send_stop` call is needed.
     stop_clock(&state).await;
+    stop_audition(&state).await;
 
     // Clear the Bank UI audition tracker so every play button renders its
     // idle state again. Without this, stopping from the legacy transport bar
@@ -171,10 +177,7 @@ fn transport_wrap_pulse_inactive_response(
 }
 
 pub(crate) fn current_epoch_millis_for_clock() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
+    super::super::start_schedule::current_epoch_millis()
 }
 
 pub(super) fn current_epoch_millis() -> u64 {
@@ -196,7 +199,11 @@ async fn current_transport_sync(state: &Arc<AppState>) -> Result<(u32, u64, u64)
     if !clock.playing {
         return Err(AppError::BadRequest("transport is not playing".into()));
     }
-    Ok((clock.centibpm, clock.started_at_epoch_ms, clock.transport_id))
+    Ok((
+        clock.centibpm,
+        clock.started_at_epoch_ms,
+        clock.transport_id,
+    ))
 }
 
 /// Stop any running clock thread and return the `MidiOutputConnection`
@@ -231,6 +238,39 @@ pub(crate) async fn stop_clock(state: &Arc<AppState>) {
     // operation can use it. If the session is gone (parallel
     // disconnect) the connection drops here and the port closes -
     // that matches what disconnect wanted anyway.
+    if let Some(out_conn) = out_conn {
+        let mut guard = state.midi.session.lock().await;
+        if let Some(session) = guard.as_mut() {
+            session.out_conn = Some(out_conn);
+        }
+    }
+}
+
+/// Stop any running host-audition thread and return the
+/// `MidiOutputConnection` it was using back into the session. The
+/// audition thread silences sounding notes on its way out. After this
+/// returns the session's `out_conn` is populated again (assuming the
+/// session still exists). Safe to call when no audition is running.
+pub(crate) async fn stop_audition(state: &Arc<AppState>) {
+    // Take the runner out of the Mutex so the blocking join below does
+    // not hold `state.playback.audition` across the wait.
+    let runner = {
+        let mut guard = state.playback.audition.lock().await;
+        guard.take()
+    };
+
+    let Some(runner) = runner else {
+        return;
+    };
+
+    // `stop()` signals the thread, waits for it to silence sounding
+    // notes, and joins. Use `spawn_blocking` so the tokio worker isn't
+    // parked on the OS-thread join.
+    let out_conn = tokio::task::spawn_blocking(move || runner.stop())
+        .await
+        .ok()
+        .flatten();
+
     if let Some(out_conn) = out_conn {
         let mut guard = state.midi.session.lock().await;
         if let Some(session) = guard.as_mut() {
@@ -285,6 +325,7 @@ where
 pub(crate) async fn spawn_clock_runner(
     state: &Arc<AppState>,
     centibpm: u32,
+    start_delay: Duration,
 ) -> Result<clock::ClockRunner, AppError> {
     let out_conn = {
         let mut guard = state.midi.session.lock().await;
@@ -296,7 +337,7 @@ pub(crate) async fn spawn_clock_runner(
         ))?
     };
 
-    clock::ClockRunner::spawn(out_conn, centibpm).map_err(AppError::Midi)
+    clock::ClockRunner::spawn_scheduled(out_conn, centibpm, start_delay).map_err(AppError::Midi)
 }
 
 // ---------------------------------------------------------------------------

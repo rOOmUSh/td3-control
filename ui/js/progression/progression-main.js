@@ -59,7 +59,6 @@ const bpmFineToggle = document.getElementById('bpm-fine-toggle');
 
 let bpmFineMode = false;
 const btnPlay = document.getElementById('btn-play');
-const bankCount = document.getElementById('bank-count');
 const scaleSelect = document.getElementById('scale-select');
 const btnTimeline = document.getElementById('btn-timeline');
 const timelineModal = document.getElementById('timeline-modal');
@@ -111,6 +110,11 @@ let activeMidiPreviewIdx = -1;       // WebAudio bassline preview, or -1
 let activeBassPreviewIdx = -1;       // TD-3 bassline preview, or -1
 let activePatternPreviewIdx = -1;    // TD-3 raw pattern preview (▶ Pn), or -1
 let openBassMenuIdx = -1;            // which pattern row has its BASS dropdown open, or -1
+let activeBassPreviewMode = null;
+let activePatternPreviewMode = null;
+let playbackMode = null;
+let auditionUpdateInFlight = false;
+let auditionUpdatePending = false;
 
 function setBassMenuOpen(idx, open) {
     const menu = document.querySelector(`[data-bass-menu="${idx}"]`);
@@ -144,16 +148,73 @@ async function stopAllPreviews({ keepMenu = false } = {}) {
         activeMidiPreviewIdx = -1;
     }
     if (activeBassPreviewIdx >= 0) {
-        try { await api.transportStop(); } catch { /* ignore */ }
+        const mode = activeBassPreviewMode;
+        try {
+            if (mode === 'audition') await api.auditionStop();
+            else await api.transportStop();
+        } catch { /* ignore */ }
         setPreviewButtonActive('bass-preview', activeBassPreviewIdx, false);
         activeBassPreviewIdx = -1;
+        activeBassPreviewMode = null;
     }
     if (activePatternPreviewIdx >= 0) {
-        try { await api.transportStop(); } catch { /* ignore */ }
+        const mode = activePatternPreviewMode;
+        try {
+            if (mode === 'audition') await api.auditionStop();
+            else await api.transportStop();
+        } catch { /* ignore */ }
         setPreviewButtonActive('pattern-preview', activePatternPreviewIdx, false);
         activePatternPreviewIdx = -1;
+        activePatternPreviewMode = null;
     }
+    clearAuditionUpdateQueue();
     if (!keepMenu) closeAllBassMenus();
+}
+
+function clearAuditionUpdateQueue() {
+    auditionUpdatePending = false;
+    auditionUpdateInFlight = false;
+}
+
+function currentHostAuditionPattern() {
+    if (activePatternPreviewMode === 'audition' && activePatternPreviewIdx >= 0) {
+        return state.getPattern(activePatternPreviewIdx);
+    }
+    if (activeBassPreviewMode === 'audition' && activeBassPreviewIdx >= 0) {
+        return state.getActiveBassline(activeBassPreviewIdx);
+    }
+    if (playbackMode === 'audition' && state.isPlaying()) {
+        return state.getPattern(state.getActivePatternIndex());
+    }
+    return null;
+}
+
+function syncActiveAudition() {
+    if (!state.isConnected()) return false;
+    if (!currentHostAuditionPattern()) return false;
+    auditionUpdatePending = true;
+    if (!auditionUpdateInFlight) flushAuditionUpdate();
+    return true;
+}
+
+async function flushAuditionUpdate() {
+    auditionUpdateInFlight = true;
+    try {
+        while (auditionUpdatePending) {
+            auditionUpdatePending = false;
+            if (!state.isConnected()) break;
+            const pattern = currentHostAuditionPattern();
+            if (!pattern) break;
+            await api.auditionUpdate(pattern, state.getBpm(), true);
+        }
+    } catch (err) {
+        setStatus('Audition update error: ' + err.message);
+    } finally {
+        auditionUpdateInFlight = false;
+        if (auditionUpdatePending && state.isConnected() && currentHostAuditionPattern()) {
+            flushAuditionUpdate();
+        }
+    }
 }
 
 async function handleMidiPreview(clickIdx) {
@@ -226,12 +287,23 @@ async function handleArchetypePlay(clickIdx, key) {
     // can A/B archetypes from the same menu.
     await stopAllPreviews({ keepMenu: true });
     try {
+        if (!state.isLiveUpdate()) {
+            await api.auditionPattern(bl, state.getBpm(), true);
+            activeBassPreviewIdx = clickIdx;
+            activeBassPreviewMode = 'audition';
+            clearAuditionUpdateQueue();
+            setPreviewButtonActive('bass-preview', clickIdx, true);
+            setStatus(`Host audition: P${clickIdx + 1} ${key} bass (no save)`);
+            return;
+        }
+
         await api.savePattern(
             scratch.group, scratch.pattern, scratch.side,
             bl
         );
         await api.transportStart(state.getBpm());
         activeBassPreviewIdx = clickIdx;
+        activeBassPreviewMode = 'device';
         setPreviewButtonActive('bass-preview', clickIdx, true);
         setStatus(`TD-3 preview: P${clickIdx + 1} ${key} → ${scratch.label}`);
     } catch (err) {
@@ -255,12 +327,23 @@ async function handlePatternPreview(clickIdx) {
         return;
     }
     try {
+        if (!state.isLiveUpdate()) {
+            await api.auditionPattern(state.getPattern(clickIdx), state.getBpm(), true);
+            activePatternPreviewIdx = clickIdx;
+            activePatternPreviewMode = 'audition';
+            clearAuditionUpdateQueue();
+            setPreviewButtonActive('pattern-preview', clickIdx, true);
+            setStatus(`Host audition: P${clickIdx + 1} (no save)`);
+            return;
+        }
+
         await api.savePattern(
             scratch.group, scratch.pattern, scratch.side,
             state.getPattern(clickIdx)
         );
         await api.transportStart(state.getBpm());
         activePatternPreviewIdx = clickIdx;
+        activePatternPreviewMode = 'device';
         setPreviewButtonActive('pattern-preview', clickIdx, true);
         setStatus(`TD-3 preview: P${clickIdx + 1} → ${scratch.label}`);
     } catch (err) {
@@ -294,6 +377,7 @@ bpmKnob.addEventListener('wheel', (e) => {
     state.setBpm(state.getBpm() + (e.deltaY < 0 ? step : -step));
     updateBpmDisplay();
     transport.restartTimer();
+    syncActiveAudition();
 });
 
 if (bpmFineToggle) {
@@ -306,6 +390,7 @@ if (bpmFineToggle) {
         }
         updateBpmDisplay();
         transport.restartTimer();
+        syncActiveAudition();
     });
 }
 
@@ -321,6 +406,7 @@ document.addEventListener('mousemove', (e) => {
     state.setBpm(dragStartBpm + Math.round((dragStartY - e.clientY) / 3));
     updateBpmDisplay();
     transport.restartTimer();
+    syncActiveAudition();
 });
 document.addEventListener('mouseup', () => { dragging = false; });
 
@@ -348,11 +434,16 @@ btnPlay.addEventListener('click', async () => {
                 api,
                 transport,
                 resetTimeline: () => state.resetTimeline(),
+                auditionMode: playbackMode === 'audition',
                 setPlaying: (v) => state.setPlaying(v),
                 setStatus,
             });
+            playbackMode = null;
+            clearAuditionUpdateQueue();
         } else {
             state.resetTimeline();
+            const liveUpdate = state.isLiveUpdate();
+            clearAuditionUpdateQueue();
             await startPlayback({
                 api,
                 timeline: state.getTimeline(),
@@ -361,9 +452,11 @@ btnPlay.addEventListener('click', async () => {
                 bpm: state.getBpm(),
                 transport,
                 stopAllPreviews,
+                liveUpdate,
                 setPlaying: (v) => state.setPlaying(v),
                 setStatus,
             });
+            playbackMode = liveUpdate ? 'device' : 'audition';
         }
         updatePlayButton();
     } catch (err) {
@@ -412,12 +505,6 @@ if (btnPkgBank) {
         }
     });
 }
-
-// --- Bank display ---
-
-// function updateBankDisplay() {
-//     bankCount.textContent = state.getBankCount();
-// }
 
 // --- Per-pattern action buttons (delegated) ---
 
@@ -690,6 +777,7 @@ let scratch = { group: 1, pattern: 1, side: 'A', label: 'G1-P1A' };
 // --- Global SL/ACC and SHIFT ALL ---
 
 function sendActivePattern() {
+    if (syncActiveAudition()) return;
     if (!state.isPlaying() || !state.isLiveUpdate() || !state.isConnected()) return;
     const idx = state.getActivePatternIndex();
     api.savePattern(
@@ -1039,7 +1127,6 @@ state.onChange((patternChanged) => {
     updateLiveBtn();
     updateBpmDisplay();
     updatePlayButton();
-//     updateBankDisplay();
     refreshArchetypeChips();
     refreshBankPushButton();
     // Any step-level edit on the active pattern → send to device immediately
@@ -1285,7 +1372,6 @@ sequencer.render();
 updateLiveBtn();
 updateBpmDisplay();
 updatePlayButton();
-// updateBankDisplay();
 refreshPasteButtons();
 refreshArchetypeChips();
 refreshBankPushButton();

@@ -16,10 +16,16 @@ import { stepIntervalMs as timingStepIntervalMs } from '../shared/transport-timi
 let setStatus = () => {};
 let scratchSlot = null;
 let activeIdx = -1;
+// Which playback path is active: 'device' (scratch upload + device clock) or
+// 'audition' (host-sequenced, non-saving). Drives which stop endpoint stop()
+// calls. null when idle.
+let activeMode = null;
 let beatTimer = null;
 let currentStep = -1;
 let localWrapCount = 0;
 let wrapSync = { anchorEpochMs: 0, transportId: 0, wrapIndex: 0 };
+let auditionUpdateInFlight = false;
+let auditionUpdatePending = false;
 const listeners = new Set();
 
 function stepIntervalMs(idx) {
@@ -123,6 +129,7 @@ export function init(statusFn, scratch) {
 /** Current previewing card index, or -1 when idle. */
 export function getActiveIdx() { return activeIdx; }
 export function isActive(idx) { return activeIdx === idx; }
+export function isAuditionActive() { return activeMode === 'audition' && activeIdx >= 0; }
 
 export function subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); }
 function notify() { for (const fn of listeners) { try { fn(activeIdx); } catch (_) {} } }
@@ -134,9 +141,46 @@ function notify() { for (const fn of listeners) { try { fn(activeIdx); } catch (
 export async function stop() {
     if (activeIdx < 0) return;
     stopBeatTimer();
-    try { await api.transportStop(); } catch (_) { /* ignore */ }
+    const mode = activeMode;
+    try {
+        if (mode === 'audition') {
+            await api.auditionStop();
+        } else {
+            await api.transportStop();
+        }
+    } catch (_) { /* ignore */ }
     activeIdx = -1;
+    activeMode = null;
+    auditionUpdatePending = false;
+    auditionUpdateInFlight = false;
     notify();
+}
+
+export function syncActiveAudition() {
+    if (activeMode !== 'audition' || activeIdx < 0 || !state.isConnected()) return;
+    auditionUpdatePending = true;
+    if (auditionUpdateInFlight) return;
+    flushAuditionUpdate();
+}
+
+async function flushAuditionUpdate() {
+    auditionUpdateInFlight = true;
+    try {
+        while (auditionUpdatePending) {
+            auditionUpdatePending = false;
+            if (activeMode !== 'audition' || activeIdx < 0 || !state.isConnected()) break;
+            const pattern = state.getPattern(activeIdx);
+            if (!pattern) break;
+            await api.auditionUpdate(pattern, state.getBpm(), true);
+        }
+    } catch (err) {
+        setStatus('Audition update error: ' + err.message);
+    } finally {
+        auditionUpdateInFlight = false;
+        if (auditionUpdatePending && activeMode === 'audition' && activeIdx >= 0 && state.isConnected()) {
+            flushAuditionUpdate();
+        }
+    }
 }
 
 /**
@@ -154,10 +198,6 @@ export async function toggle(idx) {
         setStatus('Connect MIDI first');
         return;
     }
-    if (!scratchSlot) {
-        setStatus('Scratch slot not available');
-        return;
-    }
     const wasThis = activeIdx === idx;
     await stop();
     if (wasThis) {
@@ -166,12 +206,39 @@ export async function toggle(idx) {
     }
     const pattern = state.getPattern(idx);
     if (!pattern) return;
+
+    // NO SAVE (or live update off): audition from the host without writing
+    // the pattern to the device or starting the device sequencer.
+    if (state.isNoSave(idx)) {
+        try {
+            await api.auditionPattern(pattern, state.getBpm(), true);
+            activeIdx = idx;
+            activeMode = 'audition';
+            auditionUpdatePending = false;
+            auditionUpdateInFlight = false;
+            // No device transport to sync against; the local beat timer
+            // drives the step highlight only.
+            startBeatTimer(idx, null);
+            notify();
+            setStatus(`Host audition: P${idx + 1} (no save)`);
+        } catch (err) {
+            setStatus('Audition error: ' + err.message);
+        }
+        return;
+    }
+
+    // Save path: upload to the scratch slot and start the device clock.
+    if (!scratchSlot) {
+        setStatus('Scratch slot not available');
+        return;
+    }
     try {
         await api.savePattern(
             scratchSlot.group, scratchSlot.pattern, scratchSlot.side, pattern,
         );
         const startSync = await api.transportStart(state.getBpm());
         activeIdx = idx;
+        activeMode = 'device';
         startBeatTimer(idx, startSync);
         notify();
         const label = scratchSlot.label || `G${scratchSlot.group}P${scratchSlot.pattern}${scratchSlot.side}`;

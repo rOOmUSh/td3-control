@@ -1275,6 +1275,7 @@ async fn move_snapshot_slot_unknown_snapshot_returns_400() {
 // Scan + import HTTP flows
 // ---------------------------------------------------------------------------
 
+use crate::formats::pat as pat_format;
 use crate::formats::seq as seq_format;
 use crate::library::model::FileIngestStatus;
 use crate::pattern::Pattern;
@@ -1310,6 +1311,15 @@ fn make_pattern(note: u8) -> Pattern {
     for s in steps.iter_mut() {
         s.note = note;
     }
+    Pattern::new(false, 16, steps).unwrap()
+}
+
+fn make_pat_lossy_pattern() -> Pattern {
+    let mut steps: [step::Step; 16] = Default::default();
+    steps[0].note = 4;
+    steps[0].time = step::Time::Normal;
+    steps[1].note = 4;
+    steps[1].time = step::Time::TieRest;
     Pattern::new(false, 16, steps).unwrap()
 }
 
@@ -1597,6 +1607,58 @@ async fn import_endpoint_processes_explicit_paths() {
         .unwrap();
     assert_eq!(batch.files_imported, 1);
     assert_eq!(batch.duplicates_skipped, 1);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn import_endpoint_skips_pat_derived_from_native_truth() {
+    let library = temp_library();
+    let app = build_bank_router_with(library);
+
+    let dir = fresh_tmp_dir("derived-pat");
+    let pattern = make_pat_lossy_pattern();
+    let seq_path = dir.join("G1P2A.seq");
+    let pat_path = dir.join("G1P2A.pat");
+    std::fs::write(&seq_path, seq_format::export(&pattern).unwrap()).unwrap();
+    std::fs::write(&pat_path, pat_format::export(&pattern)).unwrap();
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "paths": [
+            pat_path.to_string_lossy(),
+            seq_path.to_string_lossy(),
+        ]
+    }))
+    .unwrap();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/bank/import")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let payload: ImportResponse = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(payload.entries.len(), 2);
+
+    let seq_entry = payload
+        .entries
+        .iter()
+        .find(|entry| entry.path == seq_path.to_string_lossy())
+        .expect("seq entry");
+    let pat_entry = payload
+        .entries
+        .iter()
+        .find(|entry| entry.path == pat_path.to_string_lossy())
+        .expect("pat entry");
+
+    assert_eq!(seq_entry.status, FileIngestStatus::Imported);
+    assert_eq!(pat_entry.status, FileIngestStatus::DuplicateSkipped);
+    assert_eq!(
+        pat_entry.duplicate_of.as_deref(),
+        seq_entry.item_id.as_deref()
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }

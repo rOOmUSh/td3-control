@@ -281,7 +281,6 @@ function openLoadAllConfirm({ hasNonDefault, currentCount, currentMode }) {
         picker.appendChild(ser.row);
         body.appendChild(picker);
 
-        let answered = false;
         openModal({
             title: 'Load all 64 patterns from TD-3',
             body,
@@ -289,13 +288,10 @@ function openLoadAllConfirm({ hasNonDefault, currentCount, currentMode }) {
             secondaryLabel: 'Cancel',
             danger: hasNonDefault,
             onPrimary: () => {
-                answered = true;
                 const mode = ser.input.checked ? 'SERIAL' : 'ALTERNATE';
                 resolve({ mode });
             },
-            onSecondary: () => {
-                if (!answered) { answered = true; resolve(null); }
-            },
+            onSecondary: () => resolve(null),
         });
     });
 }
@@ -307,7 +303,7 @@ function updateSaveChrome(btn, state) {
     const action = resolveSaveAction(state.getSelectionIndexes());
 
     let disabled = false;
-    let title = 'Save selected pattern(s) to TD-3';
+    let title;
 
     if (!connected) {
         disabled = true;

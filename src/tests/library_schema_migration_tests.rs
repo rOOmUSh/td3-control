@@ -11,9 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use rusqlite::{params, Connection};
 
-use crate::library::model::{
-    AnalysisStatus, DuplicateStatus, LibraryItem, SourceKind,
-};
+use crate::library::model::{AnalysisStatus, DuplicateStatus, LibraryItem, SourceKind};
 use crate::library::store::{self, LibraryStore};
 use crate::library::ItemFilter;
 
@@ -190,8 +188,10 @@ fn list_indexes(path: &std::path::Path, table: &str) -> Vec<(String, String)> {
 fn read_text_column(path: &std::path::Path, item_id: &str, column: &str) -> Option<String> {
     let conn = Connection::open(path).expect("open sqlite for column read");
     let sql = format!("SELECT {} FROM items WHERE item_id = ?1", column);
-    conn.query_row(&sql, params![item_id], |row| row.get::<_, Option<String>>(0))
-        .expect("read text column")
+    conn.query_row(&sql, params![item_id], |row| {
+        row.get::<_, Option<String>>(0)
+    })
+    .expect("read text column")
 }
 
 fn read_int_column(path: &std::path::Path, item_id: &str, column: &str) -> i64 {

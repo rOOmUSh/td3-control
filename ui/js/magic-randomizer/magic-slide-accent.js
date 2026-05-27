@@ -37,7 +37,6 @@
 
 import { decodePitch } from './magic-pitch-encoding.js';
 
-const STRONG_BEATS = new Set([0, 4, 8, 12]);
 const TOTAL_STEPS = 16;
 
 /**

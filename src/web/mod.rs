@@ -13,8 +13,10 @@ pub(crate) mod embedded_ui;
 pub(crate) mod folder_picker;
 pub(crate) mod handlers;
 pub(crate) mod package_export;
+pub(crate) mod remote_sync;
 pub(crate) mod scan_jobs;
 pub(crate) mod snapshot_export;
+pub(crate) mod start_schedule;
 pub(crate) mod state;
 pub(crate) mod static_html;
 pub(crate) mod user_config;
@@ -133,6 +135,15 @@ pub async fn start_server(config: Config, env: &AppEnv) -> Result<(), Td3Error> 
             "/pattern/play-preview",
             post(handlers::pattern_play_preview),
         )
+        .route("/pattern/audition", post(handlers::pattern_audition))
+        .route(
+            "/pattern/audition/update",
+            post(handlers::pattern_audition_update),
+        )
+        .route(
+            "/pattern/audition/stop",
+            post(handlers::pattern_audition_stop),
+        )
         .route("/pattern/export-pool", post(handlers::export_pool))
         .route("/pattern/export", post(handlers::pattern_export))
         .route("/transport/start", post(handlers::transport_start))
@@ -165,7 +176,8 @@ pub async fn start_server(config: Config, env: &AppEnv) -> Result<(), Td3Error> 
         )
         .route("/scratch-pattern", get(handlers::scratch_pattern))
         .merge(bank_handlers::router())
-        .merge(control_queue::router());
+        .merge(control_queue::router())
+        .merge(remote_sync::router());
 
     let app = Router::new()
         .nest("/api", api)

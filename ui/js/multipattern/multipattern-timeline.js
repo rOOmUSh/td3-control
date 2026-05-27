@@ -80,7 +80,6 @@ export function init() {
     }, { passive: false });
 
     // FILL menu (sequence / checked / focused / random) + CLEAR.
-    const panel = modal.querySelector('[data-mp-fill]')?.closest('div');
     modal.querySelectorAll('[data-mp-fill]').forEach(btn => {
         btn.addEventListener('click', () => handleFill(btn.dataset.mpFill));
     });
@@ -163,7 +162,6 @@ export function render() {
     // palette are unlikely even past 32 patterns.
     for (let row = 0; row < rows; row += 1) {
         const hue = hslForIndex(row, 70, 55);
-        const rowBg = hslForIndex(row, 70, 20) + '20'; // hue + translucent alpha
 
         const label = document.createElement('div');
         label.className = 'flex items-center justify-center font-black';

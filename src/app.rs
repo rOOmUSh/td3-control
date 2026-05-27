@@ -39,29 +39,32 @@ pub fn run(config: Config) -> Result<(), Td3Error> {
     }
 }
 
-fn required_input_path<'a>(config: &'a Config, mode: &str) -> Result<&'a str, Td3Error> {
+pub(crate) fn required_input_path<'a>(config: &'a Config, mode: &str) -> Result<&'a str, Td3Error> {
     config
         .files
         .input_path
         .as_deref()
-        .ok_or_else(|| Td3Error::CliError(format!("{} mode requires an input path", mode)))
+        .ok_or_else(|| Td3Error::CliError(mode_error(mode, "requires an input path")))
 }
 
-fn required_output_path<'a>(config: &'a Config, mode: &str) -> Result<&'a str, Td3Error> {
+pub(crate) fn required_output_path<'a>(
+    config: &'a Config,
+    mode: &str,
+) -> Result<&'a str, Td3Error> {
     config
         .files
         .output_path
         .as_deref()
-        .ok_or_else(|| Td3Error::CliError(format!("{} mode requires an output path", mode)))
+        .ok_or_else(|| Td3Error::CliError(mode_error(mode, "requires an output path")))
 }
 
 pub(crate) fn required_target(config: &Config, mode: &str) -> Result<PatternAddress, Td3Error> {
-    config.target.ok_or_else(|| {
-        Td3Error::CliError(format!("{} mode requires resolved pattern target", mode))
-    })
+    config
+        .target
+        .ok_or_else(|| Td3Error::CliError(mode_error(mode, "requires resolved pattern target")))
 }
 
-fn validate_device_session_config(config: &Config) -> Result<(), Td3Error> {
+pub(crate) fn validate_device_session_config(config: &Config) -> Result<(), Td3Error> {
     match config.mode {
         Mode::Export => {
             required_target(config, "export")?;
@@ -76,4 +79,12 @@ fn validate_device_session_config(config: &Config) -> Result<(), Td3Error> {
         _ => {}
     }
     Ok(())
+}
+
+fn mode_error(mode: &str, detail: &str) -> String {
+    let mut message = String::with_capacity(mode.len() + detail.len() + 6);
+    message.push_str(mode);
+    message.push_str(" mode ");
+    message.push_str(detail);
+    message
 }
