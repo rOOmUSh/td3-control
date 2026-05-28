@@ -591,12 +591,30 @@ test('dual-timeline: check P2 → getTimeline returns [2]', () => {
     assert(JSON.stringify(state.getTimeline()) === '[2]', `expected [2], got ${JSON.stringify(state.getTimeline())}`);
 });
 
-test('dual-timeline: check sequence P2 then P5 appends in order', () => {
+test('dual-timeline: check sequence P2 then P5 stores pattern order', () => {
     reset();
     for (let i = 0; i < 4; i++) state.addPattern(); // N=5
     state.setChecked(1, true); // P2
     state.setChecked(4, true); // P5
     assert(JSON.stringify(state.getTimeline()) === '[2,5]', `expected [2,5], got ${JSON.stringify(state.getTimeline())}`);
+});
+
+test('dual-timeline: checking lower pattern inserts before higher pattern', () => {
+    reset();
+    for (let i = 0; i < 4; i++) state.addPattern(); // N=5
+    state.setChecked(4, true); // P5
+    state.setChecked(1, true); // P2
+    assert(JSON.stringify(state.getTimeline()) === '[2,5]', `expected [2,5], got ${JSON.stringify(state.getTimeline())}`);
+});
+
+test('dual-timeline: checking P2 into P1/P3/P5 keeps indexed playback order', () => {
+    reset();
+    for (let i = 0; i < 4; i++) state.addPattern(); // N=5
+    state.setChecked(0, true); // P1
+    state.setChecked(2, true); // P3
+    state.setChecked(4, true); // P5
+    state.setChecked(1, true); // P2
+    assert(JSON.stringify(state.getTimeline()) === '[1,2,3,5]', `expected [1,2,3,5], got ${JSON.stringify(state.getTimeline())}`);
 });
 
 test('dual-timeline: rearrange checked-timeline persists across re-render', () => {
@@ -608,14 +626,14 @@ test('dual-timeline: rearrange checked-timeline persists across re-render', () =
     assert(JSON.stringify(tl) === '[2,2,2,2,5,5,5,5]', 'custom arrangement stored');
 });
 
-test('dual-timeline: checking a 3rd pattern appends one entry to existing arrangement', () => {
+test('dual-timeline: checking a 3rd pattern inserts one entry into existing arrangement', () => {
     reset();
     for (let i = 0; i < 4; i++) state.addPattern(); // N=5
     state.setChecked(1, true); state.setChecked(4, true);
     state.setTimeline([2, 2, 2, 2, 5, 5, 5, 5]);
-    state.setChecked(2, true); // P3 → append one 3
+    state.setChecked(2, true); // P3 inserts before P5 entries
     const tl = state.getTimeline();
-    assert(JSON.stringify(tl) === '[2,2,2,2,5,5,5,5,3]', `expected [2,2,2,2,5,5,5,5,3], got ${JSON.stringify(tl)}`);
+    assert(JSON.stringify(tl) === '[2,2,2,2,3,5,5,5,5]', `expected [2,2,2,2,3,5,5,5,5], got ${JSON.stringify(tl)}`);
 });
 
 test('dual-timeline: unchecking a pattern strips every entry for it', () => {
@@ -623,8 +641,8 @@ test('dual-timeline: unchecking a pattern strips every entry for it', () => {
     for (let i = 0; i < 4; i++) state.addPattern();
     state.setChecked(1, true); state.setChecked(4, true);
     state.setTimeline([2, 2, 2, 2, 5, 5, 5, 5]);
-    state.setChecked(2, true); // [2,2,2,2,5,5,5,5,3]
-    state.setChecked(4, false); // uncheck P5 → drop every 5
+    state.setChecked(2, true); // [2,2,2,2,3,5,5,5,5]
+    state.setChecked(4, false); // uncheck P5, drop every 5
     const tl = state.getTimeline();
     assert(JSON.stringify(tl) === '[2,2,2,2,3]', `expected [2,2,2,2,3], got ${JSON.stringify(tl)}`);
 });
