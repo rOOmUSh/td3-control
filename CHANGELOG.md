@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.1.1 - 2026-05-28
+
+### Fixed
+
+- Fixed checked-pattern playback ordering so newly checked patterns join by pattern index instead of being appended to the end of the checked timeline.
+- Fixed active playback queue replacement when a queued checked pattern is unchecked before wrap. The next still-checked pattern is now queued immediately for both Live Update ON scratch saves and Live Update OFF host audition.
+- Fixed single-slot checked playback joining a multi-slot checked loop so the audible pattern tracker stays aligned with the pattern actually playing.
+
 ## v1.1.0 - 2026-05-27
 
 ### Added

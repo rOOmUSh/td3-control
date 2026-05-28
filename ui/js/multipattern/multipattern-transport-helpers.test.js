@@ -12,6 +12,7 @@ import {
     nextTimelinePos,
     advanceCursorToDevicePattern,
     needsImmediateScratchSave,
+    queueSlotAfterTimelineChange,
     shouldUpdateHostAuditionPattern,
     countNonEmpty,
     repeatFill,
@@ -129,6 +130,54 @@ test('needsImmediateScratchSave returns false on empty/invalid input', () => {
     assert.equal(needsImmediateScratchSave([1, 2], 5, 0), false);
     // Empty (zero) cursor slot: nothing to save.
     assert.equal(needsImmediateScratchSave([0, 1, 2], 0, 0), false);
+});
+
+test('queueSlotAfterTimelineChange queues newly inserted next checked pattern', () => {
+    assert.equal(queueSlotAfterTimelineChange([1, 2], 0, 0), 1);
+    assert.equal(queueSlotAfterTimelineChange([1, 3, 5, 6], 2, 4), 3);
+});
+
+test('queueSlotAfterTimelineChange keeps lower checked pattern for next loop', () => {
+    assert.equal(queueSlotAfterTimelineChange([1, 2, 3, 5], 2, 2), 3);
+});
+
+test('queueSlotAfterTimelineChange replaces unchecked queued wrap target', () => {
+    // Before the uncheck: timeline [1,2,3], cursor on P3, queued P1.
+    // After unchecking P1: timeline [2,3]. P3 remains audible and P2 must
+    // replace P1 as the queued next pattern.
+    const tl = [2, 3];
+    const cursor = advanceCursorToDevicePattern(tl, 1, 2);
+    const queueSlot = queueSlotAfterTimelineChange(tl, cursor, 2);
+    assert.equal(cursor, 1);
+    assert.equal(queueSlot, 0);
+    assert.equal(needsImmediateScratchSave(tl, queueSlot, 0), true);
+});
+
+test('queueSlotAfterTimelineChange wraps when removed queued pattern was after current', () => {
+    // Before the uncheck: timeline [1,2,3], cursor on P2, queued P3.
+    // After unchecking P3: timeline [1,2]. P2 remains audible and P1 must
+    // become the queued next pattern.
+    const tl = [1, 2];
+    const cursor = advanceCursorToDevicePattern(tl, 1, 1);
+    const queueSlot = queueSlotAfterTimelineChange(tl, cursor, 1);
+    assert.equal(cursor, 1);
+    assert.equal(queueSlot, 0);
+    assert.equal(needsImmediateScratchSave(tl, queueSlot, 2), true);
+});
+
+test('queueSlotAfterTimelineChange queues fallback when current pattern disappeared', () => {
+    assert.equal(queueSlotAfterTimelineChange([1], 0, 3), 0);
+});
+
+test('queueSlotAfterTimelineChange keeps a single-slot loop on its slot', () => {
+    assert.equal(queueSlotAfterTimelineChange([1], 0, 0), 0);
+});
+
+test('queueSlotAfterTimelineChange rejects invalid cursor input', () => {
+    assert.equal(queueSlotAfterTimelineChange([], 0, 0), -1);
+    assert.equal(queueSlotAfterTimelineChange(null, 0, 0), -1);
+    assert.equal(queueSlotAfterTimelineChange([1, 2], -1, 0), -1);
+    assert.equal(queueSlotAfterTimelineChange([0, 2], 0, 0), -1);
 });
 
 test('shouldUpdateHostAuditionPattern updates only no-save pattern changes', () => {

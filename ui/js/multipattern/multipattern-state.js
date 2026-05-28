@@ -15,12 +15,12 @@
 //   - No checkboxes  → timelineDefault drives playback. Grows with ADD/DUP,
 //                      compacts on DEL, untouched by MOVE (slot-numbered).
 //                      User-editable in the timeline modal.
-//   - ≥1 checkbox    → timelineChecked drives playback. Auto-appended on
-//                      check-on (once), all entries for a pattern stripped
-//                      on check-off. Also user-editable in the timeline
-//                      modal (repeats + reorder). Preserved across
-//                      check-all-off so resuming a checkbox session
-//                      restores the last arrangement.
+//   - ≥1 checkbox    → timelineChecked drives playback. Check-on inserts
+//                      one entry at its pattern-number position, all entries
+//                      for a pattern are stripped on check-off. Also
+//                      user-editable in the timeline modal (repeats +
+//                      reorder). Preserved across check-all-off so resuming
+//                      a checkbox session restores the last arrangement.
 // getTimeline()/setTimeline() transparently route to the active timeline
 // so the modal and transport never need to know which one is in play.
 //
@@ -545,11 +545,10 @@ export function setChecked(i, on) {
     const wasChecked = checkedSet.has(i);
     if (on && !wasChecked) {
         checkedSet.add(i);
-        // Append this pattern's 1-based number to the checkbox timeline
-        // exactly once - matches the user flow "check P5 → playback
-        // appends 5". If the user later arranges [2,2,5,5], rechecking
-        // P2 would append one 2 at the end, not restore the old layout.
-        timelineChecked.push(i + 1);
+        // Insert this pattern's 1-based number once at its ordered playback
+        // position. Existing repeats and manual arrangement entries stay
+        // intact; the new entry lands before the first larger pattern number.
+        insertCheckedTimelineEntry(i + 1);
     } else if (!on && wasChecked) {
         checkedSet.delete(i);
         // Uncheck strips every entry for this pattern - matches "uncheck
@@ -565,6 +564,12 @@ export function setChecked(i, on) {
 }
 
 export function toggleChecked(i) { setChecked(i, !checkedSet.has(i)); }
+
+function insertCheckedTimelineEntry(num) {
+    const insertAt = timelineChecked.findIndex(entry => entry > num);
+    if (insertAt === -1) timelineChecked.push(num);
+    else timelineChecked.splice(insertAt, 0, num);
+}
 
 export function clearChecked() {
     if (checkedSet.size === 0) return;

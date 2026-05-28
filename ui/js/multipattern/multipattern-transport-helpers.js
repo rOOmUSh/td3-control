@@ -112,6 +112,33 @@ export function needsImmediateScratchSave(tl, cursor, queuedPatIdx) {
 }
 
 /**
+ * Choose which timeline slot should be queued after a structural timeline
+ * change during playback.
+ *
+ * If the current device pattern is still present at `cursor`, the audible
+ * pattern must finish and the next non-empty slot is the queue target. This
+ * replaces a preloaded pattern that was removed from the timeline before
+ * wrap. If the current device pattern is no longer present, `cursor` is
+ * already the fallback slot selected by advanceCursorToDevicePattern and
+ * should be queued.
+ *
+ * @param {number[]} tl
+ * @param {number} cursor
+ * @param {number|null|undefined} currentPatIdx
+ * @returns {number}
+ */
+export function queueSlotAfterTimelineChange(tl, cursor, currentPatIdx) {
+    if (!Array.isArray(tl)) return -1;
+    if (!Number.isInteger(cursor) || cursor < 0 || cursor >= tl.length) return -1;
+    const cursorNum = tl[cursor];
+    if (!Number.isInteger(cursorNum) || cursorNum < 1) return -1;
+    if (!Number.isInteger(currentPatIdx) || currentPatIdx < 0) return cursor;
+    if (cursorNum !== currentPatIdx + 1) return cursor;
+    const next = nextTimelinePos(tl, cursor);
+    return next >= 0 ? next : cursor;
+}
+
+/**
  * Decide whether a host-sequenced no-save transport needs to replace the
  * active audition schedule at a wrap boundary.
  *

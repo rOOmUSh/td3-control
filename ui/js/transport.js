@@ -71,6 +71,7 @@ import {
     advanceCursorToDevicePattern,
     countNonEmpty,
     needsImmediateScratchSave,
+    queueSlotAfterTimelineChange,
     shouldUpdateHostAuditionPattern,
 } from './multipattern/multipattern-transport-helpers.js';
 import { bindPointerPressActivation } from './shared/pointer-activation.js';
@@ -835,10 +836,10 @@ function onStateChangeDuringPlay(_patternChanged, structuralChange) {
 
     // activeSlots >= 1: stay in timeline mode.
     //
-    // Transitioning into timeline mode from single-pattern (no cursor yet,
-    // or device tracker unset): seed the device-pattern tracker from the
-    // focused card, which is what the device was looping.
-    if (currentTlPos < 0 || currentDevicePatternIdx === null) {
+    // Transitioning into timeline mode with no device tracker: seed from the
+    // focused card, which is the best known single-pattern fallback. If a
+    // single-slot timeline already seeded the device tracker, keep it.
+    if (currentDevicePatternIdx === null) {
         currentDevicePatternIdx = state.getFocusedIdx();
         queuedPatternIdx = currentDevicePatternIdx;
         seedDeviceTiming(currentDevicePatternIdx);
@@ -855,8 +856,13 @@ function onStateChangeDuringPlay(_patternChanged, structuralChange) {
     currentTlPos = cursor;
     highlightColumn(currentTlPos);
 
-    if (needsImmediateScratchSave(tl, cursor, queuedPatternIdx)) {
-        immediateScratchSave(tl, cursor);
+    // Queue the next slot after the audible pattern. If the previously
+    // queued slot was removed, this replaces it before the current wrap.
+    const queueSlot = queueSlotAfterTimelineChange(
+        tl, cursor, currentDevicePatternIdx,
+    );
+    if (needsImmediateScratchSave(tl, queueSlot, queuedPatternIdx)) {
+        immediateScratchSave(tl, queueSlot);
     }
 }
 
@@ -875,13 +881,16 @@ function immediateScratchSave(tl, slot) {
     const patIdx = num - 1;
     queuedPatternIdx = patIdx;
     nextPatternSent = true;
-    if (!state.isLiveUpdate() || !state.isConnected()) return;
     const pat = state.getPattern(patIdx);
     if (!pat) return;
     const queuedTiming = snapshotTiming(pat, {
         activeSteps: state.getActiveSteps(patIdx),
         triplet: state.getTriplet(patIdx),
     });
+    if (!state.isLiveUpdate() || !state.isConnected()) {
+        queuedDeviceTiming = queuedTiming;
+        return;
+    }
     api.savePattern(
         scratchSlot.group, scratchSlot.pattern, scratchSlot.side, pat,
     ).then(() => {
