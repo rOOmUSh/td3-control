@@ -10,7 +10,7 @@ license = "GPL-3.0-only"
 midir = "0.11"
 clap = { version = "4", features = ["derive"] }
 thiserror = "2"
-log = "0.4.30"
+log = "0.4.31"
 env_logger = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
