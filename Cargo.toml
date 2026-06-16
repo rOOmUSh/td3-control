@@ -1,6 +1,6 @@
 [package]
 name = "td3-control"
-version = "1.1.1"
+version = "1.1.2"
 edition = "2021"
 license = "GPL-3.0-only"
 
@@ -10,7 +10,7 @@ license = "GPL-3.0-only"
 midir = "0.11"
 clap = { version = "4", features = ["derive"] }
 thiserror = "2"
-log = "0.4.30"
+log = "0.4.32"
 env_logger = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -24,7 +24,7 @@ eframe = { version = "0.34", default-features = false, features = ["default_font
 webbrowser = "1"
 zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 sha2 = "0.11"
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.40.1", features = ["bundled"] }
 rfd = { version = "0.17.2", default-features = false, features = ["common-controls-v6", "xdg-portal"] }
 
 # Windows-only: raise the system timer resolution to 1 ms and bump the
@@ -32,7 +32,8 @@ rfd = { version = "0.17.2", default-features = false, features = ["common-contro
 # align to the default 15.625 ms quantum (which introduces audible jitter
 # on 0xF8 ticks at 120+ BPM) and the scheduler doesn't preempt us mid-wait.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Media", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Media", "Win32_Security", "Win32_System_Threading"] }
+windows = { version = "0.62.2", features = ["Devices_Enumeration", "Devices_Midi", "Foundation", "Foundation_Collections"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

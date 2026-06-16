@@ -24,7 +24,10 @@ pub struct RemoteSyncCommand {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteSyncRelayRequest {
-    pub port: u16,
+    #[serde(default)]
+    pub port: Option<u32>,
+    #[serde(default)]
+    pub ports: Option<Vec<u32>>,
     pub command: RemoteSyncCommandKind,
     #[serde(default)]
     pub centibpm: Option<u32>,
@@ -37,18 +40,40 @@ pub struct RemoteSyncRelayRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteSyncProbeRequest {
-    pub port: u16,
+    #[serde(default)]
+    pub port: Option<u32>,
+    #[serde(default)]
+    pub ports: Option<Vec<u32>>,
 }
 
-impl From<RemoteSyncRelayRequest> for RemoteSyncCommand {
-    fn from(req: RemoteSyncRelayRequest) -> Self {
-        Self {
-            command: req.command,
-            centibpm: req.centibpm,
-            target_epoch_micros: req.target_epoch_micros,
-            triplet: req.triplet,
+impl RemoteSyncRelayRequest {
+    pub fn command_payload(&self) -> RemoteSyncCommand {
+        RemoteSyncCommand {
+            command: self.command.clone(),
+            centibpm: self.centibpm,
+            target_epoch_micros: self.target_epoch_micros,
+            triplet: self.triplet,
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteSyncRelayResult {
+    pub port: u16,
+    pub ok: bool,
+    pub queued: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteSyncProbeResult {
+    pub port: u16,
+    pub ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -56,12 +81,16 @@ impl From<RemoteSyncRelayRequest> for RemoteSyncCommand {
 pub struct RemoteSyncCommandResponse {
     pub ok: bool,
     pub queued: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub results: Vec<RemoteSyncRelayResult>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteSyncProbeResponse {
     pub ok: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub results: Vec<RemoteSyncProbeResult>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

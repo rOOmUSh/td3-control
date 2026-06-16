@@ -1,6 +1,7 @@
 mod app;
 mod app_env;
 mod bank;
+mod browser;
 mod config;
 mod env_metadata;
 mod env_writer;
@@ -8,7 +9,9 @@ mod error;
 mod formats;
 mod launcher;
 mod library;
+mod midi_exchange_lock;
 mod midi_io;
+mod midi_ports;
 mod midi_session;
 mod path_safety;
 mod pattern;
@@ -98,41 +101,30 @@ async fn run() -> Result<(), error::Td3Error> {
     let config = config::load_config(&env)?;
     match &config.mode {
         config::Mode::Control => {
-            // Pre-UI backup is mandatory when a TD-3 is present so the warning
-            // box's promise ("a full device bank backup will be created before
-            // any writes occur") is fulfilled on disk. When no device is found
-            // we drop into offline mode: the web server still starts, every
-            // device-touching API returns "not connected", every UI button
-            // self-disables, and no scratch-pattern slot is ever overwritten.
-            match app::try_pre_ui_backup(&config)? {
-                Some(_) => {
-                    confirm_scratch_pattern(&config)?;
-                    app::force_usb_sync(&config);
-                }
-                None => print_offline_banner(),
-            }
-            if std::env::var("TD3_AUTO_OPEN_BROWSER").as_deref() == Ok("1") {
-                let url = format!(
-                    "http://{}:{}",
-                    config.control.bind_address, config.control.listen_port
-                );
-                eprintln!("Opening browser to {} ...", url);
-                tokio::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    if let Err(e) = webbrowser::open(&url) {
-                        let error_text = e.to_string();
-                        let mut message = String::from("failed to open browser at ");
-                        message.push_str(&url);
-                        message.push_str(": ");
-                        message.push_str(&error_text);
-                        log::warn!("{}", message);
+            if should_run_startup_midi(&env) {
+                // Pre-UI backup is mandatory when startup MIDI is enabled so
+                // the scratch warning's backup promise is fulfilled on disk.
+                // When no device is found we drop into offline mode and the
+                // web server still starts without a device session.
+                match app::try_pre_ui_backup(&config)? {
+                    Some(_) => {
+                        confirm_scratch_pattern(&config)?;
+                        app::force_usb_sync(&config);
                     }
-                });
+                    None => print_offline_banner(),
+                }
+            } else {
+                print_startup_midi_disabled_banner();
             }
-            web::start_server(config, &env).await
+            let auto_open_browser = browser::auto_open_browser_requested();
+            web::start_server(config, &env, auto_open_browser).await
         }
         _ => app::run(config),
     }
+}
+
+fn should_run_startup_midi(env: &app_env::AppEnv) -> bool {
+    env.ui_auto_connect_to_midi
 }
 
 /// Display scratch pattern warning and require y/n confirmation before starting.
@@ -196,6 +188,21 @@ fn print_offline_banner() {
     eprintln!("  ║  Pattern editing, generators, library, snapshots, and        ║");
     eprintln!("  ║  file export remain fully usable. Listen, Push, and Pull     ║");
     eprintln!("  ║  stay disabled until a device is connected.                  ║");
+    eprintln!("  ║                                                              ║");
+    eprintln!("  ╚══════════════════════════════════════════════════════════════╝");
+    eprintln!();
+}
+
+fn print_startup_midi_disabled_banner() {
+    eprintln!();
+    eprintln!("  ╔══════════════════════════════════════════════════════════════╗");
+    eprintln!("  ║                    STARTUP MIDI DISABLED                     ║");
+    eprintln!("  ╠══════════════════════════════════════════════════════════════╣");
+    eprintln!("  ║                                                              ║");
+    eprintln!("  ║  UI_AUTO_CONNECT_TO_MIDI=0, so startup MIDI probing and the  ║");
+    eprintln!("  ║  pre-UI device backup are skipped. The web UI starts without ║");
+    eprintln!("  ║  a device session. Device operations require a manual        ║");
+    eprintln!("  ║  connection after the page opens.                            ║");
     eprintln!("  ║                                                              ║");
     eprintln!("  ╚══════════════════════════════════════════════════════════════╝");
     eprintln!();

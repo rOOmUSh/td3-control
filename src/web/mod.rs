@@ -39,7 +39,11 @@ use crate::td3_protocol;
 /// `Config` (library DB path, pattern sidecar dir, UI boot snapshot). `Config`
 /// still drives all of the "what are we doing this run" fields (scratch slot,
 /// MIDI port names, bind address, etc.).
-pub async fn start_server(config: Config, env: &AppEnv) -> Result<(), Td3Error> {
+pub async fn start_server(
+    config: Config,
+    env: &AppEnv,
+    auto_open_browser: bool,
+) -> Result<(), Td3Error> {
     let addr: SocketAddr = format!(
         "{}:{}",
         config.control.bind_address, config.control.listen_port
@@ -90,11 +94,7 @@ pub async fn start_server(config: Config, env: &AppEnv) -> Result<(), Td3Error> 
 
     // Resolved MIDI runtime config - precedence is CLI flag > env file >
     // template, all already merged into `Config`/`env` by this point.
-    let midi_runtime = state::MidiRuntimeConfig {
-        port_substring: env.midi_port_substring.clone(),
-        strict_name_match: env.midi_strict_name_match,
-        timeout: config.midi.request_timeout,
-    };
+    let midi_runtime = midi_runtime_config_from_resolved(&config.midi);
     let midi_export_options = crate::formats::mid::MidiExportOptions::from_env(env);
     let midi_import_options = crate::formats::mid_import::MidiImportOptions::from_env(env);
 
@@ -118,8 +118,12 @@ pub async fn start_server(config: Config, env: &AppEnv) -> Result<(), Td3Error> 
         },
     );
 
-    // Auto-connect to TD-3 on startup (best-effort, non-fatal)
-    auto_connect(&shared_state, &config).await;
+    if should_auto_connect_on_server_start(env) {
+        // Startup auto-connect is best-effort and non-fatal.
+        auto_connect(&shared_state, &config).await;
+    } else {
+        eprintln!("Startup MIDI auto-connect disabled by TD3_CONFIG.env.");
+    }
 
     let api = Router::new()
         .route("/status", get(handlers::status))
@@ -207,11 +211,25 @@ pub async fn start_server(config: Config, env: &AppEnv) -> Result<(), Td3Error> 
         }
     })?;
 
+    if auto_open_browser {
+        let url =
+            crate::browser::control_url(&config.control.bind_address, config.control.listen_port);
+        eprintln!("Opening browser to {} ...", url);
+        if let Err(error) = crate::browser::open_default_browser(&url) {
+            eprintln!("warning: {}", error);
+            log::warn!("{}", error);
+        }
+    }
+
     axum::serve(listener, app)
         .await
         .map_err(|e| Td3Error::Other(format!("server error: {}", e)))?;
 
     Ok(())
+}
+
+pub(crate) fn should_auto_connect_on_server_start(env: &AppEnv) -> bool {
+    env.ui_auto_connect_to_midi
 }
 
 /// Best-effort auto-connect to the TD-3 at startup.
@@ -258,5 +276,16 @@ async fn auto_connect(shared_state: &std::sync::Arc<state::AppState>, config: &C
             eprintln!("Auto-connect failed (device not found): {}", e);
             eprintln!("You can connect manually from the web UI.");
         }
+    }
+}
+
+pub(crate) fn midi_runtime_config_from_resolved(
+    midi: &crate::config::MidiRuntime,
+) -> state::MidiRuntimeConfig {
+    state::MidiRuntimeConfig {
+        input_port_name: midi.input_port_name.clone(),
+        output_port_name: midi.output_port_name.clone(),
+        strict_name_match: midi.strict_name_match,
+        timeout: midi.request_timeout,
     }
 }

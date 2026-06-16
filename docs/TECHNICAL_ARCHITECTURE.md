@@ -118,11 +118,13 @@ This is one of the most important internal details in the project because it kee
 
 The TD-3's sequencer clock source (INT, USB, DIN, TRIG) is read from the device on every connect using SysEx command `0x75` (Get Configuration) and written using command `0x1B` (Set Sequencer Clock Source). The session state caches the current value so the UI can render the correct pill selection and the tri-state indicator without re-querying.
 
-`td3-control control` startup forces the source to USB so the UI's transport buttons drive the device by default. Runtime changes from the UI go through `POST /api/midi/sync-source`.
+When `UI_AUTO_CONNECT_TO_MIDI=1`, `td3-control control` startup forces the source to USB so the UI's transport buttons drive the device by default. Runtime changes from the UI go through `POST /api/midi/sync-source`.
 
 ### Offline mode
 
 When the pre-UI backup fails specifically with `PortNotFound`, `app::try_pre_ui_backup` maps the error to `Ok(None)` so `main` falls through to `web::start_server` with no active session. Other backup failures (timeout, busy, malformed reply, disk error) still abort startup. The web layer renders an OFFLINE banner instead of the scratch-pattern prompt and disables the transport, sync-source, and device-only handlers until a device appears.
+
+When `UI_AUTO_CONNECT_TO_MIDI=0`, startup MIDI probing and the pre-UI backup are skipped deliberately. The web UI starts without an active device session, and the user can connect manually after the page opens.
 
 ## Scratch-Slot Contract
 

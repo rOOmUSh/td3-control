@@ -55,6 +55,45 @@ fn find_port<T: midir::MidiIO>(
     })
 }
 
+fn port_name_matches(candidate_name: &str, query: &str, strict: bool) -> bool {
+    if strict {
+        candidate_name == query
+    } else {
+        candidate_name.contains(query)
+    }
+}
+
+pub(crate) fn ensure_port_name_available(
+    candidates: &[String],
+    query: &str,
+    strict: bool,
+) -> Result<(), Td3Error> {
+    if candidates
+        .iter()
+        .any(|candidate_name| port_name_matches(candidate_name, query, strict))
+    {
+        return Ok(());
+    }
+
+    Err(Td3Error::PortNotFound {
+        port_name: query.to_owned(),
+        available: candidates.join(", "),
+    })
+}
+
+fn preflight_port_names(
+    output_query: &str,
+    input_query: &str,
+    strict: bool,
+) -> Result<(), Td3Error> {
+    let ports = crate::midi_ports::list_port_names()?;
+    let outputs = ports.outputs;
+    let inputs = ports.inputs;
+    ensure_port_name_available(&outputs, output_query, strict)?;
+    ensure_port_name_available(&inputs, input_query, strict)?;
+    Ok(())
+}
+
 /// Classify a `midir` connect error as a device-busy condition.
 ///
 /// When `find_port` already succeeded, the port was present at the moment of
@@ -85,6 +124,8 @@ pub fn open_ports(
     ),
     Td3Error,
 > {
+    preflight_port_names(output_query, input_query, strict)?;
+
     // Output
     let output_handle = midir::MidiOutput::new("")
         .map_err(|error| Td3Error::Midi(format!("failed to create MIDI output: {}", error)))?;
@@ -280,6 +321,7 @@ pub fn exchange_sysex<S: SysexSender + ?Sized>(
     expected_cmd: Option<u8>,
     timeout: Duration,
 ) -> Result<Vec<u8>, Td3Error> {
+    let _exchange_guard = crate::midi_exchange_lock::acquire(operation, timeout)?;
     let purged = drain_stale(receiver);
     if purged > 0 {
         log::debug!("Drained {} stale message(s) before {}", purged, operation);
@@ -315,6 +357,7 @@ where
     S: SysexSender + ?Sized,
     F: FnMut(&[u8]) -> Result<bool, Td3Error>,
 {
+    let _exchange_guard = crate::midi_exchange_lock::acquire(operation, timeout)?;
     let purged = drain_stale(receiver);
     if purged > 0 {
         log::debug!("Drained {} stale message(s) before {}", purged, operation);

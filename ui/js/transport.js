@@ -323,6 +323,24 @@ function mirrorRemoteBpm() {
         .catch(err => setStatus('Remote BPM error: ' + err.message));
 }
 
+function captureRemoteRelay(promise) {
+    return promise.then(
+        response => ({ response }),
+        error => ({ error }),
+    );
+}
+
+async function reportRemoteRelayOutcome(outcomePromise, label) {
+    const outcome = await outcomePromise;
+    if (outcome.error) {
+        setStatus(`Remote ${label} error: ${outcome.error.message}`);
+        return;
+    }
+    if (outcome.response && !outcome.response.skipped) {
+        setStatus(remoteSync.formatRemoteSyncSuccess(`Remote ${label}`, outcome.response));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Play toggle
 // ---------------------------------------------------------------------------
@@ -360,12 +378,13 @@ async function togglePlay(event, options = {}) {
             let targetEpochMicros = Number.isFinite(options.targetEpochMicros)
                 ? options.targetEpochMicros
                 : null;
+            let remotePlayOutcome = null;
             if (!remoteTriggered && remoteSync.isEnabled()) {
                 targetEpochMicros = plannedStartTargetEpochMicros(event);
-                await remoteSync.relayPlay({
+                remotePlayOutcome = captureRemoteRelay(remoteSync.relayPlay({
                     centibpm: Math.round(state.getBpm() * 100),
                     targetEpochMicros,
-                });
+                }));
             }
 
             // LIVE UPDATE off: host-sequence the active timeline with timed
@@ -399,6 +418,10 @@ async function togglePlay(event, options = {}) {
                 state.setPlaying(true);
                 startBeatTimer(startSync);
                 startWrapSync(startSync);
+            }
+
+            if (remotePlayOutcome) {
+                await reportRemoteRelayOutcome(remotePlayOutcome, 'play');
             }
         }
         updatePlayButton();

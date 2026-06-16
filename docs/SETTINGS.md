@@ -10,7 +10,7 @@ It has three major areas:
 - Scales
 - Config sections backed by `TD3_CONFIG.env`
 
-Settings are local files. There is no cloud account or remote sync.
+Settings are local files. There is no cloud account, and settings are not synced between app folders.
 
 ## Keyboard Mapping
 

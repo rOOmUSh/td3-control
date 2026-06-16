@@ -67,7 +67,7 @@ Example:
 cargo run -- control --scratch-pattern G1P2A --port 3030
 ```
 
-In `control` mode, the app attempts a full-bank backup before the UI can write to the device. If the TD-3 is not found, the UI starts in offline mode. Other failures still abort startup.
+In `control` mode, the app attempts a full-bank backup before the UI can write to the device. If the TD-3 is not found, the UI starts in offline mode. If `UI_AUTO_CONNECT_TO_MIDI=0`, startup MIDI probing and the pre-UI backup are skipped until you connect manually from the UI. Other failures still abort startup.
 
 ## Export One Device Pattern
 

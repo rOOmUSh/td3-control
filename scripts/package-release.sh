@@ -20,6 +20,10 @@ cp config/default_env.template "$STAGE/config/"
 cp README.md LICENSE "$STAGE/"
 mkdir -p "$STAGE/docs"
 cp docs/FAQ.md "$STAGE/docs/"
+if [[ -f docs/images/startup-gui.png ]]; then
+    mkdir -p "$STAGE/docs/images"
+    cp docs/images/startup-gui.png "$STAGE/docs/images/"
+fi
 
 if [[ "$PLATFORM" == windows* ]]; then
     cat > "$STAGE/run.bat" << 'EOF'

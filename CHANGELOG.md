@@ -1,5 +1,36 @@
 # Changelog
 
+## v1.1.2 - 2026-06-16
+
+### Added
+
+- Added a startup launcher flow for selecting the scratch slot, MIDI input, MIDI output, and web UI port before starting the control server.
+- Added support for running separate local TD-3 and TD-3-MO control instances with explicit per-device MIDI routing and separate web ports.
+- Added macOS release setup instructions covering quarantine removal, local signing, MIDI port verification, and direct control startup commands.
+- Added multi-port Remote Sync so one control UI can fan out Play, Stop, BPM, and Triplet commands to multiple local td3-control slave instances.
+- Added comma-separated and whitespace-separated remote port lists with duplicate removal, per-port probe results, and automatic migration from the existing single-port setting.
+
+### Changed
+
+- Changed scheduled Remote Sync Play so every configured slave and the local transport use the same `targetEpochMicros`, with partial failures reported by port.
+
+### Fixed
+
+- Fixed startup behavior when multiple TD-3-family devices are connected so each instance uses the selected input and output ports instead of relying on broad device-name matching.
+- Fixed cross-process MIDI SysEx handling so concurrent local app instances do not consume each other's device replies during startup and pattern transfer work.
+- Fixed launcher-started macOS sessions so the control child runs from the release folder and opens the default browser after the web server is ready.
+- Fixed startup auto-connect handling so disabled auto-connect starts the web UI without probing MIDI or running the pre-UI backup.
+- Fixed the main page export format menu so moving the pointer from the EXPORT button into the format list no longer crosses a dead hover gap that can close the menu before selection.
+
+### Maintenance
+
+- Updated Rust dependencies reported by Dependabot: `log` to `0.4.32` and `rusqlite` to `0.40.1`.
+
+### Compatibility
+
+- Confirmed support on TD-3 firmware: v1.2.6, v1.3.7 and TD-3-MO v2.0.1
+- Pattern file formats, SysEx byte layout, existing CLI commands, and UI storage schemas are unchanged.
+
 ## v1.1.1 - 2026-05-28
 
 ### Fixed

@@ -41,12 +41,13 @@ fn pattern_dump_address_matches(
     patgroup: u8,
     slot_addr: u8,
 ) -> Result<bool, Td3Error> {
-    const PATTERN_DUMP_ADDRESS_LEN: usize = 3;
-    if payload.len() < PATTERN_DUMP_ADDRESS_LEN {
-        return Err(Td3Error::PayloadTooShort {
-            expected: PATTERN_DUMP_ADDRESS_LEN,
-            actual: payload.len(),
-        });
+    if payload.len() != pattern::PATTERN_SYSEX_PAYLOAD_LEN {
+        log::debug!(
+            "Skipping pattern dump response with length {}, expected {}",
+            payload.len(),
+            pattern::PATTERN_SYSEX_PAYLOAD_LEN
+        );
+        return Ok(false);
     }
     Ok(payload[1] == patgroup && payload[2] == slot_addr)
 }

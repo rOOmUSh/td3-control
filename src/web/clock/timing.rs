@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 /// Why it matters: `std::thread::sleep` on Windows aligns to the
 /// system timer (default 15.625 ms). Without this the MIDI clock
 /// sleeps oversleep by up to a full timer quantum per tick, which at
-/// 120–160 BPM is most of the tick period - audibly jittery 0xF8.
+/// 120-160 BPM is most of the tick period - audibly jittery 0xF8.
 #[cfg(windows)]
 pub(super) struct TimerPeriodGuard {
     active: bool,
@@ -329,7 +329,7 @@ impl WaitableTimer {
             if stop.load(Ordering::Acquire) {
                 return;
             }
-            // Sub-microsecond spin tail to absorb the 1–2 us wake
+            // Sub-microsecond spin tail to absorb the 1-2 us wake
             // jitter of WaitForSingleObject. Cheap: at most one
             // loop iteration in practice.
             let now = Instant::now();

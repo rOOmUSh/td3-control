@@ -48,9 +48,9 @@ pub fn run_control_backup_session(
 /// Attempt the pre-UI bank backup, returning `Ok(None)` if no TD-3 is
 /// connected so the web UI can still come up in offline mode.
 ///
-/// `PortNotFound` is the only error mapped to "offline" - every other
-/// failure (timeout, busy, malformed reply, disk error) still aborts so we
-/// don't fake success on a half-broken device.
+/// `PortNotFound` is the only error mapped to "offline". Every other
+/// failure still aborts so startup does not fake success on a half-broken
+/// device.
 pub fn try_pre_ui_backup(
     config: &Config,
 ) -> Result<Option<crate::bank::backup::BackupResult>, Td3Error> {

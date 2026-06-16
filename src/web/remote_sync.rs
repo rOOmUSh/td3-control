@@ -8,10 +8,12 @@ use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use tokio::sync::{Mutex, Notify};
+use tokio::task::JoinSet;
 
 use super::api_types::{
     RemoteSyncCommand, RemoteSyncCommandKind, RemoteSyncCommandResponse, RemoteSyncPollResponse,
-    RemoteSyncProbeRequest, RemoteSyncProbeResponse, RemoteSyncRelayRequest,
+    RemoteSyncProbeRequest, RemoteSyncProbeResponse, RemoteSyncProbeResult, RemoteSyncRelayRequest,
+    RemoteSyncRelayResult,
 };
 use super::handlers::{json_payload, AppError};
 use super::start_schedule::MAX_START_DELAY_MICROS;
@@ -21,6 +23,7 @@ const POLL_TIMEOUT: Duration = Duration::from_secs(25);
 const RELAY_TIMEOUT: Duration = Duration::from_millis(1500);
 const PROBE_TIMEOUT: Duration = Duration::from_millis(700);
 const MAX_QUEUE: usize = 8;
+const MAX_REMOTE_PORTS: usize = 8;
 
 #[derive(Default)]
 pub struct RemoteSyncQueue {
@@ -97,51 +100,37 @@ async fn probe(
     payload: Result<Json<RemoteSyncProbeRequest>, JsonRejection>,
 ) -> Result<Json<RemoteSyncProbeResponse>, AppError> {
     let req = json_payload(payload, "remote sync probe")?;
-    validate_port(req.port)?;
-    probe_remote_server(req.port).await?;
-    Ok(Json(RemoteSyncProbeResponse { ok: true }))
+    let ports = normalize_remote_ports(req.port, req.ports)?;
+    let single_port_request = ports.len() == 1;
+    let results = probe_remote_servers(&ports).await?;
+    let response = probe_response_from_results(results);
+    if !response.ok && single_port_request {
+        return Err(AppError::BadRequest(first_probe_error(&response)));
+    }
+    Ok(Json(response))
 }
 
 async fn relay(
     payload: Result<Json<RemoteSyncRelayRequest>, JsonRejection>,
 ) -> Result<Json<RemoteSyncCommandResponse>, AppError> {
     let req = json_payload(payload, "remote sync relay")?;
-    validate_port(req.port)?;
+    let command = req.command_payload();
+    let ports = normalize_remote_ports(req.port, req.ports)?;
     validate_command_fields(
-        req.command.clone(),
-        req.centibpm,
-        req.target_epoch_micros,
-        req.triplet,
+        command.command.clone(),
+        command.centibpm,
+        command.target_epoch_micros,
+        command.triplet,
     )?;
 
-    let port = req.port;
-    let command: RemoteSyncCommand = req.into();
-    let url = format!("http://127.0.0.1:{}/api/remote-sync/command", port);
-    let client = reqwest::Client::builder()
-        .timeout(RELAY_TIMEOUT)
-        .build()
-        .map_err(|err| AppError::Internal(format!("remote sync client: {}", err)))?;
-
-    let response = client
-        .post(url)
-        .json(&command)
-        .send()
-        .await
-        .map_err(|err| AppError::BadRequest(format!("remote sync relay failed: {}", err)))?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let text = response.text().await.unwrap_or_default();
-        return Err(AppError::BadRequest(format!(
-            "remote sync relay failed: HTTP {} {}",
-            status, text
-        )));
+    let single_port_request = ports.len() == 1;
+    let results = relay_command_to_ports(&ports, command).await?;
+    let response = command_response_from_results(results);
+    if !response.ok && single_port_request {
+        return Err(AppError::BadRequest(first_relay_error(&response)));
     }
 
-    Ok(Json(RemoteSyncCommandResponse {
-        ok: true,
-        queued: true,
-    }))
+    Ok(Json(response))
 }
 
 async fn command(
@@ -159,6 +148,7 @@ async fn command(
     Ok(Json(RemoteSyncCommandResponse {
         ok: true,
         queued: true,
+        results: Vec::new(),
     }))
 }
 
@@ -170,13 +160,58 @@ async fn poll(State(state): State<Arc<AppState>>) -> Json<RemoteSyncPollResponse
     })
 }
 
-fn validate_port(port: u16) -> Result<(), AppError> {
-    if port == 0 {
+pub(crate) fn normalize_remote_ports(
+    port: Option<u32>,
+    ports: Option<Vec<u32>>,
+) -> Result<Vec<u16>, AppError> {
+    let values = match (port, ports) {
+        (Some(_), Some(_)) => {
+            return Err(AppError::BadRequest(
+                "remote sync request must not include both port and ports".to_string(),
+            ));
+        }
+        (Some(value), None) => vec![value],
+        (None, Some(values)) => values,
+        (None, None) => {
+            return Err(AppError::BadRequest(
+                "remote sync request requires port or ports".to_string(),
+            ));
+        }
+    };
+
+    if values.is_empty() {
         return Err(AppError::BadRequest(
-            "remote port must be between 1 and 65535".to_string(),
+            "remote sync request requires at least one port".to_string(),
         ));
     }
-    Ok(())
+
+    let mut normalized = Vec::new();
+    for value in values {
+        if value == 0 || value > u16::MAX as u32 {
+            return Err(AppError::BadRequest(
+                "remote port must be between 1 and 65535".to_string(),
+            ));
+        }
+        let port = value as u16;
+        if normalized.contains(&port) {
+            continue;
+        }
+        normalized.push(port);
+        if normalized.len() > MAX_REMOTE_PORTS {
+            return Err(AppError::BadRequest(format!(
+                "remote sync supports at most {} remote ports",
+                MAX_REMOTE_PORTS
+            )));
+        }
+    }
+
+    if normalized.is_empty() {
+        return Err(AppError::BadRequest(
+            "remote sync request requires at least one port".to_string(),
+        ));
+    }
+
+    Ok(normalized)
 }
 
 fn validate_command_fields(
@@ -224,25 +259,215 @@ fn validate_command_fields(
     Ok(())
 }
 
-async fn probe_remote_server(port: u16) -> Result<(), AppError> {
-    let url = format!("http://127.0.0.1:{}/api/status", port);
+async fn probe_remote_servers(ports: &[u16]) -> Result<Vec<RemoteSyncProbeResult>, AppError> {
     let client = reqwest::Client::builder()
         .timeout(PROBE_TIMEOUT)
         .build()
         .map_err(|err| AppError::Internal(format!("remote sync probe client: {}", err)))?;
 
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|_| AppError::BadRequest(format!("No server on port {}", port)))?;
-
-    if !response.status().is_success() {
-        return Err(AppError::BadRequest(format!(
-            "No td3-control server on port {}",
-            port
-        )));
+    let mut tasks = JoinSet::new();
+    for (index, port) in ports.iter().copied().enumerate() {
+        let client = client.clone();
+        tasks.spawn(async move { (index, probe_remote_server_with_client(client, port).await) });
     }
 
-    Ok(())
+    let mut ordered = vec![None; ports.len()];
+    while let Some(joined) = tasks.join_next().await {
+        let (index, result) =
+            joined.map_err(|err| AppError::Internal(format!("remote sync probe task: {}", err)))?;
+        if let Some(slot) = ordered.get_mut(index) {
+            *slot = Some(result);
+        }
+    }
+
+    collect_probe_results(ordered)
+}
+
+async fn relay_command_to_ports(
+    ports: &[u16],
+    command: RemoteSyncCommand,
+) -> Result<Vec<RemoteSyncRelayResult>, AppError> {
+    let client = reqwest::Client::builder()
+        .timeout(RELAY_TIMEOUT)
+        .build()
+        .map_err(|err| AppError::Internal(format!("remote sync client: {}", err)))?;
+
+    let mut tasks = JoinSet::new();
+    for (index, port) in ports.iter().copied().enumerate() {
+        let client = client.clone();
+        let command = command.clone();
+        tasks.spawn(async move { (index, relay_command_to_port(client, port, command).await) });
+    }
+
+    let mut ordered = vec![None; ports.len()];
+    while let Some(joined) = tasks.join_next().await {
+        let (index, result) =
+            joined.map_err(|err| AppError::Internal(format!("remote sync relay task: {}", err)))?;
+        if let Some(slot) = ordered.get_mut(index) {
+            *slot = Some(result);
+        }
+    }
+
+    collect_relay_results(ordered)
+}
+
+async fn probe_remote_server_with_client(
+    client: reqwest::Client,
+    port: u16,
+) -> RemoteSyncProbeResult {
+    let url = format!("http://127.0.0.1:{}/api/status", port);
+    let response = match client.get(url).send().await {
+        Ok(response) => response,
+        Err(_) => return probe_failure(port, format!("No server on port {}", port)),
+    };
+
+    if !response.status().is_success() {
+        return probe_failure(port, format!("No td3-control server on port {}", port));
+    }
+
+    RemoteSyncProbeResult {
+        port,
+        ok: true,
+        error: None,
+    }
+}
+
+async fn relay_command_to_port(
+    client: reqwest::Client,
+    port: u16,
+    command: RemoteSyncCommand,
+) -> RemoteSyncRelayResult {
+    let url = format!("http://127.0.0.1:{}/api/remote-sync/command", port);
+    let response = match client.post(url).json(&command).send().await {
+        Ok(response) => response,
+        Err(err) => {
+            return relay_failure(port, format!("remote sync relay failed: {}", err));
+        }
+    };
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = match response.text().await {
+            Ok(text) => text,
+            Err(err) => format!("response body unavailable: {}", err),
+        };
+        return relay_failure(
+            port,
+            format!("remote sync relay failed: HTTP {} {}", status, text),
+        );
+    }
+
+    let body = match response.json::<RemoteSyncCommandResponse>().await {
+        Ok(body) => body,
+        Err(err) => {
+            return relay_failure(
+                port,
+                format!("remote sync relay response was invalid: {}", err),
+            );
+        }
+    };
+
+    if body.ok && body.queued {
+        return RemoteSyncRelayResult {
+            port,
+            ok: true,
+            queued: true,
+            error: None,
+        };
+    }
+
+    relay_failure(port, relay_body_error(&body))
+}
+
+fn collect_probe_results(
+    ordered: Vec<Option<RemoteSyncProbeResult>>,
+) -> Result<Vec<RemoteSyncProbeResult>, AppError> {
+    let mut results = Vec::with_capacity(ordered.len());
+    for result in ordered {
+        match result {
+            Some(result) => results.push(result),
+            None => {
+                return Err(AppError::Internal(
+                    "remote sync probe result missing".to_string(),
+                ));
+            }
+        }
+    }
+    Ok(results)
+}
+
+fn collect_relay_results(
+    ordered: Vec<Option<RemoteSyncRelayResult>>,
+) -> Result<Vec<RemoteSyncRelayResult>, AppError> {
+    let mut results = Vec::with_capacity(ordered.len());
+    for result in ordered {
+        match result {
+            Some(result) => results.push(result),
+            None => {
+                return Err(AppError::Internal(
+                    "remote sync relay result missing".to_string(),
+                ));
+            }
+        }
+    }
+    Ok(results)
+}
+
+fn command_response_from_results(results: Vec<RemoteSyncRelayResult>) -> RemoteSyncCommandResponse {
+    let ok = results.iter().all(|result| result.ok);
+    let queued = results.iter().all(|result| result.queued);
+    RemoteSyncCommandResponse {
+        ok,
+        queued,
+        results,
+    }
+}
+
+fn probe_response_from_results(results: Vec<RemoteSyncProbeResult>) -> RemoteSyncProbeResponse {
+    let ok = results.iter().all(|result| result.ok);
+    RemoteSyncProbeResponse { ok, results }
+}
+
+fn relay_body_error(body: &RemoteSyncCommandResponse) -> String {
+    for result in &body.results {
+        if !result.ok || !result.queued {
+            if let Some(error) = &result.error {
+                return error.clone();
+            }
+        }
+    }
+    "remote server did not queue command".to_string()
+}
+
+fn first_relay_error(response: &RemoteSyncCommandResponse) -> String {
+    response
+        .results
+        .first()
+        .and_then(|result| result.error.clone())
+        .unwrap_or_else(|| "remote sync relay failed".to_string())
+}
+
+fn first_probe_error(response: &RemoteSyncProbeResponse) -> String {
+    response
+        .results
+        .first()
+        .and_then(|result| result.error.clone())
+        .unwrap_or_else(|| "remote sync probe failed".to_string())
+}
+
+fn relay_failure(port: u16, error: String) -> RemoteSyncRelayResult {
+    RemoteSyncRelayResult {
+        port,
+        ok: false,
+        queued: false,
+        error: Some(error),
+    }
+}
+
+fn probe_failure(port: u16, error: String) -> RemoteSyncProbeResult {
+    RemoteSyncProbeResult {
+        port,
+        ok: false,
+        error: Some(error),
+    }
 }

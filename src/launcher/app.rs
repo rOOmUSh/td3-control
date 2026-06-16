@@ -1,32 +1,29 @@
 //! Eframe/egui launcher app surfacing scratch-pattern selection, MIDI
-//! status, the CLI help reference, and a persist-to-env checkbox.
+//! startup selection, the CLI help reference, and a persist-to-env checkbox.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
 
-use super::midi_probe::{self, ProbeStatus};
+use super::child_args::LauncherMidiChoice;
+use super::choice::{store_outcome, LauncherChoice, LauncherOutcome};
+use super::device_options;
+use super::midi_probe::{self, PortListing, ProbeStatus};
+use super::persist::{persist_launcher_choice, LauncherPersistChoice};
+use super::process::spawn_control_child;
 use super::selection::SelectionState;
-use crate::env_writer;
-
-/// Result returned to the caller once the launcher window closes.
-#[derive(Debug, Clone)]
-pub struct LauncherChoice {
-    pub scratch: String,
-    pub persist: bool,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct LauncherOutcome(pub Option<LauncherChoice>);
+use super::startup_state;
+use super::view::{
+    render_launch_error, render_midi_selection, render_selector, render_status_row, render_warning,
+    render_web_port,
+};
+use super::web_port::{self, WebPortStatus};
 
 const PROBE_INTERVAL: Duration = Duration::from_secs(2);
 
 const RED: egui::Color32 = egui::Color32::from_rgb(204, 41, 54);
-const RED_HOVER: egui::Color32 = egui::Color32::from_rgb(230, 60, 70);
 const WHITE: egui::Color32 = egui::Color32::WHITE;
 
 pub struct LauncherApp {
@@ -37,22 +34,62 @@ pub struct LauncherApp {
     midi_substring: String,
     midi_strict: bool,
     midi_status: ProbeStatus,
+    midi_ports: PortListing,
+    midi_ports_error: Option<String>,
+    selected_input_port: Option<String>,
+    selected_output_port: Option<String>,
+    midi_selection_message: Option<String>,
+    web_bind: String,
+    web_port_text: String,
+    web_port_status: WebPortStatus,
+    launch_error: Option<String>,
     next_probe_at: Instant,
     outcome: Arc<Mutex<LauncherOutcome>>,
     env_path: PathBuf,
     closing: bool,
 }
 
+pub struct LauncherAppConfig {
+    pub initial: SelectionState,
+    pub midi_substring: String,
+    pub midi_strict: bool,
+    pub web_port: u16,
+    pub web_bind: String,
+    pub help_text: String,
+    pub outcome: Arc<Mutex<LauncherOutcome>>,
+    pub env_path: PathBuf,
+}
+
 impl LauncherApp {
-    pub fn new(
-        initial: SelectionState,
-        midi_substring: String,
-        midi_strict: bool,
-        help_text: String,
-        outcome: Arc<Mutex<LauncherOutcome>>,
-        env_path: PathBuf,
-    ) -> Self {
+    pub fn new(config: LauncherAppConfig) -> Self {
+        let LauncherAppConfig {
+            initial,
+            midi_substring,
+            midi_strict,
+            web_port,
+            web_bind,
+            help_text,
+            outcome,
+            env_path,
+        } = config;
         let initial_status = midi_probe::probe(&midi_substring, midi_strict);
+        let (midi_ports, midi_ports_error) = startup_state::load_port_listing();
+        let input_selection = device_options::select_configured_port(
+            &midi_ports.inputs,
+            &midi_substring,
+            midi_strict,
+        );
+        let output_selection = device_options::select_configured_port(
+            &midi_ports.outputs,
+            &midi_substring,
+            midi_strict,
+        );
+        let midi_selection_message =
+            startup_state::configured_selection_message(&input_selection, &output_selection);
+        let selected_input_port = input_selection.selected_name().map(str::to_string);
+        let selected_output_port = output_selection.selected_name().map(str::to_string);
+        let web_port_status = web_port::first_available_web_port(&web_bind, web_port);
+        let web_port_text = web_port_status.port().unwrap_or(web_port).to_string();
         Self {
             selection: initial,
             persist: false,
@@ -61,6 +98,15 @@ impl LauncherApp {
             midi_substring,
             midi_strict,
             midi_status: initial_status,
+            midi_ports,
+            midi_ports_error,
+            selected_input_port,
+            selected_output_port,
+            midi_selection_message,
+            web_bind,
+            web_port_text,
+            web_port_status,
+            launch_error: None,
             next_probe_at: Instant::now() + PROBE_INTERVAL,
             outcome,
             env_path,
@@ -71,6 +117,9 @@ impl LauncherApp {
     fn maybe_reprobe(&mut self) {
         if Instant::now() >= self.next_probe_at {
             self.midi_status = midi_probe::probe(&self.midi_substring, self.midi_strict);
+            let (ports, error) = startup_state::load_port_listing();
+            self.midi_ports = ports;
+            self.midi_ports_error = error;
             self.next_probe_at = Instant::now() + PROBE_INTERVAL;
         }
     }
@@ -79,47 +128,66 @@ impl LauncherApp {
         store_outcome(&self.outcome, choice.clone());
         if let Some(c) = choice {
             if c.persist {
-                if let Err(err) = persist_scratch(&self.env_path, &c.scratch) {
-                    eprintln!(
-                        "warning: could not persist scratch slot to {}: {}",
-                        self.env_path.display(),
-                        err
-                    );
+                let persist_choice = LauncherPersistChoice {
+                    scratch: c.scratch.clone(),
+                    web_port: c.web_port,
+                    midi: c.midi.clone(),
+                };
+                match persist_launcher_choice(&self.env_path, &persist_choice) {
+                    Ok(report) => {
+                        if matches!(c.midi, LauncherMidiChoice::ExactPair { .. })
+                            && !report.midi_persisted
+                        {
+                            eprintln!(
+                                "warning: MIDI input/output names differ, so the MIDI selection was session-only."
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!(
+                            "warning: could not persist launcher settings to {}: {}",
+                            self.env_path.display(),
+                            err
+                        );
+                    }
                 }
             }
-            spawn_control_child(&c.scratch);
+            spawn_control_child(&c);
         }
         std::process::exit(0);
     }
-}
 
-fn persist_scratch(env_path: &std::path::Path, scratch: &str) -> std::io::Result<()> {
-    let mut updates = HashMap::new();
-    updates.insert("UI_SCRATCH_PATTERN".to_string(), scratch.to_string());
-    env_writer::apply_updates(env_path, &updates).map_err(|e| std::io::Error::other(e.to_string()))
-}
+    fn current_web_port(&mut self) -> Result<u16, String> {
+        self.web_port_status = web_port::validate_web_port(&self.web_bind, &self.web_port_text);
+        if self.web_port_status.is_available() {
+            if let Some(port) = self.web_port_status.port() {
+                return Ok(port);
+            }
+        }
+        Err(self.web_port_status.message())
+    }
 
-fn spawn_control_child(scratch: &str) {
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(err) => {
-            eprintln!("error: cannot resolve current executable: {}", err);
-            return;
-        }
-    };
-    let mut cmd = Command::new(exe);
-    cmd.arg("control")
-        .arg("--scratch-pattern")
-        .arg(scratch)
-        .env("TD3_SKIP_SCRATCH_CONFIRM", "1")
-        .env("TD3_AUTO_OPEN_BROWSER", "1");
-    match cmd.spawn() {
-        Ok(_child) => {
-            eprintln!("Launching td3-control with scratch slot {}...", scratch);
-        }
-        Err(err) => {
-            eprintln!("error: failed to spawn control process: {}", err);
-        }
+    fn build_choice(&mut self) -> Result<LauncherChoice, String> {
+        let midi = startup_state::current_midi_choice(
+            &self.midi_ports,
+            &self.selected_input_port,
+            &self.selected_output_port,
+        )?;
+        let web_port = self.current_web_port()?;
+        Ok(LauncherChoice {
+            scratch: self.selection.label(),
+            persist: self.persist,
+            midi,
+            web_port,
+        })
+    }
+
+    fn can_start(&self) -> bool {
+        startup_state::can_start(
+            &self.web_port_status,
+            &self.selected_input_port,
+            &self.selected_output_port,
+        )
     }
 }
 
@@ -140,6 +208,14 @@ impl eframe::App for LauncherApp {
             ui.add_space(6.0);
 
             render_status_row(ui, &self.midi_status);
+            render_midi_selection(
+                ui,
+                &self.midi_ports,
+                self.midi_ports_error.as_deref(),
+                &self.midi_selection_message,
+                &mut self.selected_input_port,
+                &mut self.selected_output_port,
+            );
             ui.separator();
 
             render_selector(ui, &mut self.selection);
@@ -154,7 +230,25 @@ impl eframe::App for LauncherApp {
 
             ui.checkbox(
                 &mut self.persist,
-                "Save this selection to TD3_CONFIG.env (UI_SCRATCH_PATTERN)",
+                "Save launcher settings to TD3_CONFIG.env",
+            );
+            if self.persist
+                && startup_state::midi_selection_is_session_only(
+                    &self.selected_input_port,
+                    &self.selected_output_port,
+                )
+            {
+                ui.colored_label(
+                    egui::Color32::from_rgb(160, 90, 0),
+                    "MIDI selection will be session-only because input and output names differ.",
+                );
+            }
+            ui.add_space(6.0);
+            render_web_port(
+                ui,
+                &self.web_bind,
+                &mut self.web_port_text,
+                &mut self.web_port_status,
             );
             ui.add_space(4.0);
 
@@ -190,7 +284,7 @@ impl eframe::App for LauncherApp {
                 }
                 ui.add_space(20.0);
                 let start = ui.add_enabled(
-                    !self.closing,
+                    !self.closing && self.can_start(),
                     egui::Button::new(
                         egui::RichText::new("START")
                             .color(WHITE)
@@ -200,118 +294,18 @@ impl eframe::App for LauncherApp {
                     .fill(RED),
                 );
                 if start.clicked() {
-                    let choice = LauncherChoice {
-                        scratch: self.selection.label(),
-                        persist: self.persist,
-                    };
-                    self.closing = true;
-                    self.finish(Some(choice));
+                    match self.build_choice() {
+                        Ok(choice) => {
+                            self.closing = true;
+                            self.finish(Some(choice));
+                        }
+                        Err(message) => {
+                            self.launch_error = Some(message);
+                        }
+                    }
                 }
             });
+            render_launch_error(ui, self.launch_error.as_deref());
         });
     }
-}
-
-pub(crate) fn store_outcome(
-    outcome: &Arc<Mutex<LauncherOutcome>>,
-    choice: Option<LauncherChoice>,
-) -> bool {
-    if let Ok(mut guard) = outcome.lock() {
-        *guard = LauncherOutcome(choice);
-        true
-    } else {
-        false
-    }
-}
-
-fn render_status_row(ui: &mut egui::Ui, status: &ProbeStatus) {
-    ui.horizontal(|ui| {
-        let (dot_color, label) = match status {
-            ProbeStatus::Connected { port_name } => (
-                egui::Color32::from_rgb(40, 180, 70),
-                format!("TD-3 connected - {}", port_name),
-            ),
-            ProbeStatus::NotFound => (
-                egui::Color32::from_rgb(140, 140, 140),
-                "No TD-3 detected (offline mode)".into(),
-            ),
-            ProbeStatus::DriverError(msg) => (
-                egui::Color32::from_rgb(220, 160, 30),
-                format!("MIDI driver error: {}", msg),
-            ),
-        };
-        let (rect, _resp) = ui.allocate_exact_size(egui::Vec2::splat(14.0), egui::Sense::hover());
-        ui.painter().circle_filled(rect.center(), 6.0, dot_color);
-        ui.label(egui::RichText::new(label).strong());
-    });
-}
-
-fn render_selector(ui: &mut egui::Ui, sel: &mut SelectionState) {
-    ui.label(egui::RichText::new("Scratch Pattern Slot").strong());
-    ui.add_space(4.0);
-
-    ui.horizontal(|ui| {
-        ui.label("Group:");
-        for g in 1..=4u8 {
-            slot_button(ui, &g.to_string(), sel.group == g, || sel.group = g);
-        }
-    });
-    ui.add_space(4.0);
-
-    ui.horizontal(|ui| {
-        ui.label("Pattern:");
-        for p in 1..=8u8 {
-            slot_button(ui, &p.to_string(), sel.pattern == p, || sel.pattern = p);
-        }
-    });
-    ui.add_space(4.0);
-
-    ui.horizontal(|ui| {
-        ui.label("Side:");
-        slot_button(ui, "A", !sel.side_b, || sel.side_b = false);
-        slot_button(ui, "B", sel.side_b, || sel.side_b = true);
-    });
-}
-
-fn slot_button(ui: &mut egui::Ui, label: &str, selected: bool, mut on_click: impl FnMut()) {
-    let text = if selected {
-        egui::RichText::new(label).color(WHITE).strong().size(15.0)
-    } else {
-        egui::RichText::new(label).size(15.0)
-    };
-    let mut button = egui::Button::new(text).min_size(egui::Vec2::new(36.0, 28.0));
-    if selected {
-        button = button.fill(RED).stroke(egui::Stroke::new(1.0, RED_HOVER));
-    }
-    if ui.add(button).clicked() {
-        on_click();
-    }
-}
-
-fn render_warning(ui: &mut egui::Ui, slot_label: &str) {
-    let warning = [
-        "Pattern slot ",
-        slot_label,
-        " will be used as the scratch buffer and WILL BE OVERWRITTEN \
-         during normal operation. A full device bank backup is created automatically \
-         before any write occurs, so the original contents can be restored later.",
-    ]
-    .concat();
-    egui::Frame::new()
-        .fill(egui::Color32::from_rgb(255, 246, 220))
-        .stroke(egui::Stroke::new(
-            1.0,
-            egui::Color32::from_rgb(220, 170, 30),
-        ))
-        .inner_margin(egui::Margin::same(8))
-        .corner_radius(4)
-        .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new("WARNING: SCRATCH PATTERN")
-                    .strong()
-                    .color(egui::Color32::from_rgb(140, 70, 0)),
-            );
-            ui.add_space(2.0);
-            ui.label(warning);
-        });
 }

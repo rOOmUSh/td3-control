@@ -27,14 +27,14 @@
       </button>
       <span class="text-[0.9rem] font-black text-on-surface-variant mt-1 tracking-widest">UPDATE</span>
     </div>
-    <div id="remote-sync-controls" class="hidden flex-col items-center gap-1">
-      <div class="flex items-center gap-1">
-        <button id="remote-sync-toggle" type="button" class="sync-pill" aria-pressed="false">OFF</button>
-        <input id="remote-sync-port" type="text" inputmode="numeric" autocomplete="off"
-               class="w-16 h-8 bg-black border border-surface-container-highest rounded px-2 text-center text-[1rem] font-mono text-on-secondary-fixed-variant outline-none"
-               placeholder="3031"/>
+    <div id="remote-sync-controls" class="hidden items-center justify-center">
+      <div class="remote-sync-grid">
+        <button id="remote-sync-toggle" type="button" class="sync-pill remote-sync-toggle" aria-pressed="false">OFF</button>
+        <input id="remote-sync-port" type="text" inputmode="text" autocomplete="off"
+               class="remote-sync-port w-32 h-8 bg-black border border-surface-container-highest rounded px-2 text-center text-[1rem] font-mono text-on-secondary-fixed-variant outline-none"
+               placeholder="3031,3032"/>
+        <span class="remote-sync-label text-[0.9rem] font-black text-on-surface-variant tracking-widest">REMOTE</span>
       </div>
-      <span class="text-[0.9rem] font-black text-on-surface-variant tracking-widest">REMOTE</span>
     </div>
     <div class="flex items-center gap-3 bg-surface-container-lowest p-1 rounded-xl border border-surface-container-highest shadow-inner">
       <div class="bg-black px-4 py-2 rounded-lg border-2 border-surface-container-highest bpm-display flex items-center justify-center">

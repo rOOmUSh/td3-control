@@ -3,14 +3,16 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use http_body_util::BodyExt;
+use tokio::sync::Mutex;
 use tower::ServiceExt;
 
 use crate::library::LibraryStore;
 use crate::web::api_types::{
-    RemoteSyncCommandKind, RemoteSyncPollResponse, RemoteSyncProbeResponse,
+    RemoteSyncCommand, RemoteSyncCommandKind, RemoteSyncCommandResponse, RemoteSyncPollResponse,
+    RemoteSyncProbeResponse,
 };
 use crate::web::remote_sync;
 use crate::web::start_schedule;
@@ -79,11 +81,47 @@ async fn spawn_status_server() -> u16 {
     port
 }
 
+async fn spawn_remote_sync_server() -> (u16, Arc<Mutex<Vec<RemoteSyncCommand>>>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    let command_log = commands.clone();
+    let app = Router::new()
+        .route(
+            "/api/status",
+            get(|| async { Json(serde_json::json!({ "connected": false })) }),
+        )
+        .route(
+            "/api/remote-sync/command",
+            post(move |Json(command): Json<RemoteSyncCommand>| {
+                let command_log = command_log.clone();
+                async move {
+                    command_log.lock().await.push(command);
+                    Json(RemoteSyncCommandResponse {
+                        ok: true,
+                        queued: true,
+                        results: Vec::new(),
+                    })
+                }
+            }),
+        );
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (port, commands)
+}
+
 async fn closed_local_port() -> u16 {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
     port
+}
+
+async fn captured_commands(
+    commands: &Arc<Mutex<Vec<RemoteSyncCommand>>>,
+) -> Vec<RemoteSyncCommand> {
+    commands.lock().await.clone()
 }
 
 #[tokio::test]
@@ -189,6 +227,69 @@ async fn probe_accepts_running_remote_server() {
 }
 
 #[tokio::test]
+async fn probe_accepts_multiple_running_remote_servers() {
+    let port_a = spawn_status_server().await;
+    let port_b = spawn_status_server().await;
+    let (router, _state) = build_router();
+    let body = serde_json::json!({ "ports": [port_a, port_b] }).to_string();
+    let resp = router
+        .oneshot(post_json("/api/remote-sync/probe", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let payload: RemoteSyncProbeResponse = json_body(resp.into_body()).await;
+    assert!(payload.ok);
+    assert_eq!(payload.results.len(), 2);
+    assert_eq!(payload.results[0].port, port_a);
+    assert!(payload.results[0].ok);
+    assert_eq!(payload.results[1].port, port_b);
+    assert!(payload.results[1].ok);
+}
+
+#[tokio::test]
+async fn probe_deduplicates_ports_before_network_io() {
+    let port = spawn_status_server().await;
+    let (router, _state) = build_router();
+    let body = serde_json::json!({ "ports": [port, port] }).to_string();
+    let resp = router
+        .oneshot(post_json("/api/remote-sync/probe", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let payload: RemoteSyncProbeResponse = json_body(resp.into_body()).await;
+    assert!(payload.ok);
+    assert_eq!(payload.results.len(), 1);
+    assert_eq!(payload.results[0].port, port);
+}
+
+#[tokio::test]
+async fn probe_reports_partial_failure_with_per_port_results() {
+    let good_port = spawn_status_server().await;
+    let closed_port = closed_local_port().await;
+    let (router, _state) = build_router();
+    let body = serde_json::json!({ "ports": [good_port, closed_port] }).to_string();
+    let resp = router
+        .oneshot(post_json("/api/remote-sync/probe", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let payload: RemoteSyncProbeResponse = json_body(resp.into_body()).await;
+    assert!(!payload.ok);
+    assert_eq!(payload.results.len(), 2);
+    assert!(payload.results[0].ok);
+    assert_eq!(payload.results[0].port, good_port);
+    assert!(!payload.results[1].ok);
+    assert_eq!(payload.results[1].port, closed_port);
+    assert_eq!(
+        payload.results[1].error.as_deref(),
+        Some(format!("No server on port {}", closed_port).as_str())
+    );
+}
+
+#[tokio::test]
 async fn probe_reports_no_server_on_closed_port() {
     let port = closed_local_port().await;
     let (router, _state) = build_router();
@@ -201,6 +302,40 @@ async fn probe_reports_no_server_on_closed_port() {
 
     let payload: serde_json::Value = json_body(resp.into_body()).await;
     assert_eq!(payload["error"], format!("No server on port {}", port));
+}
+
+#[tokio::test]
+async fn probe_rejects_ambiguous_single_and_multi_port_payload() {
+    let port = spawn_status_server().await;
+    let (router, _state) = build_router();
+    let body = serde_json::json!({ "port": port, "ports": [port] }).to_string();
+    let resp = router
+        .oneshot(post_json("/api/remote-sync/probe", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn probe_rejects_empty_multi_port_payload() {
+    let (router, _state) = build_router();
+    let body = serde_json::json!({ "ports": [] }).to_string();
+    let resp = router
+        .oneshot(post_json("/api/remote-sync/probe", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn probe_rejects_invalid_multi_port_value() {
+    let (router, _state) = build_router();
+    let body = serde_json::json!({ "ports": [65536] }).to_string();
+    let resp = router
+        .oneshot(post_json("/api/remote-sync/probe", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -245,6 +380,140 @@ async fn relay_rejects_port_zero_before_network_io() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn relay_accepts_single_port_request_shape() {
+    let (remote_port, commands) = spawn_remote_sync_server().await;
+    let (router, _state) = build_router();
+    let body = serde_json::json!({
+        "port": remote_port,
+        "command": "stop",
+    })
+    .to_string();
+    let resp = router
+        .oneshot(post_json("/api/remote-sync/relay", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let payload: RemoteSyncCommandResponse = json_body(resp.into_body()).await;
+    assert!(payload.ok);
+    assert!(payload.queued);
+    assert_eq!(payload.results.len(), 1);
+    assert_eq!(payload.results[0].port, remote_port);
+    assert_eq!(captured_commands(&commands).await.len(), 1);
+}
+
+#[tokio::test]
+async fn relay_sends_play_to_multiple_ports_with_same_target() {
+    let (port_a, commands_a) = spawn_remote_sync_server().await;
+    let (port_b, commands_b) = spawn_remote_sync_server().await;
+    let (router, _state) = build_router();
+    let target = start_schedule::current_epoch_micros() + 1_000_000;
+    let body = serde_json::json!({
+        "ports": [port_a, port_b],
+        "command": "play",
+        "centibpm": 12500,
+        "targetEpochMicros": target,
+    })
+    .to_string();
+    let resp = router
+        .oneshot(post_json("/api/remote-sync/relay", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let payload: RemoteSyncCommandResponse = json_body(resp.into_body()).await;
+    assert!(payload.ok);
+    assert!(payload.queued);
+    assert_eq!(payload.results.len(), 2);
+    assert_eq!(payload.results[0].port, port_a);
+    assert_eq!(payload.results[1].port, port_b);
+
+    let sent_a = captured_commands(&commands_a).await;
+    let sent_b = captured_commands(&commands_b).await;
+    assert_eq!(sent_a.len(), 1);
+    assert_eq!(sent_b.len(), 1);
+    assert_eq!(sent_a[0].command, RemoteSyncCommandKind::Play);
+    assert_eq!(sent_b[0].command, RemoteSyncCommandKind::Play);
+    assert_eq!(sent_a[0].centibpm, Some(12500));
+    assert_eq!(sent_b[0].centibpm, Some(12500));
+    assert_eq!(sent_a[0].target_epoch_micros, Some(target));
+    assert_eq!(sent_b[0].target_epoch_micros, Some(target));
+}
+
+#[tokio::test]
+async fn relay_deduplicates_ports_before_sending() {
+    let (remote_port, commands) = spawn_remote_sync_server().await;
+    let (router, _state) = build_router();
+    let body = serde_json::json!({
+        "ports": [remote_port, remote_port],
+        "command": "stop",
+    })
+    .to_string();
+    let resp = router
+        .oneshot(post_json("/api/remote-sync/relay", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let payload: RemoteSyncCommandResponse = json_body(resp.into_body()).await;
+    assert!(payload.ok);
+    assert_eq!(payload.results.len(), 1);
+    assert_eq!(captured_commands(&commands).await.len(), 1);
+}
+
+#[tokio::test]
+async fn relay_reports_partial_failure_with_per_port_results() {
+    let (good_port, commands) = spawn_remote_sync_server().await;
+    let closed_port = closed_local_port().await;
+    let (router, _state) = build_router();
+    let body = serde_json::json!({
+        "ports": [good_port, closed_port],
+        "command": "stop",
+    })
+    .to_string();
+    let resp = router
+        .oneshot(post_json("/api/remote-sync/relay", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let payload: RemoteSyncCommandResponse = json_body(resp.into_body()).await;
+    assert!(!payload.ok);
+    assert!(!payload.queued);
+    assert_eq!(payload.results.len(), 2);
+    assert!(payload.results[0].ok);
+    assert!(payload.results[0].queued);
+    assert_eq!(payload.results[0].port, good_port);
+    assert!(!payload.results[1].ok);
+    assert!(!payload.results[1].queued);
+    assert_eq!(payload.results[1].port, closed_port);
+    assert!(payload.results[1]
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains(&closed_port.to_string()));
+    assert_eq!(captured_commands(&commands).await.len(), 1);
+}
+
+#[tokio::test]
+async fn relay_rejects_invalid_command_before_network_io() {
+    let (remote_port, commands) = spawn_remote_sync_server().await;
+    let (router, _state) = build_router();
+    let body = serde_json::json!({
+        "ports": [remote_port],
+        "command": "play",
+        "centibpm": 12500,
+    })
+    .to_string();
+    let resp = router
+        .oneshot(post_json("/api/remote-sync/relay", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(captured_commands(&commands).await.len(), 0);
 }
 
 #[test]
