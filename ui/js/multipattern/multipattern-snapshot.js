@@ -169,7 +169,7 @@ export function openOverflowPushFlow(opts) {
 
     const p3 = document.createElement('p');
     p3.innerHTML =
-        `<strong>Step 2.</strong> Push patterns 1–63 to the TD-3 (P64 stays in the snapshot only).`;
+        `<strong>Step 2.</strong> Push patterns 1-63 to the TD-3 (P64 stays in the snapshot only).`;
     body.appendChild(p3);
 
     const warn = document.createElement('p');
@@ -205,7 +205,7 @@ export function openOverflowPushFlow(opts) {
                 title: `Push 63 of 64 patterns to TD-3 (P64 snapshot-only)`,
                 introText:
                     `Snapshot '${finalName}' saved. Now overwrite the following 63 device slot(s) `
-                    + `with P1–P63. P64 is preserved in the snapshot only and will NOT be written:`,
+                    + `with P1-P63. P64 is preserved in the snapshot only and will NOT be written:`,
                 warnText:
                     `Current device content at these 63 slots will be replaced and cannot be recovered `
                     + `except via the snapshot just created (or a separate backup).`,

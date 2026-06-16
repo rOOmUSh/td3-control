@@ -43,7 +43,7 @@ export function rootPulse({ root, scaleIntervals, rng }) {
 
     for (const s of ANCHOR_STEPS) {
         // Accent pattern mirrors the old anchor_fill generator: step 0 + step 8
-        // punch, steps 4 + 12 are softer. Gives a 1–&–3–& feel without going
+        // punch, steps 4 + 12 are softer. Gives a 1-&-3-& feel without going
         // full four-on-floor uniformity.
         const accent = (s === 0 || s === 8);
         steps[s] = noteStep(homeName, { accent });

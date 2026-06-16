@@ -221,10 +221,11 @@ impl FromRef<Arc<AppState>> for ScanState {
     }
 }
 
-/// MIDI runtime config captured at server start from `AppEnv`.
+/// MIDI runtime config captured at server start from resolved runtime config.
 #[derive(Clone)]
 pub struct MidiRuntimeConfig {
-    pub port_substring: String,
+    pub input_port_name: String,
+    pub output_port_name: String,
     pub strict_name_match: bool,
     pub timeout: Duration,
 }
@@ -308,7 +309,8 @@ impl AppState {
             },
             MidiConfigBundle {
                 runtime: MidiRuntimeConfig {
-                    port_substring: "TD-3".into(),
+                    input_port_name: "TD-3".into(),
+                    output_port_name: "TD-3".into(),
                     strict_name_match: false,
                     timeout: Duration::from_secs(5),
                 },

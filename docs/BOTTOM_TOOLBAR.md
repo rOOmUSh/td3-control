@@ -78,48 +78,53 @@ Live Update is powerful because it makes the TD-3 feel connected to the editor i
 
 ## Remote Sync
 
-The `REMOTE` control lets one local td3-control server start another local td3-control server from the bottom toolbar.
+The `REMOTE` control lets one local td3-control server control one or more other local td3-control servers from the bottom toolbar.
 
 ![Remote sync controls in the bottom toolbar](images/remote.png)
 
-Use this when two app instances are open on the same computer, with one instance connected to one device and the other instance connected to a second device. For example:
+Use this when multiple app instances are open on the same computer, with each instance connected to its own device. For example:
 
 - TD-3 Control running on port `3030`
 - TD-3-MO Control running on port `3031`
+- another TD-3 Control instance running on port `3032`
 
 The browser address bars show which port each app instance is using:
 
 ![Two local td3-control address bars using different ports](images/two-address-bars.png)
 
-To control the second device from the first toolbar:
+To control other devices from the first toolbar:
 
-1. Open both app instances in the browser.
+1. Open every app instance in the browser.
 2. Connect each app instance to its own MIDI device.
-3. In the `3030` toolbar, enter `3031` in the remote port field.
-4. Turn `REMOTE` on.
-5. Press `PLAY / STOP` in the `3030` toolbar.
+3. In the `3030` toolbar, enter the remote web ports in the remote port field.
+4. Use comma-separated or whitespace-separated ports, such as `3031,3032` or `3031 3032`.
+5. Turn `REMOTE` on.
+6. Press `PLAY / STOP` in the `3030` toolbar.
 
 ![Two bottom toolbars prepared for remote sync](images/two-toolbars.png)
 
-When `REMOTE` is on, pressing Play on the source toolbar sends a play command to the other local server before local playback starts. The source app starts local playback only after the remote server accepts the command. Because both servers communicate over `127.0.0.1`, the two app instances usually begin immediately and very close together.
+When `REMOTE` is on, pressing Play on the source toolbar sends the same scheduled play target to every configured local server and starts local playback with that same target. Because all servers communicate over `127.0.0.1`, the app instances usually begin immediately and very close together.
 
-Stop, BPM, and main top toolbar Triplet changes are also mirrored while `REMOTE` is on. Remote-triggered commands do not send commands back to the source, so the two app instances do not loop commands into each other.
+Stop, BPM, and main top toolbar Triplet changes are also mirrored while `REMOTE` is on. Remote-triggered commands do not send commands back to the source, so app instances do not loop commands into each other.
 
 Important details:
 
-- The remote port field should contain only the other local web port, such as `3031`.
-- Turning `REMOTE` on probes the configured port first. If no local server is listening, the button stays off and the status shows `No server on port 3031`.
-- The remote app page must be open in the browser, because its UI owns its own timeline, Live Update, and no-save audition state.
+- The remote port field accepts local web ports such as `3031`, `3031,3032`, or `3031 3032`.
+- Up to 8 remote ports can be configured.
+- Duplicate ports are removed in first-seen order.
+- The current browser's own web port is rejected so an instance does not relay to itself.
+- Turning `REMOTE` on probes every configured port first. If a local server is not listening, the button stays off and the status names the failed port.
+- Each remote app page must be open in the browser, because its UI owns its own timeline, Live Update, and no-save audition state.
 - Each app instance still uses its own selected patterns, timeline, Live Update mode, scratch slot, BPM display, and connected MIDI device.
 - Only the main top toolbar Triplet button is mirrored. Per-pattern row Triplet buttons remain local.
-- If the remote app is not open or not listening, the source app reports the remote sync error and does not start local playback.
-- This is practical synchronized start for two local devices. A dedicated shared MIDI clock is still the stricter option when absolute hardware timing is required.
+- If a remote app is not open or not listening, the source app reports the remote sync error with the failed port.
+- This is practical synchronized start for local devices. A dedicated shared MIDI clock is still the stricter option when absolute hardware timing is required.
 
 Known limitations:
 
-- Remote Sync does not promise continued sync when the two devices play patterns with different active step counts. In that case the devices can drift or land off sync.
-- If the two devices go off sync, stop playback and press Play again to realign them.
-- When both devices play patterns with the same active step count, local two-device testing stayed in sync during mirrored Play, Stop, and BPM operation.
+- Remote Sync does not promise continued sync when devices play patterns with different active step counts. In that case devices can drift or land off sync.
+- If devices go off sync, stop playback and press Play again to realign them.
+- When devices play patterns with the same active step count, local testing stayed in sync during mirrored Play, Stop, and BPM operation.
 
 ## BPM Display
 
@@ -181,7 +186,7 @@ For the most common workflow:
 4. Enable `.00` when you need centi-BPM tempo changes.
 5. Turn `LIVE` on if you want edits to reach the scratch slot automatically.
 6. Leave `LIVE` off when you want non-saving host audition.
-7. Turn `REMOTE` on and enter the other local port when you want a second local device to start with this toolbar.
+7. Turn `REMOTE` on and enter the other local ports when you want additional local devices to follow this toolbar.
 8. Press `PLAY / STOP` to start and stop playback.
 9. Watch the status message when something does not behave as expected.
 

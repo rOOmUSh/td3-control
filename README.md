@@ -12,7 +12,7 @@ It combines:
 - multi-pattern composition tools
 - progression and bassline generation
 - non-saving hardware audition with host-sequenced Note On and Note Off playback
-- local Remote Sync for starting a second TD-3 device from another app instance
+- local Remote Sync for controlling multiple TD-3-family devices from one app instance
 - local Bank and snapshot management
 - import, export, and conversion between TD-3, DAW, and legacy pattern formats
 
@@ -28,11 +28,13 @@ The demonstration video includes subtitles explaining the actions shown.
 
 GitHub README pages do not allow inline YouTube players, so the thumbnail opens the playable video on YouTube.
 
-User-confirmed hardware reports:
+User-confirmed hardware and firmware reports:
 
-| Device            | Firmware | Reported working workflow                                     |
-| ----------------- | -------- | ------------------------------------------------------------- |
-| Behringer TD-3-MO | 2.0.1    | Windows x86_64 release, USB MIDI connection, Start/Stop works |
+| Device            | Firmware | Reported working workflow                                                |
+| ----------------- | -------- | ------------------------------------------------------------------------ |
+| Behringer TD-3    | 1.2.6    | Local control UI, USB MIDI connection, transport and Remote Sync control |
+| Behringer TD-3    | 1.3.7    | Local control UI, USB MIDI connection, transport and Remote Sync control |
+| Behringer TD-3-MO | 2.0.1    | Windows x86_64 release, USB MIDI connection, transport control           |
 
 ---
 
@@ -69,13 +71,9 @@ run.bat
 
 #### macOS
 
-First run only:
+Use the Terminal setup steps in [macOS Setup](#macos-setup) after extracting the release zip.
 
-1. Right-click `run.command`
-2. Click **Open**
-3. Click **Open** again when macOS warns that the developer cannot be verified
-
-After the first approved launch, normal double-clicks work.
+The downloaded release binary must have the quarantine flag removed and a local ad-hoc signature added before the CLI and web UI are started.
 
 #### Linux
 
@@ -101,9 +99,15 @@ chmod +x scripts/dev/run_linux.sh
 
 The script makes `target/release/td3-control` executable, checks MIDI device permissions, and runs the binary from the project directory.
 
-### 3. Pick a scratch slot
+### 3. Choose startup settings
 
-The launcher asks for a TD-3 slot such as:
+![Startup GUI](docs/images/startup-gui.png)
+
+When the launcher opens, choose the startup state before pressing `START`.
+
+The launcher shows `MIDI Device Ports` with separate `Input` and `Output` selectors. Pick the MIDI input and MIDI output for the device this app instance should control. When running more than one device, each app instance should use the input and output ports for only one physical TD-3-family device.
+
+The launcher also shows `Scratch Pattern Slot`. Choose a TD-3 slot such as:
 
 ```text
 G1P1A
@@ -112,6 +116,16 @@ G1P1A
 This is the scratch slot. It is the TD-3 pattern slot the app is allowed to overwrite during preview, live update, audition, and playback handoff.
 
 Do not choose a slot that contains your only copy of an important pattern.
+
+The launcher shows `Web UI Port`. This is the local browser port for this app instance. The default is usually:
+
+```text
+3030
+```
+
+Use a different web port for each running app instance, for example `3030`, `3031`, and `3032`.
+
+The checkbox `Save launcher settings to TD3_CONFIG.env` stores the selected scratch slot and web port. It also stores MIDI matching when the selected input and output names are identical. If the MIDI input and output names differ, that MIDI selection is used for the launched session but is not saved as a single `MIDI_PORT_SUBSTRING` value.
 
 ### 4. Click START
 
@@ -124,6 +138,113 @@ http://127.0.0.1:3030
 If a TD-3 is connected, the app can control the device.
 
 If no TD-3 is connected, the UI still starts in offline mode. You can still edit, randomize, generate progressions, manage the Bank, and import/export files.
+
+---
+
+## macOS Setup
+
+After downloading and extracting the macOS zip, open Terminal and go into the extracted folder.
+
+For Apple Silicon Macs, use the `aarch64` build:
+
+```bash
+cd ~/Downloads/td3-control-v1.1.2-macos-aarch64
+```
+
+For Intel Macs, use the `x86_64` build:
+
+```bash
+cd ~/Downloads/td3-control-v1.1.2-macos-x86_64
+```
+
+### 1. Allow macOS to run the binary
+
+Because this binary is not Apple-notarized, macOS may block it after download. Remove the download quarantine flag:
+
+```bash
+xattr -dr com.apple.quarantine .
+```
+
+Then add a local ad-hoc signature:
+
+```bash
+codesign --force --sign - ./td3-control
+```
+
+### 2. Check that the binary works
+
+```bash
+./td3-control --help
+```
+
+You should see commands such as:
+
+```text
+list-ports
+control
+export
+import
+```
+
+### 3. Connect your TD-3 by USB
+
+Plug in the TD-3 or TD-3-MO, then check that macOS sees it as a MIDI device:
+
+```bash
+./td3-control list-ports
+```
+
+Example output:
+
+```text
+MIDI Output Ports:
+  0: TD-3
+  1: TD-3-MO
+
+MIDI Input Ports:
+  0: TD-3
+  1: TD-3-MO
+```
+
+### 4. Start the web UI on port 3030
+
+To control a regular TD-3:
+
+```bash
+./td3-control control \
+  --port 3030 \
+  --bind 127.0.0.1 \
+  --midi-in TD-3 \
+  --midi-out TD-3 \
+  --strict-device-name
+```
+
+To control a TD-3-MO instead:
+
+```bash
+./td3-control control \
+  --port 3030 \
+  --bind 127.0.0.1 \
+  --midi-in TD-3-MO \
+  --midi-out TD-3-MO \
+  --strict-device-name
+```
+
+The app will ask for confirmation before using the configured scratch pattern slot. Type:
+
+```text
+y
+```
+
+Then open:
+
+```text
+http://127.0.0.1:3030
+```
+
+Keep the Terminal window open while using the web UI. Press `Ctrl+C` in Terminal to stop the server.
+
+Important: The configured scratch pattern slot is overwritten during normal operation. The default is `G1-P1A`. The app creates a full device bank backup before writes.
 
 ---
 
@@ -168,7 +289,7 @@ The app creates backups before higher-risk write workflows:
 - `control` mode attempts a full-bank backup before the UI can write to the device
 - `import-bank` always creates a mandatory pre-write backup before uploading a bank
 
-If the TD-3 is not found during `control` startup, the app enters offline mode and skips the pre-UI backup. Other device errors still abort startup instead of silently continuing.
+If the TD-3 is not found during `control` startup, the app enters offline mode and skips the pre-UI backup. If `UI_AUTO_CONNECT_TO_MIDI=0`, startup MIDI probing and the pre-UI backup are skipped until you connect manually from the UI. Other device errors still abort startup instead of silently continuing.
 
 ### Device writes
 
@@ -207,7 +328,7 @@ It supports:
 
 - TD-3 MIDI connect and disconnect
 - transport start and stop
-- Remote Sync start, stop, and BPM mirroring between two local app instances
+- Remote Sync start, stop, BPM, and Triplet mirroring from one local app instance to multiple local app instances
 - BPM control
 - TD-3 sync source switching: `INT`, `USB`, `DIN`, `TRIG`
 - note preview
@@ -420,7 +541,22 @@ Safety note: binding to `0.0.0.0` makes the local web UI reachable from other ma
 
 Multiple TD-3 devices can be used at the same time by running separate copies of the app from separate folders. Each folder has its own `TD3_CONFIG.env`, local database paths, and scratch-slot setting.
 
-Use different MIDI port matching and different web ports for each copy. For example:
+The startup launcher is the preferred setup path for multiple devices:
+
+1. Start the first app copy.
+2. In `MIDI Device Ports`, choose the `Input` and `Output` for the first TD-3-family device.
+3. In `Scratch Pattern Slot`, choose the scratch slot for that device.
+4. In `Web UI Port`, use `3030` or another free port.
+5. Click `START`.
+6. Start the next app copy from a separate folder.
+7. Choose the MIDI `Input` and `Output` for the next physical device.
+8. Choose that device's scratch slot.
+9. Set a different `Web UI Port`, such as `3031` or `3032`.
+10. Click `START`.
+
+Each running copy owns its selected MIDI input, MIDI output, scratch slot, and local web UI port.
+
+The same setup can also be represented in each folder's `TD3_CONFIG.env`. Use different MIDI port matching and different web ports for each copy. For example:
 
 ```text
 # Folder A: TD-3-MO
@@ -439,18 +575,30 @@ http://127.0.0.1:3030
 http://127.0.0.1:3031
 ```
 
-Each running copy owns its matched MIDI device and serves a separate local web UI. Use distinct scratch slots per device when the devices contain different saved patterns.
+Use distinct scratch slots per device when the devices contain different saved patterns.
 
-Remote Sync can start two local app instances from one bottom toolbar. Open both local UIs, enter the other instance's web port in the source toolbar's `REMOTE` port field, turn `REMOTE` on, then press Play on the source instance. For example, from `http://127.0.0.1:3030`, enter `3031` to trigger the app on port `3031`. If no local server is listening on that port, the button stays off and the status shows `No server on port 3031`.
+Remote Sync can control multiple local app instances from one bottom toolbar. Open every local UI, then use the source instance's `REMOTE` port field to enter the slave web ports. The field accepts comma-separated or whitespace-separated lists such as:
 
-When Play is pressed, the source app sends the remote command first and waits for the remote server to accept it before starting local playback. On a local `127.0.0.1` pair, this makes the two app instances start almost together. Stop, BPM, and main top toolbar Triplet changes are mirrored while `REMOTE` is on.
+```text
+3031,3032
+```
 
-The remote browser page must be open because that UI owns its own timeline, Live Update state, and no-save audition behavior. If Live Update is off on either side, that instance follows its normal no-save audition path instead of writing the scratch slot. Each instance still uses its own selected patterns, scratch slot, MIDI device, and pattern rules. Per-pattern row Triplet buttons remain local to their own app instance. See [Bottom Toolbar](docs/BOTTOM_TOOLBAR.md#remote-sync) for screenshots and setup details.
+or:
+
+```text
+3031 3032
+```
+
+Turn `REMOTE` on. The source UI probes every configured port before enabling. Duplicate ports are removed, the current UI's own web port is rejected, and a failed probe names the failed port.
+
+For example, from `http://127.0.0.1:3030`, enter `3031,3032` to control app instances on ports `3031` and `3032`. Pressing Play on `3030` sends the same scheduled start target to every configured slave and starts local playback with that same target. Stop, BPM, and main top toolbar Triplet changes are mirrored while `REMOTE` is on. If one slave is unavailable, the status reports that port while the other reachable slaves can still receive commands.
+
+Each remote browser page must be open because that UI owns its own timeline, Live Update state, and no-save audition behavior. If Live Update is off on any side, that instance follows its normal no-save audition path instead of writing the scratch slot. Each instance still uses its own selected patterns, scratch slot, MIDI device, and pattern rules. Per-pattern row Triplet buttons remain local to their own app instance. See [Bottom Toolbar](docs/BOTTOM_TOOLBAR.md#remote-sync) for screenshots and setup details.
 
 Known limitations:
 
-- Remote Sync does not promise continued sync when the two devices play patterns with different active step counts. In that case the devices can drift or land off sync.
-- If the two devices go off sync, stop playback and press Play again to realign them.
+- Remote Sync does not promise continued sync when devices play patterns with different active step counts. In that case devices can drift or land off sync.
+- If devices go off sync, stop playback and press Play again to realign them.
 - When both devices play patterns with the same active step count, local two-device testing stayed in sync during mirrored Play, Stop, and BPM operation.
 
 ---
@@ -605,7 +753,7 @@ The project includes:
 - Mach `THREAD_TIME_CONSTRAINT_POLICY` for the MIDI clock thread
 - AppleScript folder picker for Bank folder scan
 
-The binaries are not signed, so the first launch requires the right-click Open flow.
+Downloaded release binaries require the Terminal setup steps in [macOS Setup](#macos-setup) before first launch.
 
 ### Linux and other Unix
 

@@ -261,6 +261,24 @@ fn download_pattern_skips_wrong_address_dump_before_correct_dump() {
 }
 
 #[test]
+fn download_pattern_skips_short_matching_address_dump_before_correct_dump() {
+    let (tx, rx) = mpsc::channel();
+    let mut short = fixtures::simple_sysex();
+    short.truncate(67);
+    let correct = fixtures::simple_sysex();
+    let mut sender = BurstSender::new(tx, vec![td3_frame(&short), td3_frame(&correct)]);
+
+    let (raw, pattern) =
+        td3_protocol::download_pattern(&mut sender, &rx, 0, 0, 0, Duration::from_millis(100))
+            .expect("short matching-address dump must be skipped");
+
+    assert_eq!(raw.len(), crate::pattern::PATTERN_SYSEX_PAYLOAD_LEN);
+    assert_eq!(raw[1], 0);
+    assert_eq!(raw[2], 0);
+    assert_eq!(pattern.active_steps, 16);
+}
+
+#[test]
 fn upload_pattern_rejects_ack_failure_status() {
     let (tx, rx) = mpsc::channel();
     let mut sender = QueueingSender::new(tx, vec![td3_frame(&[0x01, 0x01, 0x00])]);

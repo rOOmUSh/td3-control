@@ -44,23 +44,8 @@ pub async fn status(
 
 pub async fn ports() -> Result<Json<PortsResponse>, AppError> {
     let (inputs, outputs) = tokio::task::block_in_place(|| -> Result<_, Td3Error> {
-        let out_midi = midir::MidiOutput::new("")
-            .map_err(|e| Td3Error::Midi(format!("failed to create MIDI output: {}", e)))?;
-        let in_midi = midir::MidiInput::new("")
-            .map_err(|e| Td3Error::Midi(format!("failed to create MIDI input: {}", e)))?;
-
-        let outputs: Vec<String> = out_midi
-            .ports()
-            .iter()
-            .filter_map(|p| out_midi.port_name(p).ok())
-            .collect();
-        let inputs: Vec<String> = in_midi
-            .ports()
-            .iter()
-            .filter_map(|p| in_midi.port_name(p).ok())
-            .collect();
-
-        Ok((inputs, outputs))
+        let ports = crate::midi_ports::list_port_names()?;
+        Ok((ports.inputs, ports.outputs))
     })?;
 
     Ok(Json(PortsResponse { inputs, outputs }))
@@ -91,11 +76,11 @@ pub async fn connect(
     let in_port_name = req
         .in_port
         .clone()
-        .unwrap_or_else(|| state.midi.runtime.port_substring.clone());
+        .unwrap_or_else(|| state.midi.runtime.input_port_name.clone());
     let out_port_name = req
         .out_port
         .clone()
-        .unwrap_or_else(|| state.midi.runtime.port_substring.clone());
+        .unwrap_or_else(|| state.midi.runtime.output_port_name.clone());
     let strict = state.midi.runtime.strict_name_match;
     let probe_timeout = state.midi.runtime.timeout;
 

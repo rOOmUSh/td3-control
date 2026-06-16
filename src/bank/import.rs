@@ -128,7 +128,7 @@ pub fn import_bank<D: BankDevice, P: UserPrompt>(
     };
 
     // Pre-flight: ensure backup-dir exists before any MIDI I/O so a missing
-    // dir or unwritable path fails fast instead of after a ~30–60s full-bank read.
+    // dir or unwritable path fails fast instead of after a ~30-60s full-bank read.
     crate::bank::backup::ensure_backup_dir(&opts.backup_dir)?;
 
     // Device read - always full bank, regardless of target filter.

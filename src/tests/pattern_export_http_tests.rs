@@ -24,12 +24,16 @@ use tower::ServiceExt;
 use crate::web::handlers;
 use crate::web::state::{AppState, ScratchSlot, UiConfigSnapshot};
 
+static TEST_DB_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn test_router() -> axum::Router {
     use axum::routing::post;
     use std::sync::Arc;
+    let counter = TEST_DB_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let lib_path = std::env::temp_dir().join(format!(
-        "td3_pattern_export_http_test_{}_{}.sqlite3",
+        "td3_pattern_export_http_test_{}_{}_{}.sqlite3",
         std::process::id(),
+        counter,
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())

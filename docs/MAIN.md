@@ -12,14 +12,15 @@ When the app starts in `control` mode:
 
 1. `TD3_CONFIG.env` is loaded or created.
 2. The resolved config decides the MIDI port matching, bind address, UI defaults, scratch pattern, backup directory, and library paths.
-3. The app tries to perform a full-bank pre-UI backup.
+3. If `UI_AUTO_CONNECT_TO_MIDI=1`, the app tries to perform a full-bank pre-UI backup.
    - If the TD-3 is found, the backup runs and the user is warned that the scratch pattern will be overwritten.
    - If the TD-3 is not found, the app enters offline mode: the backup and scratch warning are skipped, and the UI displays an OFFLINE banner instead.
    - Other failures (timeout, busy port, malformed reply, disk error) still abort startup.
-4. When the device is found and reachable, the app reads its current MIDI sync source and forces it to USB so the UI's transport buttons drive the device by default.
-5. The Axum server starts and serves the UI plus the JSON API.
+4. If `UI_AUTO_CONNECT_TO_MIDI=0`, startup MIDI probing and the pre-UI backup are skipped until you connect manually from the UI.
+5. When the device is found and reachable during startup, the app reads its current MIDI sync source and forces it to USB so the UI's transport buttons drive the device by default.
+6. The Axum server starts and serves the UI plus the JSON API.
 
-That sequence matters. The app is designed so the backup is created before the interactive session can write anything to the device, and offline startup never silently bypasses a real device error.
+That sequence matters. With startup MIDI enabled, the app is designed so the backup is created before the interactive session can write anything to the device, and offline startup never silently bypasses a real device error.
 
 ## Core Workflow
 

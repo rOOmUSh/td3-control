@@ -9,8 +9,10 @@
 //! hardware - the goal is to prove the wiring, not the protocol.
 
 use crate::app_env::AppEnv;
+use crate::config::MidiRuntime;
 use crate::formats::mid::{MidiExportOptions, MidiSlideMode};
 use crate::formats::mid_import::MidiImportOptions;
+use crate::web::{midi_runtime_config_from_resolved, should_auto_connect_on_server_start};
 
 /// Parse a synthetic env file and return the resolved `AppEnv`. Missing
 /// keys fall back to the bundled template, so callers only need to
@@ -29,16 +31,23 @@ fn env_with_overrides(overrides: &str) -> AppEnv {
 
 fn parse_env_from(content: &str) -> AppEnv {
     use std::io::Write;
+    static NEXT_ENV_FILE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let unique = NEXT_ENV_FILE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "td3_env_runtime_wiring_{}_{}.env",
+        "td3_env_runtime_wiring_{}_{}_{}.env",
         std::process::id(),
+        unique,
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0),
     ));
     {
-        let mut f = std::fs::File::create(&path).unwrap();
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
         f.write_all(content.as_bytes()).unwrap();
     }
     let (env, _created) = AppEnv::load_or_create(&path).expect("env should parse");
@@ -139,6 +148,22 @@ fn env_carries_ui_keys() {
     assert_eq!(env.ui_max_bank_history_size, 42);
 }
 
+#[test]
+fn startup_midi_gate_follows_env_false() {
+    let env = env_with_overrides("UI_AUTO_CONNECT_TO_MIDI=0\n");
+
+    assert!(!crate::should_run_startup_midi(&env));
+    assert!(!should_auto_connect_on_server_start(&env));
+}
+
+#[test]
+fn startup_midi_gate_follows_env_true() {
+    let env = env_with_overrides("UI_AUTO_CONNECT_TO_MIDI=1\n");
+
+    assert!(crate::should_run_startup_midi(&env));
+    assert!(should_auto_connect_on_server_start(&env));
+}
+
 // ---------------------------------------------------------------------------
 // Template-only path: a bare TD3_CONFIG.env (template defaults)
 // ---------------------------------------------------------------------------
@@ -155,4 +180,22 @@ fn template_only_yields_template_defaults() {
     assert!(opts.channel >= 1 && opts.channel <= 16);
     assert!(opts.normal_velocity <= 127);
     assert!(opts.accent_velocity <= 127);
+}
+
+#[test]
+fn web_midi_runtime_uses_resolved_midi_names() {
+    let midi = MidiRuntime {
+        input_port_name: "Exact TD-3 In".to_string(),
+        output_port_name: "Exact TD-3 Out".to_string(),
+        request_timeout: std::time::Duration::from_millis(2222),
+        strict_name_match: true,
+        retry_count: 3,
+    };
+
+    let runtime = midi_runtime_config_from_resolved(&midi);
+
+    assert_eq!(runtime.input_port_name, "Exact TD-3 In");
+    assert_eq!(runtime.output_port_name, "Exact TD-3 Out");
+    assert_eq!(runtime.timeout, std::time::Duration::from_millis(2222));
+    assert!(runtime.strict_name_match);
 }

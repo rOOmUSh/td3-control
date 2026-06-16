@@ -3,7 +3,8 @@
 //! exercised manually since eframe windows can't be rendered headlessly
 //! in CI without a display.
 
-use crate::launcher::app::{store_outcome, LauncherChoice, LauncherOutcome};
+use crate::launcher::child_args::LauncherMidiChoice;
+use crate::launcher::choice::{store_outcome, LauncherChoice, LauncherOutcome};
 use crate::launcher::help_text;
 use crate::launcher::midi_probe;
 use crate::launcher::selection::SelectionState;
@@ -154,6 +155,8 @@ fn store_outcome_records_start_choice() {
     let choice = LauncherChoice {
         scratch: "G2-P3B".to_string(),
         persist: true,
+        midi: LauncherMidiChoice::EnvDefault,
+        web_port: 3030,
     };
 
     assert!(store_outcome(&outcome, Some(choice)));
@@ -169,6 +172,8 @@ fn store_outcome_records_cancel() {
         LauncherChoice {
             scratch: "G1-P1A".to_string(),
             persist: false,
+            midi: LauncherMidiChoice::EnvDefault,
+            web_port: 3030,
         },
     ))));
 
