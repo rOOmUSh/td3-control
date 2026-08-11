@@ -18,6 +18,17 @@ It combines:
 
 The app runs locally. There is no cloud account, no remote service, and no browser extension.
 
+
+
+## !!!! NEW FEATURE IN v1.2.0 !!!!
+
+Triplet Morph and Custom Note Gate control
+
+See Demo Video
+
+[Watch the demo on YouTube](https://www.youtube.com/watch?v=GfzU9B3xswg)
+
+
 ## Demo Video
 
 The demonstration video includes subtitles explaining the actions shown.
@@ -148,13 +159,13 @@ After downloading and extracting the macOS zip, open Terminal and go into the ex
 For Apple Silicon Macs, use the `aarch64` build:
 
 ```bash
-cd ~/Downloads/td3-control-v1.1.2-macos-aarch64
+cd ~/Downloads/td3-control-v1.2.0-macos-aarch64
 ```
 
 For Intel Macs, use the `x86_64` build:
 
 ```bash
-cd ~/Downloads/td3-control-v1.1.2-macos-x86_64
+cd ~/Downloads/td3-control-v1.2.0-macos-x86_64
 ```
 
 ### 1. Allow macOS to run the binary
@@ -282,6 +293,10 @@ The slot is shown in the launcher and UI so it is never hidden.
 
 Non-save audition is different. When Live Update is off, or when a pattern row has `NO SAVE` checked, the app can audition a pattern by sending timed MIDI Note On and Note Off messages directly to the TD-3. That path does not write the scratch slot and does not start the TD-3 sequencer.
 
+Because that path addresses the device with channel-voice messages, it only sounds on the MIDI channel the TD-3 is set to. The `CH` selector in the bottom toolbar sets that channel, starting from `MIDI_DEVICE_CHANNEL` in `TD3_CONFIG.env`. Device-sequenced Live Update playback is unaffected by it, so host audition falling silent while Live Update still plays usually means `CH` does not match the device.
+
+The `GATE` control beside BPM sets the host-audition note length from `1%` to `100%` of one step. Higher values hold ordinary notes longer, and the default is `50%`. The control is visible while `LIVE` is off, but an explicit row `NO SAVE` preview retains and uses the selected value even while the control is hidden. Gate is shared with the Progression page for the browser session and does not change device-sequenced Live Update playback or exported MIDI.
+
 ### Backups
 
 The app creates backups before higher-risk write workflows:
@@ -333,6 +348,9 @@ It supports:
 - TD-3 sync source switching: `INT`, `USB`, `DIN`, `TRIG`
 - note preview
 - non-saving pattern audition when Live Update is off or row `NO SAVE` is checked
+- adjustable `1-100%` gate for non-saving audition
+- `0-100%` `TRIPLET` morph that warps non-saving audition from a straight feel to a triplet feel without changing tempo, bar length, or the stored pattern
+- `CH` selector for the MIDI channel the TD-3 listens on, used by non-saving audition and note preview
 - pattern load and save
 - live update through the scratch slot
 - import and export
@@ -392,6 +410,7 @@ It can:
 - generate supporting basslines
 - preview basslines in the browser
 - preview TD-3 patterns through the device
+- use the same session gate for non-saving pattern, bassline, and progression playback
 - export a complete package
 - push the result to the TD-3 or into a Bank snapshot
 
@@ -426,12 +445,14 @@ Supported formats depend on the workflow, but the project works with:
 | `.syx`       | TD-3 SysEx single-pattern payload   |
 | `.toml`      | structured editable pattern file    |
 | `.json`      | structured interchange format       |
-| `.steps.txt` | compact human-readable step format  |
+| `.steps.txt` | compact step format with session BPM |
 | `.mid`       | DAW import/export                   |
 | `.seq`       | SynthTribe-style sequence exchange  |
 | `.pat`       | ABL3 pattern text                   |
 | `.rbs`       | ReBirth-style song/pattern exchange |
 | `.sqs`       | TD-3/SynthTribe full-bank exchange  |
+
+New `.steps.txt` copies and exports include the current session BPM and only the rows through `active_steps`. Legacy 16-row files and files without BPM still import; a file without BPM leaves the current browser tempo unchanged.
 
 ---
 
@@ -526,6 +547,7 @@ Important keys include:
 | `MIDI_STRICT_NAME_MATCH` | require exact MIDI port match                  |
 | `MIDI_TIMEOUT_MS`        | SysEx request timeout                          |
 | `MIDI_RETRIES`           | retry count for safe probe/download paths      |
+| `MIDI_DEVICE_CHANNEL`    | channel the TD-3 listens on (NO-LIVE, preview) |
 | `WEB_PORT`               | local web server port                          |
 | `WEB_BIND`               | local web server bind address                  |
 | `UI_SCRATCH_PATTERN`     | scratch slot used by live preview/update flows |
@@ -828,6 +850,7 @@ UI reference:
 - [MAIN SECONDARY TOOLBAR](docs/MAIN_SECONDARY_TOOLBAR.md)
 - [SIDEBAR](docs/SIDEBAR.md)
 - [BOTTOM TOOLBAR](docs/BOTTOM_TOOLBAR.md)
+- [TRIPLET MORPH](docs/TRIPLET_MORPH.md) - straight-to-triplet audition morph
 - [PATTERN ROW BUTTONS](docs/PATTERN_ROW_BUTTONS.md)
 - [SIMPLE VS. MAGIC RANDOMIZER](docs/SIMPLE_VS_MAGIC_RANDOMIZER.md)
 

@@ -68,13 +68,18 @@ fn valid_web_pattern_json() -> String {
 }
 
 fn web_pattern_json_with_note(note: &str) -> String {
+    web_pattern_json_with_note_and_active_steps(note, 16)
+}
+
+fn web_pattern_json_with_note_and_active_steps(note: &str, active_steps: u8) -> String {
     let step = format!(
         r#"{{"note":"{}","transpose":"NORMAL","accent":false,"slide":false,"time":"NORMAL"}}"#,
         note
     );
     let steps: Vec<String> = (0..16).map(|_| step.clone()).collect();
     format!(
-        r#"{{"active_steps":16,"triplet":false,"steps":[{}]}}"#,
+        r#"{{"active_steps":{},"triplet":false,"steps":[{}]}}"#,
+        active_steps,
         steps.join(",")
     )
 }
@@ -177,6 +182,7 @@ async fn http_pattern_export_steps_txt_ok() {
     assert!(ct.starts_with("text/plain"));
     let s = std::str::from_utf8(&bytes).unwrap();
     assert!(s.contains("td3-stepdsl-v1"), "steps body: {}", s);
+    assert!(s.contains("bpm=120\n"), "fallback BPM missing: {}", s);
 }
 
 #[tokio::test]
@@ -186,6 +192,59 @@ async fn http_pattern_export_steps_alias_ok() {
     let (status, _ct, bytes) = do_export("steps").await;
     assert_eq!(status, StatusCode::OK);
     assert!(!bytes.is_empty());
+}
+
+#[tokio::test]
+async fn http_pattern_export_steps_uses_requested_bpm_and_active_rows() {
+    let app = test_router();
+    let body = format!(
+        r#"{{"pattern":{},"format":"steps_txt","centibpm":12837}}"#,
+        web_pattern_json_with_note_and_active_steps("G", 3)
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/export")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    assert!(text.contains("bpm=128.37\n"), "steps body: {}", text);
+    let step_rows = text
+        .lines()
+        .filter(|line| {
+            let bytes = line.as_bytes();
+            bytes.len() >= 3
+                && bytes[0].is_ascii_digit()
+                && bytes[1].is_ascii_digit()
+                && bytes[2] == b' '
+        })
+        .count();
+    assert_eq!(step_rows, 3, "steps body: {}", text);
+    assert!(text.contains("03  G:---:N\n"), "steps body: {}", text);
+    assert!(!text.contains("04  G:---:N\n"), "steps body: {}", text);
+}
+
+#[tokio::test]
+async fn http_pattern_export_steps_rejects_invalid_centibpm() {
+    for centibpm in [1_999, 30_001] {
+        let app = test_router();
+        let body = format!(
+            r#"{{"pattern":{},"format":"steps_txt","centibpm":{}}}"#,
+            valid_web_pattern_json(),
+            centibpm
+        );
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/pattern/export")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
 }
 
 #[tokio::test]

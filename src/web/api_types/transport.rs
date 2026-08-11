@@ -18,7 +18,7 @@ pub struct BpmRequest {
     /// fractional precision required for the .00 BPM toggle.
     #[serde(default)]
     pub centibpm: Option<u32>,
-    #[serde(default)]
+    #[serde(default, alias = "targetEpochMicros")]
     pub target_epoch_micros: Option<u64>,
 }
 
@@ -39,6 +39,16 @@ pub struct TransportResponse {
     pub started_at_epoch_ms: u64,
     pub transport_id: u64,
     pub ppqn: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub centibpm: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tempo_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_pulse_index: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_at_epoch_micros: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_epoch_micros: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -46,6 +56,8 @@ pub struct TransportResponse {
 pub struct TransportWrapPulseRequest {
     pub transport_id: u64,
     pub anchor_epoch_ms: u64,
+    #[serde(default)]
+    pub anchor_pulse_index: Option<u64>,
     pub wrap_index: u64,
     pub active_steps: u8,
     pub triplet: bool,
@@ -55,11 +67,17 @@ pub struct TransportWrapPulseRequest {
 #[serde(rename_all = "camelCase")]
 pub struct TransportWrapPulseResponse {
     pub ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exact_boundary: Option<bool>,
     pub transport_id: u64,
     pub wrap_index: u64,
     pub wrap_epoch_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap_epoch_micros: Option<u64>,
     pub server_epoch_ms: u64,
     pub ppqn: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pulse_index: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -71,6 +89,10 @@ pub struct NotePreviewRequest {
     pub note: String,
     pub transpose: String,
     pub accent: bool,
+    /// MIDI channel, 1 through 16, to address the device on. Omitted
+    /// means the channel resolved from `MIDI_DEVICE_CHANNEL`.
+    #[serde(default, alias = "midiChannel")]
+    pub midi_channel: Option<u32>,
 }
 
 impl NotePreviewRequest {

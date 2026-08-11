@@ -16,12 +16,45 @@ struct SoundingNote {
     note: u8,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum OrdinaryGate {
+    LegacyHalfStep,
+    GatePercent(u32),
+}
+
 pub(crate) fn build_timeline(
     pattern: &Pattern,
     address: &str,
     options: &MidiExportOptions,
 ) -> Result<Vec<TimedMidiEvent>, Td3Error> {
+    build_timeline_inner(pattern, address, options, OrdinaryGate::LegacyHalfStep)
+}
+
+pub(crate) fn build_timeline_with_gate(
+    pattern: &Pattern,
+    address: &str,
+    options: &MidiExportOptions,
+    gate_percent: u32,
+) -> Result<Vec<TimedMidiEvent>, Td3Error> {
+    build_timeline_inner(
+        pattern,
+        address,
+        options,
+        OrdinaryGate::GatePercent(gate_percent),
+    )
+}
+
+fn build_timeline_inner(
+    pattern: &Pattern,
+    address: &str,
+    options: &MidiExportOptions,
+    ordinary_gate: OrdinaryGate,
+) -> Result<Vec<TimedMidiEvent>, Td3Error> {
     let step_ticks = step_ticks(pattern.triplet, options.ppqn)?;
+    let ordinary_gate_ticks = match ordinary_gate {
+        OrdinaryGate::LegacyHalfStep => step_ticks / 2,
+        OrdinaryGate::GatePercent(gate_percent) => gate_ticks(step_ticks, gate_percent),
+    };
     let mut events = vec![
         TimedMidiEvent {
             tick: 0,
@@ -117,7 +150,7 @@ pub(crate) fn build_timeline(
                         let release_tick = if slide_on {
                             group_end_tick + step_ticks
                         } else {
-                            group_end_tick + step_ticks / 2
+                            group_end_tick + ordinary_gate_ticks
                         };
                         events.push(TimedMidiEvent {
                             tick: release_tick,
@@ -148,4 +181,10 @@ pub(crate) fn build_timeline(
     });
 
     Ok(events)
+}
+
+fn gate_ticks(step_ticks: u32, gate_percent: u32) -> u32 {
+    let step_ticks = u64::from(step_ticks);
+    let rounded = (step_ticks * u64::from(gate_percent) + 50) / 100;
+    rounded.clamp(1, step_ticks) as u32
 }

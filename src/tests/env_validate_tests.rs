@@ -114,6 +114,23 @@ fn integer_bpm_range_is_20_to_300() {
     assert!(validate_value("UI_DEFAULT_BPM", "301").is_err());
 }
 
+#[test]
+fn pattern_export_delay_range_is_0_to_60000() {
+    assert!(validate_value("UI_PATTERN_EXPORT_BATCH_DELAY_MS", "-1").is_err());
+    assert!(validate_value("UI_PATTERN_EXPORT_BATCH_DELAY_MS", "0").is_ok());
+    assert!(validate_value("UI_PATTERN_EXPORT_BATCH_DELAY_MS", "60000").is_ok());
+    assert!(validate_value("UI_PATTERN_EXPORT_BATCH_DELAY_MS", "60001").is_err());
+
+    let meta = find("UI_PATTERN_EXPORT_BATCH_DELAY_MS").unwrap();
+    match &meta.kind {
+        FieldKind::Integer { min, max } => {
+            assert_eq!(*min, 0);
+            assert_eq!(*max, 60_000);
+        }
+        _ => panic!("UI_PATTERN_EXPORT_BATCH_DELAY_MS must be Integer"),
+    }
+}
+
 // ── Bool ─────────────────────────────────────────────────────────────
 
 #[test]
@@ -132,6 +149,17 @@ fn bool_rejects_garbage() {
     assert!(validate_value("UI_AUTO_CONNECT_TO_MIDI", "maybe").is_err());
     assert!(validate_value("UI_AUTO_CONNECT_TO_MIDI", "2").is_err());
     assert!(validate_value("UI_AUTO_CONNECT_TO_MIDI", "").is_err());
+}
+
+#[test]
+fn pattern_export_name_prompt_is_bool() {
+    assert!(validate_value("UI_PATTERN_EXPORT_NAME_PROMPT", "0").is_ok());
+    assert!(validate_value("UI_PATTERN_EXPORT_NAME_PROMPT", "1").is_ok());
+    assert!(validate_value("UI_PATTERN_EXPORT_NAME_PROMPT", "2").is_err());
+
+    let meta = find("UI_PATTERN_EXPORT_NAME_PROMPT").unwrap();
+    assert!(matches!(&meta.kind, FieldKind::Bool));
+    assert_eq!(meta.section_id, "pattern_export");
 }
 
 // ── Enum ─────────────────────────────────────────────────────────────

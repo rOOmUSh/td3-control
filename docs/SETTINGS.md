@@ -66,8 +66,22 @@ Controls MIDI port discovery and request behavior:
 - `MIDI_STRICT_NAME_MATCH`
 - `MIDI_TIMEOUT_MS`
 - `MIDI_RETRIES`
+- `MIDI_DEVICE_CHANNEL`
 
 Use strict matching when multiple devices have confusingly similar names. Keep retries conservative because TD-3 writes must not be repeated blindly.
+
+`MIDI_DEVICE_CHANNEL` is the MIDI channel, 1 through 16, that the connected TD-3 listens on. It must match the channel set on the device. Two paths send channel-voice messages and are silent on a mismatch:
+
+- NO-LIVE audition, where the app sequences Note On/Off from the host
+- the keyboard note preview
+
+LIVE playback is unaffected either way. It writes the pattern over SysEx and drives the device sequencer with MIDI realtime Start, Clock, and Stop, none of which carry a channel. A device left on a non-matching channel therefore plays in LIVE mode and stays silent in NO-LIVE, which is the symptom this setting resolves.
+
+The default is 1. Configuration files written before this key existed load unchanged and use that default.
+
+The transport bar carries a `CH` selector next to `GATE` that sets the same channel for the session, without editing this file or restarting. It appears whenever Live Update is off, starts on the `MIDI_DEVICE_CHANNEL` value, and is shared by the Control and Progression pages. Use this setting for the channel a device is normally on, and the selector when switching between devices on different channels.
+
+The device does not report its own channel in a form the app can rely on. A `Get Configuration` SysEx exchange returns a `MIDI In Channel` field, but on TD-3 and TD-3-MO units whose channel was set in SynthTribe that field reads `0x00` while the device answers only on its configured channel, so the value cannot be trusted for this purpose and the channel is set here instead.
 
 ### Web Server
 
@@ -134,6 +148,19 @@ Controls MIDI file rendering:
 - `MIDI_EXPORT_LOOP_COUNT`
 
 These defaults are shared by CLI and web export paths where applicable.
+
+### Pattern Export
+
+Controls browser downloads from the Main page:
+
+- `UI_PATTERN_EXPORT_NAME_PROMPT`
+- `UI_PATTERN_EXPORT_BATCH_DELAY_MS`
+
+`UI_PATTERN_EXPORT_NAME_PROMPT` defaults to `1`. When enabled, choosing an export format opens a dialog for a pattern-set name. When disabled, one local timestamp is used for all files in that export.
+
+`UI_PATTERN_EXPORT_BATCH_DELAY_MS` is the pause between groups of 10 individual pattern downloads. It accepts `0` through `60000` milliseconds and defaults to `2000`. Set it to `0` to disable the pause. Combined RBS exports create one file and do not use this delay.
+
+Both settings are read when the server starts. Restart the app after changing either value.
 
 ## Safety Notes
 

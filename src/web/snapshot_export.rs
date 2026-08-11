@@ -37,6 +37,8 @@ pub struct ExportRequest<'a> {
     pub folder_stem: &'a str,
     pub slots: &'a [ExportSlot],
     pub formats: &'a [String],
+    /// Resolved StepDSL tempo in centi-BPM. This does not affect MIDI export.
+    pub centibpm: u32,
     /// Env-resolved MIDI export options. The caller threads this in from
     /// `AppState::midi_export_options` so the env file drives every
     /// runtime export (instead of `MidiExportOptions::default()`'s
@@ -64,6 +66,7 @@ pub struct ExportResult {
 /// non-empty slot once, and writes each (slot × format) combination.
 pub fn run(req: &ExportRequest<'_>) -> Result<ExportResult, Td3Error> {
     validate_formats(req.formats)?;
+    validate_stepdsl_centibpm(req.centibpm)?;
     if req.slots.is_empty() {
         return Err(Td3Error::Other("no slots selected".into()));
     }
@@ -98,7 +101,7 @@ pub fn run(req: &ExportRequest<'_>) -> Result<ExportResult, Td3Error> {
         let pattern = decode_slot_payload(&slot.slot_key, payload)?;
         let slot_stem = slot_key_to_filename(&slot.slot_key);
         for fmt in req.formats {
-            let (ext, bytes) = render_format(fmt, &pattern, &slot_stem, midi_opts)?;
+            let (ext, bytes) = render_format(fmt, &pattern, &slot_stem, midi_opts, req.centibpm)?;
             let file_name = format!("{}.{}", slot_stem, ext);
             let path = crate::path_safety::require_within_base(&out_dir, &file_name)?;
             fs::write(&path, &bytes)
@@ -112,6 +115,34 @@ pub fn run(req: &ExportRequest<'_>) -> Result<ExportResult, Td3Error> {
         file_count,
         skipped,
     })
+}
+
+/// Resolve optional request metadata against the server's integer export BPM.
+pub fn resolve_stepdsl_centibpm(
+    requested: Option<u32>,
+    fallback_bpm: u32,
+) -> Result<u32, Td3Error> {
+    let centibpm = match requested {
+        Some(value) => value,
+        None => fallback_bpm.checked_mul(100).ok_or_else(|| {
+            Td3Error::FormatError(format!(
+                "fallback BPM {} cannot be represented as centibpm",
+                fallback_bpm
+            ))
+        })?,
+    };
+    validate_stepdsl_centibpm(centibpm)?;
+    Ok(centibpm)
+}
+
+fn validate_stepdsl_centibpm(centibpm: u32) -> Result<(), Td3Error> {
+    if !(2_000..=30_000).contains(&centibpm) {
+        return Err(Td3Error::FormatError(format!(
+            "centibpm must be 2000-30000, got {}",
+            centibpm
+        )));
+    }
+    Ok(())
 }
 
 /// Reject formats outside the allowed set. `syx` and `sqs` are the common
@@ -200,13 +231,14 @@ fn render_format(
     pattern: &Pattern,
     address: &str,
     midi_opts: &MidiExportOptions,
+    centibpm: u32,
 ) -> Result<(&'static str, Vec<u8>), Td3Error> {
     match fmt_id {
         "toml" => Ok(("toml", formats::toml_fmt::export(pattern)?.into_bytes())),
         "json" => Ok(("json", formats::json::export(pattern)?.into_bytes())),
         "steps_txt" => Ok((
             "steps.txt",
-            formats::steps_txt::export(pattern).into_bytes(),
+            formats::steps_txt::export_with_bpm(pattern, centibpm)?.into_bytes(),
         )),
         "pat" => Ok(("pat", formats::pat::export(pattern).into_bytes())),
         "seq" => Ok(("seq", formats::seq::export(pattern)?)),

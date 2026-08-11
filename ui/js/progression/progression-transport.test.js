@@ -60,6 +60,19 @@ function shouldUpdateHostAuditionPattern(liveUpdate, connected, previousPatIdx, 
         && nextPatIdx !== previousPatIdx;
 }
 
+function tempoStepReconciliation(currentStep, authoritativeStep, activeSteps) {
+    if (authoritativeStep === currentStep) return 'same';
+    if (Number.isInteger(currentStep)
+        && Number.isInteger(authoritativeStep)
+        && Number.isInteger(activeSteps)
+        && currentStep >= 0
+        && currentStep + 1 < activeSteps
+        && authoritativeStep === currentStep + 1) {
+        return 'advance';
+    }
+    return 'resync';
+}
+
 // --- Test runner ---
 
 let passed = 0, failed = 0;
@@ -379,6 +392,28 @@ test('shouldUpdateHostAuditionPattern: rejects invalid indexes', () => {
         'invalid previous index');
     assert(shouldUpdateHostAuditionPattern(false, true, 1, -1) === false,
         'invalid next index');
+});
+
+// --- tempoStepReconciliation ---
+
+test('tempoStepReconciliation: leaves an authoritative same-step snapshot alone', () => {
+    assert(tempoStepReconciliation(5, 5, 16) === 'same', 'same step');
+});
+
+test('tempoStepReconciliation: permits one non-wrapping normal step', () => {
+    assert(tempoStepReconciliation(5, 6, 16) === 'advance', 'one step ahead');
+    assert(tempoStepReconciliation(14, 15, 16) === 'advance', 'advance onto last step');
+});
+
+test('tempoStepReconciliation: resyncs wrap and larger gaps without replay', () => {
+    assert(tempoStepReconciliation(15, 0, 16) === 'resync', 'wrap');
+    assert(tempoStepReconciliation(5, 7, 16) === 'resync', 'larger gap');
+    assert(tempoStepReconciliation(5, 4, 16) === 'resync', 'backward gap');
+});
+
+test('tempoStepReconciliation: rejects invalid cursor values', () => {
+    assert(tempoStepReconciliation(-1, 0, 16) === 'resync', 'negative current');
+    assert(tempoStepReconciliation(1, 2, Number.NaN) === 'resync', 'invalid length');
 });
 
 // --- Summary ---

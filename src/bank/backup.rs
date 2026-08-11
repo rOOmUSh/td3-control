@@ -86,6 +86,7 @@ pub fn write_backup_zip(
     kind: BackupKind,
     midi_opts: &MidiExportOptions,
 ) -> Result<BackupResult, Td3Error> {
+    formats::steps_txt::centibpm_from_integer_bpm(midi_opts.bpm)?;
     ensure_backup_dir(backup_dir)?;
 
     let base = choose_base_name(backup_dir, kind)?;
@@ -249,7 +250,9 @@ fn render_format(
         Format::Toml => formats::toml_fmt::export(pattern)?.into_bytes(),
         Format::Json => formats::json::export(pattern)?.into_bytes(),
         Format::Mid => formats::mid::export(pattern, address, midi_opts)?,
-        Format::StepsTxt => formats::steps_txt::export(pattern).into_bytes(),
+        Format::StepsTxt => {
+            formats::steps_txt::export_with_integer_bpm(pattern, midi_opts.bpm)?.into_bytes()
+        }
         Format::Seq => formats::seq::export(pattern)?,
         Format::Pat => formats::pat::export(pattern).into_bytes(),
         // `.rbs` is a bank-level 64-pattern format; it is never emitted as a

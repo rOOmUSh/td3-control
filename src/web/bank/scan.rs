@@ -164,6 +164,7 @@ fn app_error_message(err: &AppError) -> String {
         | AppError::Conflict(msg)
         | AppError::Internal(msg)
         | AppError::NotFound(msg) => msg.clone(),
+        AppError::Coded { message, .. } => message.clone(),
         AppError::Midi(e) => e.to_string(),
     }
 }

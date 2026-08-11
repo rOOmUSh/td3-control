@@ -5,7 +5,7 @@
 //!
 //! - which keys the SETTINGS page lets the user edit
 //! - what type / range / option-set each key accepts
-//! - which of the seven section groupings each key belongs to
+//! - which Settings section each key belongs to
 //! - what user-readable description is shown beside the input
 //!
 //! The ranges here are deliberately tighter than the loader ranges in
@@ -75,6 +75,10 @@ pub const SECTIONS: &[Section] = &[
         id: "midi_export",
         title: "MIDI EXPORT",
     },
+    Section {
+        id: "pattern_export",
+        title: "PATTERN EXPORT",
+    },
 ];
 
 pub const FIELDS: &[FieldMeta] = &[
@@ -102,6 +106,12 @@ pub const FIELDS: &[FieldMeta] = &[
         section_id: "midi_device",
         kind: FieldKind::Integer { min: 0, max: 10 },
         description: "Retries on a failed MIDI probe or pattern download. Uploads are never retried.",
+    },
+    FieldMeta {
+        key: "MIDI_DEVICE_CHANNEL",
+        section_id: "midi_device",
+        kind: FieldKind::Integer { min: 1, max: 16 },
+        description: "MIDI channel (1-16) the TD-3 listens on. Used by NO-LIVE audition and note preview. LIVE playback is channel-independent.",
     },
 
     // --- WEB SERVER ---
@@ -264,6 +274,20 @@ pub const FIELDS: &[FieldMeta] = &[
         section_id: "midi_export",
         kind: FieldKind::Integer { min: 1, max: 256 },
         description: "Default number of times the pattern loops in a single exported MIDI file.",
+    },
+
+    // --- PATTERN EXPORT ---
+    FieldMeta {
+        key: "UI_PATTERN_EXPORT_NAME_PROMPT",
+        section_id: "pattern_export",
+        kind: FieldKind::Bool,
+        description: "If 1, asks for a pattern-set name before exporting patterns from the Main page.",
+    },
+    FieldMeta {
+        key: "UI_PATTERN_EXPORT_BATCH_DELAY_MS",
+        section_id: "pattern_export",
+        kind: FieldKind::Integer { min: 0, max: 60_000 },
+        description: "Pause in milliseconds between browser download batches of 10 patterns. Set to 0 to disable the pause.",
     },
 ];
 

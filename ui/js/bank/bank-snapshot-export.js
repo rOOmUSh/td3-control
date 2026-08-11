@@ -24,6 +24,7 @@
 
 import { state, subscribe, clearSnapshotSlotSelection } from './bank-state.js';
 import { bankApi } from './bank-api.js';
+import { getBankBpm } from './bank-play.js';
 import { toast } from './bank-toast.js';
 import { TD3_CHECKBOX } from '../shared/button-classes.js';
 
@@ -46,6 +47,24 @@ const DEFAULT_FORMATS = Object.freeze({
     mid: true, steps_txt: true, seq: true,
     pat: false, rbs: false, toml: false, json: false,
 });
+
+export function buildSnapshotExportRequest({
+    slotKeys,
+    formatIds,
+    targetDir,
+    getBpm = getBankBpm,
+}) {
+    const centibpm = Math.round(Number(getBpm()) * 100);
+    if (!Number.isInteger(centibpm) || centibpm < 2000 || centibpm > 30000) {
+        throw new Error('BPM must be between 20 and 300');
+    }
+    return {
+        slot_keys: slotKeys,
+        formats: formatIds,
+        target_dir: targetDir,
+        centibpm,
+    };
+}
 
 function loadFormats() {
     try {
@@ -222,11 +241,8 @@ async function runExport(snap, formatIds) {
     }
 
     try {
-        const result = await bankApi.exportSnapshotPatterns(snap.snapshot_id, {
-            slot_keys: slotKeys,
-            formats: formatIds,
-            target_dir: targetDir,
-        });
+        const request = buildSnapshotExportRequest({ slotKeys, formatIds, targetDir });
+        const result = await bankApi.exportSnapshotPatterns(snap.snapshot_id, request);
         const skipped = Array.isArray(result.skipped) ? result.skipped.length : 0;
         const base = `Exported ${result.file_count} file(s) to ${result.folder_path}`;
         const msg = skipped > 0 ? `${base} - ${skipped} empty slot(s) skipped` : base;

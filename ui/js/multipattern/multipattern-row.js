@@ -41,6 +41,7 @@ import {
     ROW_NUM_LABEL as NUM_LABEL,
     ROW_PIPE as PIPE,
     TD3_CHECKBOX as CHECKBOX,
+    ROW_MORPH_BOX as MORPH_BOX,
 } from '../shared/button-classes.js';
 
 const PREVIEW_ON  = ' ring-1 ring-primary-fixed text-primary-fixed';
@@ -105,6 +106,18 @@ export function renderCard(index) {
     if (noSaveBox) {
         noSaveBox.addEventListener('click', (e) => e.stopPropagation());
         noSaveBox.addEventListener('change', () => state.setNoSave(index, noSaveBox.checked));
+    }
+
+    // Per-row MORPH checkbox - a mode flag for this row's TRIPLET button.
+    // Wired here rather than through the delegated click dispatch so it
+    // stays out of the derived-view mutation guard: ticking it writes
+    // nothing to the pattern.
+    const morphBox = root.querySelector(`input[data-action="triplet-morph"]`);
+    if (morphBox) {
+        morphBox.addEventListener('click', (e) => e.stopPropagation());
+        morphBox.addEventListener('change', () => {
+            state.setTripletMorphSendFor(index, morphBox.checked);
+        });
     }
 
     // Per-pattern STEPS input - `change` commits on Enter / blur (so free
@@ -183,6 +196,14 @@ function previewCol(i) {
         ? 'Live update is off: PREVIEW auditions without saving to the device'
         : 'Audition this pattern without saving it to the device';
     const noSaveLabelClass = `${COL_LABEL} flex items-center justify-center gap-1 cursor-pointer select-none`;
+    // Per-row MORPH: this row's TRIPLET button writes the 12-cell morph
+    // projection instead of only setting the triplet flag. Independent of
+    // the global checkbox, which governs the global TRIPLET button, so one
+    // pattern can be projected while its neighbours are not. Ticking the
+    // box writes nothing on its own.
+    const morphSend = state.isTripletMorphSendFor(i);
+    const morphTitle = `MORPH: TRIPLET writes the 12-step triplet projection of P${p} instead of only setting the triplet flag. Switching TRIPLET off restores the original 16 steps.`;
+    const morphLabelClass = `${COL_LABEL} flex items-center justify-center gap-1 cursor-pointer select-none`;
     return `
       <div class="flex flex-col items-stretch gap-1">
         <span class="${COL_LABEL}">PREVIEW</span>
@@ -194,6 +215,11 @@ function previewCol(i) {
         <div class="self-stretch h-px bg-outline-variant opacity-40 my-0.5"></div>
         <span class="${COL_LABEL}">TRIPLET</span>
         <button data-action="triplet" data-pattern-idx="${esc(i)}" class="${tripCls}" title="Toggle triplet timing for P${esc(p)}">${trip ? 'ON' : 'OFF'}</button>
+        <label class="${morphLabelClass}" title="${esc(morphTitle)}">
+          <input type="checkbox" data-action="triplet-morph" data-pattern-idx="${esc(i)}" class="peer sr-only" ${morphSend ? 'checked' : ''}>
+          <span class="${MORPH_BOX}"></span>
+          <span class="peer-checked:text-amber-400">MORPH</span>
+        </label>
       </div>`;
 }
 
@@ -289,11 +315,12 @@ function buildGrid(index) {
             index: stepIdx,
             activeSteps,
             selected: kbEdit && focusedIdx === index && stepIdx === selectedStep,
+            triplet: !!pattern.triplet,
             onWheelNoteChange: (delta) => {
-                focusAndRun(index, () => state.changeNote(index, stepIdx, delta));
+                focusAndRun(index, stepIdx, () => state.changeNote(index, stepIdx, delta));
             },
             onCardClick: () => {
-                focusAndRun(index, () => {
+                focusAndRun(index, stepIdx, () => {
                     if (state.isKbEditEnabled()) {
                         state.setSelectedStep(stepIdx);
                     } else {
@@ -301,10 +328,10 @@ function buildGrid(index) {
                     }
                 });
             },
-            onToggleTransposeUp:   () => focusAndRun(index, () => state.toggleTranspose(index, stepIdx, 'UP')),
-            onToggleTransposeDown: () => focusAndRun(index, () => state.toggleTranspose(index, stepIdx, 'DOWN')),
-            onToggleSlide:         () => focusAndRun(index, () => state.toggleSlide(index, stepIdx)),
-            onToggleAccent:        () => focusAndRun(index, () => state.toggleAccent(index, stepIdx)),
+            onToggleTransposeUp:   () => focusAndRun(index, stepIdx, () => state.toggleTranspose(index, stepIdx, 'UP')),
+            onToggleTransposeDown: () => focusAndRun(index, stepIdx, () => state.toggleTranspose(index, stepIdx, 'DOWN')),
+            onToggleSlide:         () => focusAndRun(index, stepIdx, () => state.toggleSlide(index, stepIdx)),
+            onToggleAccent:        () => focusAndRun(index, stepIdx, () => state.toggleAccent(index, stepIdx)),
         });
         grid.appendChild(cell);
     }
@@ -314,8 +341,13 @@ function buildGrid(index) {
 /**
  * Step-edit exception: a per-step click must first focus the card
  * if it isn't already.
+ *
+ * Focusing always works. The edit itself runs only when the morph
+ * policy allows this step: every step at amount 0, the surviving steps
+ * at the 100 endpoint, none in between.
  */
-function focusAndRun(index, edit) {
+function focusAndRun(index, stepIdx, edit) {
     if (state.getFocusedIdx() !== index) state.setFocused(index);
+    if (!state.isTripletMorphStepEditable(index, stepIdx)) return;
     edit();
 }

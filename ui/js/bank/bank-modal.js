@@ -22,6 +22,8 @@
 import { toast } from './bank-toast.js';
 import { bankButton } from './bank-buttons.js';
 
+let modalSequence = 0;
+
 /**
  * Opens a modal and returns a `close()` function.
  *
@@ -36,6 +38,13 @@ import { bankButton } from './bank-buttons.js';
  * @param {string} [opts.secondaryLabel] - Secondary button label. Default 'Cancel'.
  * @param {Function} [opts.onSecondary] - Secondary click handler. If omitted
  *   the modal just closes.
+ * @param {boolean} [opts.secondaryDanger] - Style the secondary button red.
+ * @param {string} [opts.secondaryClassName] - Replace the secondary button's
+ *   default Bank classes with an app-specific class list.
+ * @param {string} [opts.primaryClassName] - Replace the primary button's
+ *   default Bank classes with an app-specific class list.
+ * @param {boolean|Function} [opts.primaryEnabled] - Initial boolean or a
+ *   predicate re-evaluated when the body receives input or change events.
  * @param {string} [opts.size] - 'default' | 'wide'.
  * @returns {Function} close
  */
@@ -46,6 +55,10 @@ export function openModal({
     onPrimary,
     secondaryLabel = 'Cancel',
     onSecondary,
+    secondaryDanger = false,
+    secondaryClassName = '',
+    primaryClassName = '',
+    primaryEnabled = true,
     size = 'default',
     noScrim = false,
     danger = false,
@@ -75,7 +88,9 @@ export function openModal({
     header.style.marginBottom = '0.5rem';
 
     const h = document.createElement('h3');
+    h.id = `bank-modal-title-${++modalSequence}`;
     h.textContent = typeof title === 'string' ? title : 'Dialog';
+    modal.setAttribute('aria-labelledby', h.id);
     header.appendChild(h);
 
     const closeX = bankButton({
@@ -98,11 +113,13 @@ export function openModal({
 
     const secondary = bankButton({
         label: secondaryLabel || 'Cancel',
+        danger: secondaryDanger,
         onClick: () => {
             try { onSecondary?.(); } catch (e) { toast(e.message || String(e), 'error'); }
             close();
         },
     });
+    if (secondaryClassName) secondary.className = secondaryClassName;
     actions.appendChild(secondary);
 
     let primary = null;
@@ -124,7 +141,18 @@ export function openModal({
                 }
             },
         });
+        if (primaryClassName) primary.className = primaryClassName;
         actions.appendChild(primary);
+
+        const refreshPrimaryEnabled = () => {
+            const enabled = typeof primaryEnabled === 'function'
+                ? primaryEnabled()
+                : primaryEnabled;
+            primary.disabled = !enabled;
+        };
+        bodyWrap.addEventListener('input', refreshPrimaryEnabled);
+        bodyWrap.addEventListener('change', refreshPrimaryEnabled);
+        refreshPrimaryEnabled();
     }
 
     modal.appendChild(actions);
@@ -141,6 +169,24 @@ export function openModal({
         if (ev.key === 'Escape') {
             ev.stopPropagation();
             close();
+        } else if (ev.key === 'Tab') {
+            const focusableElements = [...modal.querySelectorAll(
+                'input, textarea, select, button, a[href], [tabindex]:not([tabindex="-1"])'
+            )].filter((element) => !element.disabled && element.tabIndex >= 0);
+            if (focusableElements.length === 0) {
+                ev.preventDefault();
+                return;
+            }
+            const first = focusableElements[0];
+            const last = focusableElements[focusableElements.length - 1];
+            const active = document.activeElement;
+            if (ev.shiftKey && (active === first || !modal.contains(active))) {
+                ev.preventDefault();
+                last.focus();
+            } else if (!ev.shiftKey && (active === last || !modal.contains(active))) {
+                ev.preventDefault();
+                first.focus();
+            }
         } else if (ev.key === 'Enter' && primary && !ev.shiftKey) {
             // Only fire default submit if the active element is an input that
             // isn't a textarea - matches typical browser form behavior.
@@ -264,6 +310,16 @@ export function confirmModal({
  * @param {string} [opts.placeholder='']
  * @param {string} [opts.okLabel='OK']
  * @param {string} [opts.cancelLabel='Cancel']
+ * @param {string} [opts.inputId='']
+ * @param {number} [opts.inputMaxLength=0] - Maximum input characters. Zero
+ *   leaves the input unrestricted.
+ * @param {boolean} [opts.cancelDanger=false]
+ * @param {string} [opts.cancelClassName='']
+ * @param {string} [opts.okClassName='']
+ * @param {boolean} [opts.noScrim=true] - Preserve the legacy transparent,
+ *   non-interactive backdrop unless a blocking dialog is requested.
+ * @param {Function} [opts.isValueAllowed] - Enables OK when this predicate
+ *   returns true for the current input value.
  * @returns {Promise<string | null>}
  */
 export function promptModal({
@@ -273,18 +329,33 @@ export function promptModal({
     placeholder = '',
     okLabel = 'OK',
     cancelLabel = 'Cancel',
+    inputId = '',
+    inputMaxLength = 0,
+    cancelDanger = false,
+    cancelClassName = '',
+    okClassName = '',
+    noScrim = true,
+    isValueAllowed = () => true,
 } = {}) {
     return new Promise((resolve) => {
         const body = document.createElement('div');
         body.className = 'bank-confirm-body';
 
+        let labelElement = null;
         if (label) {
-            const lbl = document.createElement('label');
-            lbl.textContent = label;
-            body.appendChild(lbl);
+            labelElement = document.createElement('label');
+            labelElement.textContent = label;
+            body.appendChild(labelElement);
         }
         const input = document.createElement('input');
         input.type = 'text';
+        if (inputId) {
+            input.id = inputId;
+            if (labelElement) labelElement.htmlFor = inputId;
+        }
+        if (Number.isInteger(inputMaxLength) && inputMaxLength > 0) {
+            input.maxLength = inputMaxLength;
+        }
         input.value = defaultValue || '';
         if (placeholder) input.placeholder = placeholder;
         input.style.width = '100%';
@@ -296,7 +367,11 @@ export function promptModal({
             body,
             primaryLabel: okLabel,
             secondaryLabel: cancelLabel,
-            noScrim: true,
+            secondaryDanger: cancelDanger,
+            secondaryClassName: cancelClassName,
+            primaryClassName: okClassName,
+            primaryEnabled: () => isValueAllowed(input.value),
+            noScrim,
             onPrimary: () => {
                 answered = true;
                 resolve(input.value);

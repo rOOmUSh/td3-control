@@ -104,10 +104,82 @@
     justify-self: center;
 }
 
-/* Tactile button press effect */
+/* Device MIDI channel selector.
+   Sits beside the REMOTE block and matches its metrics: the window is the
+   3rem x 2rem of `.remote-sync-toggle` with the label beneath, so the two
+   read as one row of small controls rather than a full-size readout. */
+.device-channel-grid {
+    display: grid;
+    grid-template-columns: 3rem;
+    grid-template-rows: 2rem auto;
+    row-gap: 0.25rem;
+    align-items: center;
+    justify-items: center;
+}
+
+/* The width is fixed rather than driven by the selected value: sized for
+   "16", a one-digit channel leaves it unchanged, so choosing a two-digit
+   channel cannot reflow the transport bar. `appearance: none` removes the
+   native dropdown arrow, which would otherwise take part of that width
+   and shift the digits off centre. */
+.device-channel-select {
+    grid-column: 1;
+    grid-row: 1;
+    width: 3rem;
+    height: 2rem;
+    line-height: 2rem;
+    padding: 0;
+    text-align: center;
+    text-align-last: center;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    /* `appearance: none` removes the platform arrow but not the chevron the
+       Tailwind form styles paint as a background image, which lands on top
+       of the digits in a window this narrow. Both have to go. */
+    background-image: none;
+    background-repeat: no-repeat;
+    background-position: 0 0;
+    background-size: auto;
+    cursor: pointer;
+    /* Render the popup list dark on both platforms rather than inheriting
+       a light system default against the dark bar. */
+    color-scheme: dark;
+}
+
+.device-channel-label {
+    grid-column: 1;
+    grid-row: 2;
+    justify-self: center;
+}
+
+/* The transport bar's left cluster is a single non-wrapping row, and it
+   was within 9px of overflowing at 1280 wide before the CH selector was
+   added. Below the width where everything still fits at the roomier
+   spacing, close the gaps rather than let the row overflow and push the
+   status text out of view. Wider viewports keep the original spacing. */
+@media (max-width: 1500px) {
+    .transport-cluster {
+        column-gap: 0.75rem;
+    }
+}
+
+/* Tactile button press effect.
+   The transition names its properties instead of using `all`: `all` covers
+   `visibility`, which interpolates by holding the old value for the whole
+   duration. A button inside a container the morph renderer hides therefore
+   stayed painted for 100ms after each re-render, and a re-render per knob
+   step kept the hidden UP/DN/SL/AC blocks on screen for as long as the
+   sweep lasted. */
 .tactile-button {
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 2px 4px rgba(0,0,0,0.4);
-    transition: all 0.1s ease;
+    transition:
+        background-color 0.1s ease,
+        border-color 0.1s ease,
+        color 0.1s ease,
+        box-shadow 0.1s ease,
+        transform 0.1s ease,
+        opacity 0.1s ease;
 }
 .tactile-button:active {
     transform: translateY(2px);
@@ -256,6 +328,11 @@
 .td3-toolbar-btn:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+}
+.pattern-export-submit:disabled {
+    background-color: #333535;
+    color: #b8c4b8;
+    opacity: 1;
 }
 #btn-live.is-active {
     background-color: #2d5a27;
@@ -579,8 +656,9 @@
     -webkit-user-select: none;
 }
 
-/* Downbeat emphasis - steps 01/05/09/13 get an upper white halo so the
-   16-step grid reads as four groups of four at a glance. Shares the card's
+/* Downbeat emphasis - the first step of each beat gets an upper white halo
+   so the grid reads as groups of a beat at a glance: 01/05/09/13 in straight
+   mode, 01/04/07/10 when the pattern is in triplet. Shares the card's
    tactile shadow stack so the raised-card look is preserved. The .step-active
    playing highlight is declared AFTER this rule so it wins when both apply. */
 .step-downbeat {
@@ -595,18 +673,11 @@
     background-color: #4e8c45 !important;
     color: #000 !important;
     box-shadow: 0 0 24px #4e8c45, 0 0 48px rgba(78,140,69,0.4);
-    transition: box-shadow 0.08s ease-out;
+    transition: none;
 }
 .step-active span {
     color: #000 !important;
     opacity: 1 !important;
-}
-.step-pulse {
-    animation: pulse-beat 0.12s ease-out;
-}
-@keyframes pulse-beat {
-    0% { transform: scale(1.04); box-shadow: 0 0 30px #4e8c45, 0 0 60px rgba(78,140,69,0.6); }
-    100% { transform: scale(1); box-shadow: 0 0 24px #4e8c45, 0 0 48px rgba(78,140,69,0.4); }
 }
 
 /* BPM knob rotation */
@@ -737,3 +808,31 @@ option.scale-rank-1 { color: #6ee7b7; background-color: rgba(5,150,105,0.12); }
 option.scale-rank-2 { color: #a7f3d0; background-color: rgba(5,150,105,0.08); }
 option.scale-rank-3 { color: #fde68a; background-color: rgba(217,119,6,0.08); }
 option.scale-rank-4 { color: #fdba74; background-color: rgba(217,119,6,0.10); }
+
+/* ---------------------------------------------------------------------------
+   Triplet morph: editable-cell marker
+   ---------------------------------------------------------------------------
+   The UP/DN/SL/AC block of a surviving step pulses green while the
+   TRIPLET knob is above 0, so the user can see which notes stay
+   editable at the 100% triplet endpoint. The block travels with its
+   note card: the morph renderer translates the column that holds both,
+   so the marker stays on the step it belongs to throughout the sweep. */
+@keyframes triplet-morph-editable-pulse {
+    0%   { box-shadow: 0 0 0 1px rgba(78, 140, 69, 0.25); }
+    50%  { box-shadow: 0 0 8px 2px rgba(78, 140, 69, 0.85); }
+    100% { box-shadow: 0 0 0 1px rgba(78, 140, 69, 0.25); }
+}
+
+.step-morph-editable {
+    outline: 1px solid rgba(78, 140, 69, 0.9);
+    outline-offset: 1px;
+    border-radius: 0.5rem;
+    animation: triplet-morph-editable-pulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .step-morph-editable {
+        animation: none;
+        box-shadow: 0 0 6px 2px rgba(78, 140, 69, 0.7);
+    }
+}

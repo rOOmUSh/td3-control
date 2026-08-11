@@ -65,7 +65,6 @@ pub(super) fn export_package(
     address: &str,
 ) -> Result<(), Td3Error> {
     let folder = format!("PATTERN_{}", address);
-    fs::create_dir_all(&folder)?;
     let midi_options = config.midi_export_options_for_pattern(pattern)?;
 
     let fmts: &[formats::Format] = if config.render.requested_formats.is_empty() {
@@ -73,6 +72,10 @@ pub(super) fn export_package(
     } else {
         &config.render.requested_formats
     };
+    if fmts.contains(&formats::Format::StepsTxt) {
+        formats::steps_txt::centibpm_from_integer_bpm(midi_options.bpm)?;
+    }
+    fs::create_dir_all(&folder)?;
 
     for fmt in fmts {
         let filename = format!("{}/{}.{}", folder, address, fmt.extension());
@@ -117,7 +120,7 @@ fn write_format(
             fs::write(filename, data)?;
         }
         formats::Format::StepsTxt => {
-            let data = formats::steps_txt::export(pattern);
+            let data = formats::steps_txt::export_with_integer_bpm(pattern, midi_options.bpm)?;
             fs::write(filename, data)?;
         }
         formats::Format::Seq => {

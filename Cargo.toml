@@ -1,6 +1,6 @@
 [package]
 name = "td3-control"
-version = "1.1.2"
+version = "1.2.0"
 edition = "2021"
 license = "GPL-3.0-only"
 
@@ -10,7 +10,7 @@ license = "GPL-3.0-only"
 midir = "0.11"
 clap = { version = "4", features = ["derive"] }
 thiserror = "2"
-log = "0.4.32"
+log = "0.4.33"
 env_logger = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -20,7 +20,7 @@ axum = "0.8"
 reqwest = { version = "0.13.4", default-features = false, features = ["json"] }
 rust-embed = { version = "8", features = ["mime-guess", "include-exclude"] }
 mime_guess = "2"
-eframe = { version = "0.34", default-features = false, features = ["default_fonts", "glow"] }
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow"] }
 webbrowser = "1"
 zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 sha2 = "0.11"
@@ -31,6 +31,13 @@ rfd = { version = "0.17.2", default-features = false, features = ["common-contro
 # MIDI clock thread to TIME_CRITICAL priority so `thread::sleep` doesn't
 # align to the default 15.625 ms quantum (which introduces audible jitter
 # on 0xF8 ticks at 120+ BPM) and the scheduler doesn't preempt us mid-wait.
+# eframe is taken with default features off, which leaves winit without a
+# windowing backend on Linux: it then refuses to build at all with "the
+# platform you're compiling for is not supported". Windows and macOS get
+# their backend unconditionally, Linux has to be told which to use.
+[target.'cfg(target_os = "linux")'.dependencies]
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Media", "Win32_Security", "Win32_System_Threading"] }
 windows = { version = "0.62.2", features = ["Devices_Enumeration", "Devices_Midi", "Foundation", "Foundation_Collections"] }

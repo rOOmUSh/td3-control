@@ -12,9 +12,12 @@ use crate::formats::rbs;
 use crate::formats::sqs;
 use crate::pattern::Pattern;
 use crate::step::{Step, Time};
+use crate::web::handlers::resolve_package_export_centibpm;
 use crate::web::package_export::{
     export_package, sanitize_component, PackageExportInput, ROOT_FOLDER,
 };
+
+const TEST_CENTIBPM: u32 = 12_000;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -50,6 +53,16 @@ fn marker_pattern(note: u8, marker_step: usize) -> Pattern {
         }
     }
     Pattern::new(false, 16, steps).unwrap()
+}
+
+fn short_marker_pattern(note: u8) -> Pattern {
+    let mut steps: [Step; 16] = Default::default();
+    for step in steps.iter_mut().take(3) {
+        step.note = note;
+        step.time = Time::Normal;
+    }
+    steps[0].accent = crate::step::Accent::On;
+    Pattern::new(false, 3, steps).unwrap()
 }
 
 fn four_acid() -> [Pattern; 4] {
@@ -116,6 +129,22 @@ fn read_entry(z: &mut ZipArchive<Cursor<Vec<u8>>>, name: &str) -> Vec<u8> {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn package_centibpm_resolution_preserves_request_and_uses_server_fallback() {
+    assert_eq!(
+        resolve_package_export_centibpm(Some(12_837), 156).unwrap(),
+        12_837
+    );
+    assert_eq!(resolve_package_export_centibpm(None, 156).unwrap(), 15_600);
+}
+
+#[test]
+fn package_centibpm_resolution_rejects_values_outside_stepdsl_range() {
+    assert!(resolve_package_export_centibpm(Some(1_999), 120).is_err());
+    assert!(resolve_package_export_centibpm(Some(30_001), 120).is_err());
+    assert!(resolve_package_export_centibpm(None, 301).is_err());
+}
+
+#[test]
 fn export_rejects_empty_selection() {
     let dir = scratch_dir("pkg_empty_selection");
     let acid = four_acid();
@@ -129,6 +158,7 @@ fn export_rejects_empty_selection() {
         acid_patterns: &acid,
         basslines: &bass,
         basslines_full: None,
+        centibpm: TEST_CENTIBPM,
         midi_opts: &MidiExportOptions::default(),
     };
 
@@ -157,6 +187,7 @@ fn export_rejects_unknown_format() {
         acid_patterns: &acid,
         basslines: &bass,
         basslines_full: None,
+        centibpm: TEST_CENTIBPM,
         midi_opts: &MidiExportOptions::default(),
     };
 
@@ -184,6 +215,7 @@ fn export_accepts_combined_only_without_per_pattern_formats() {
         acid_patterns: &acid,
         basslines: &bass,
         basslines_full: None,
+        centibpm: TEST_CENTIBPM,
         midi_opts: &MidiExportOptions::default(),
     };
 
@@ -217,6 +249,7 @@ fn export_builds_expected_per_pattern_tree_for_minimum_defaults() {
         acid_patterns: &acid,
         basslines: &bass,
         basslines_full: None,
+        centibpm: TEST_CENTIBPM,
         midi_opts: &MidiExportOptions::default(),
     };
 
@@ -256,6 +289,49 @@ fn export_builds_expected_per_pattern_tree_for_minimum_defaults() {
 }
 
 #[test]
+fn export_steps_txt_uses_exact_bpm_and_only_active_rows() {
+    let dir = scratch_dir("pkg_steps_bpm_short");
+    let mut acid = four_acid();
+    acid[0] = short_marker_pattern(7);
+    let bass = four_bass();
+    let formats = vec!["steps_txt".to_string()];
+
+    let input = PackageExportInput {
+        formats: &formats,
+        combined_rbs: false,
+        combined_sqs: false,
+        scale_name: "minor",
+        acid_patterns: &acid,
+        basslines: &bass,
+        basslines_full: None,
+        centibpm: 12_837,
+        midi_opts: &MidiExportOptions::default(),
+    };
+
+    let result = export_package(&input, &dir).unwrap();
+    let mut zip = read_zip(std::path::Path::new(&result.saved_path));
+    let acid_text = String::from_utf8(read_entry(
+        &mut zip,
+        &format!("{}/P1/P1.steps.txt", ROOT_FOLDER),
+    ))
+    .unwrap();
+    let bass_text = String::from_utf8(read_entry(
+        &mut zip,
+        &format!("{}/P1/P1_BASSLINE/P1_BASSLINE.steps.txt", ROOT_FOLDER),
+    ))
+    .unwrap();
+
+    assert!(acid_text.contains("\nbpm=128.37\n"));
+    assert!(bass_text.contains("\nbpm=128.37\n"));
+    assert!(acid_text.contains("\n03 "));
+    assert!(!acid_text.contains("\n04 "));
+    assert!(!acid_text.contains("\n16 "));
+    assert!(bass_text.contains("\n16 "));
+
+    rmrf(&dir);
+}
+
+#[test]
 fn export_emits_every_per_pattern_format_when_all_selected() {
     let dir = scratch_dir("pkg_all_formats");
     let acid = four_acid();
@@ -278,6 +354,7 @@ fn export_emits_every_per_pattern_format_when_all_selected() {
         acid_patterns: &acid,
         basslines: &bass,
         basslines_full: None,
+        centibpm: TEST_CENTIBPM,
         midi_opts: &MidiExportOptions::default(),
     };
 
@@ -307,6 +384,7 @@ fn export_defaults_plus_combined_rbs_adds_root_file_and_counts_25() {
         acid_patterns: &acid,
         basslines: &bass,
         basslines_full: None,
+        centibpm: TEST_CENTIBPM,
         midi_opts: &MidiExportOptions::default(),
     };
 
@@ -341,6 +419,7 @@ fn export_defaults_plus_combined_sqs_adds_root_file_and_counts_25() {
         acid_patterns: &acid,
         basslines: &bass,
         basslines_full: None,
+        centibpm: TEST_CENTIBPM,
         midi_opts: &MidiExportOptions::default(),
     };
 
@@ -371,6 +450,7 @@ fn export_combined_only_writes_exactly_two_root_files() {
         acid_patterns: &acid,
         basslines: &bass,
         basslines_full: None,
+        centibpm: TEST_CENTIBPM,
         midi_opts: &MidiExportOptions::default(),
     };
 
@@ -410,6 +490,7 @@ fn combined_rbs_places_acid_on_device_one_and_bass_on_device_two() {
         acid_patterns: &acid,
         basslines: &bass,
         basslines_full: None,
+        centibpm: TEST_CENTIBPM,
         midi_opts: &MidiExportOptions::default(),
     };
 
@@ -463,6 +544,7 @@ fn combined_sqs_places_acid_on_a_side_and_bass_on_b_side() {
         acid_patterns: &acid,
         basslines: &bass,
         basslines_full: None,
+        centibpm: TEST_CENTIBPM,
         midi_opts: &MidiExportOptions::default(),
     };
 
@@ -534,6 +616,7 @@ fn combined_rbs_places_all_twenty_basslines_on_device_two_sequentially() {
         acid_patterns: &acid,
         basslines: &bass,
         basslines_full: Some(&bass_full),
+        centibpm: TEST_CENTIBPM,
         midi_opts: &MidiExportOptions::default(),
     };
 
@@ -625,6 +708,7 @@ fn combined_sqs_places_all_twenty_basslines_on_b_side_sequentially() {
         acid_patterns: &acid,
         basslines: &bass,
         basslines_full: Some(&bass_full),
+        centibpm: TEST_CENTIBPM,
         midi_opts: &MidiExportOptions::default(),
     };
 
@@ -717,6 +801,7 @@ fn zip_filename_sanitizes_scale_name() {
         acid_patterns: &acid,
         basslines: &bass,
         basslines_full: None,
+        centibpm: TEST_CENTIBPM,
         midi_opts: &MidiExportOptions::default(),
     };
 

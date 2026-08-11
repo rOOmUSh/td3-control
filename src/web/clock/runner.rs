@@ -1,8 +1,9 @@
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::error::Td3Error;
 use crate::midi_io::SysexSender;
@@ -33,6 +34,369 @@ const QUEUE_SEND_TIMEOUT: Duration = Duration::from_secs(3);
 /// (~1 ms) plus slack for the sleep wakeup and the tick send itself.
 const DRAIN_SAFETY_MARGIN: Duration = Duration::from_millis(2);
 
+/// Extra time allowed for the clock thread to wake at a scheduled target and
+/// complete the MIDI Start write. The requested delay is added separately.
+const START_ACK_GRACE: Duration = Duration::from_secs(3);
+
+/// Bound shutdown latency while a clock thread is waiting for a scheduled
+/// start. The final two milliseconds still use the precision timing path.
+const SCHEDULE_STOP_POLL_INTERVAL: Duration = Duration::from_millis(10);
+const SCHEDULE_PRECISION_WINDOW: Duration = Duration::from_millis(2);
+
+/// Successful pulse snapshots retained so a wrap waiter can recover the
+/// exact boundary timestamp even if the HTTP task wakes several ticks late.
+const PULSE_HISTORY_CAPACITY: usize = 4_096;
+
+#[derive(Debug)]
+enum ClockStartStatus {
+    Pending,
+    Started,
+    Failed(String),
+    Stopped,
+}
+
+#[derive(Debug)]
+struct StartSync {
+    status: Mutex<ClockStartStatus>,
+    changed: Condvar,
+}
+
+impl StartSync {
+    fn new() -> Self {
+        Self {
+            status: Mutex::new(ClockStartStatus::Pending),
+            changed: Condvar::new(),
+        }
+    }
+
+    fn lock_status(&self) -> MutexGuard<'_, ClockStartStatus> {
+        self.status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn mark_started(&self) {
+        let mut status = self.lock_status();
+        if matches!(*status, ClockStartStatus::Pending) {
+            *status = ClockStartStatus::Started;
+            drop(status);
+            self.changed.notify_all();
+        }
+    }
+
+    fn mark_failed(&self, message: String) {
+        let mut status = self.lock_status();
+        if matches!(*status, ClockStartStatus::Pending) {
+            *status = ClockStartStatus::Failed(message);
+            drop(status);
+            self.changed.notify_all();
+        }
+    }
+
+    fn mark_stopped(&self) {
+        let mut status = self.lock_status();
+        if matches!(*status, ClockStartStatus::Pending) {
+            *status = ClockStartStatus::Stopped;
+            drop(status);
+            self.changed.notify_all();
+        }
+    }
+
+    fn wait_for_start(&self, timeout: Duration) -> Result<(), Td3Error> {
+        let deadline = Instant::now() + timeout;
+        let mut status = self.lock_status();
+
+        loop {
+            match &*status {
+                ClockStartStatus::Started => return Ok(()),
+                ClockStartStatus::Failed(message) => {
+                    return Err(Td3Error::Midi(message.clone()));
+                }
+                ClockStartStatus::Stopped => {
+                    return Err(Td3Error::Midi(
+                        "clock stopped before MIDI Start was sent".to_string(),
+                    ));
+                }
+                ClockStartStatus::Pending => {}
+            }
+
+            let now = Instant::now();
+            if now >= deadline {
+                return Err(Td3Error::Timeout {
+                    operation: "MIDI Start acknowledgement".to_string(),
+                });
+            }
+
+            let remaining = deadline.saturating_duration_since(now);
+            status = match self.changed.wait_timeout(status, remaining) {
+                Ok((next_status, _)) => next_status,
+                Err(poisoned) => poisoned.into_inner().0,
+            };
+        }
+    }
+}
+
+/// Cloneable acknowledgement handle for the clock thread's MIDI Start write.
+/// A successful wait means `0xFA` was accepted by the MIDI output connection.
+#[derive(Clone, Debug)]
+pub struct ClockStartMonitor {
+    shared: Arc<StartSync>,
+    timeout: Duration,
+}
+
+impl ClockStartMonitor {
+    pub fn wait_for_start(&self) -> Result<(), Td3Error> {
+        self.shared.wait_for_start(self.timeout)
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct ClockStartTestHarness {
+    shared: Arc<StartSync>,
+    timeout: Duration,
+}
+
+#[cfg(test)]
+impl ClockStartTestHarness {
+    pub(crate) fn new(timeout: Duration) -> Self {
+        Self {
+            shared: Arc::new(StartSync::new()),
+            timeout,
+        }
+    }
+
+    pub(crate) fn monitor(&self) -> ClockStartMonitor {
+        ClockStartMonitor {
+            shared: Arc::clone(&self.shared),
+            timeout: self.timeout,
+        }
+    }
+
+    pub(crate) fn mark_started(&self) {
+        self.shared.mark_started();
+    }
+
+    pub(crate) fn mark_failed(&self, message: &str) {
+        self.shared.mark_failed(message.to_string());
+    }
+
+    pub(crate) fn mark_stopped(&self) {
+        self.shared.mark_stopped();
+    }
+}
+
+/// Last successfully emitted MIDI Clock pulse and the tempo that applies to
+/// the interval following it. Pulse zero is the immediate clock sent after
+/// MIDI Start. The pulse index never resets during a live tempo change.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClockPulseSnapshot {
+    pub pulse_index: u64,
+    pub epoch_micros: u64,
+    pub centibpm: u32,
+    pub tempo_revision: u64,
+}
+
+#[derive(Debug)]
+struct PulseState {
+    running: bool,
+    requested_centibpm: u32,
+    requested_revision: u64,
+    last_pulse: Option<ClockPulseSnapshot>,
+    history: VecDeque<ClockPulseSnapshot>,
+}
+
+#[derive(Debug)]
+struct PulseSync {
+    state: Mutex<PulseState>,
+    changed: Condvar,
+}
+
+impl PulseSync {
+    fn new(initial_centibpm: u32) -> Self {
+        Self {
+            state: Mutex::new(PulseState {
+                running: true,
+                requested_centibpm: initial_centibpm.max(1),
+                requested_revision: 0,
+                last_pulse: None,
+                history: VecDeque::with_capacity(PULSE_HISTORY_CAPACITY),
+            }),
+            changed: Condvar::new(),
+        }
+    }
+
+    fn lock_state(&self) -> MutexGuard<'_, PulseState> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn request_tempo(&self, centibpm: u32) -> u64 {
+        let mut state = self.lock_state();
+        let centibpm = centibpm.max(1);
+        if state.requested_centibpm == centibpm {
+            return state.requested_revision;
+        }
+        state.requested_revision = state.requested_revision.saturating_add(1);
+        state.requested_centibpm = centibpm;
+        state.requested_revision
+    }
+
+    /// Record a successful pulse and atomically adopt the newest requested
+    /// tempo. The returned tempo applies to the interval after this pulse.
+    fn publish_pulse(
+        &self,
+        pulse_index: u64,
+        epoch_micros: u64,
+        applied_centibpm: u32,
+        applied_revision: u64,
+    ) -> ClockPulseSnapshot {
+        let mut state = self.lock_state();
+        let (centibpm, tempo_revision) = if state.requested_revision > applied_revision {
+            (state.requested_centibpm, state.requested_revision)
+        } else {
+            (applied_centibpm, applied_revision)
+        };
+        let snapshot = ClockPulseSnapshot {
+            pulse_index,
+            epoch_micros,
+            centibpm,
+            tempo_revision,
+        };
+        if state.history.len() == PULSE_HISTORY_CAPACITY {
+            state.history.pop_front();
+        }
+        state.history.push_back(snapshot);
+        state.last_pulse = Some(snapshot);
+        drop(state);
+        self.changed.notify_all();
+        snapshot
+    }
+
+    fn mark_stopped(&self) {
+        let mut state = self.lock_state();
+        state.running = false;
+        drop(state);
+        self.changed.notify_all();
+    }
+
+    fn wait_for_tempo_revision(&self, revision: u64) -> Option<ClockPulseSnapshot> {
+        let mut state = self.lock_state();
+        loop {
+            if let Some(snapshot) = state.last_pulse {
+                if snapshot.tempo_revision >= revision {
+                    return Some(snapshot);
+                }
+            }
+            if !state.running {
+                return None;
+            }
+            state = self
+                .changed
+                .wait(state)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+    }
+
+    fn wait_for_pulse(&self, target_pulse: u64) -> Option<ClockPulseSnapshot> {
+        let mut state = self.lock_state();
+        loop {
+            if let Some(last) = state.last_pulse {
+                if last.pulse_index >= target_pulse {
+                    return state
+                        .history
+                        .iter()
+                        .find(|snapshot| snapshot.pulse_index == target_pulse)
+                        .copied();
+                }
+            }
+            if !state.running {
+                return None;
+            }
+            state = self
+                .changed
+                .wait(state)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+    }
+
+    fn latest_running_pulse(&self) -> Option<ClockPulseSnapshot> {
+        let state = self.lock_state();
+        if state.running {
+            state.last_pulse
+        } else {
+            None
+        }
+    }
+}
+
+/// Cloneable wait handle used by async handlers through `spawn_blocking`.
+#[derive(Clone, Debug)]
+pub struct ClockPulseMonitor {
+    shared: Arc<PulseSync>,
+}
+
+impl ClockPulseMonitor {
+    pub fn wait_for_tempo_revision(&self, revision: u64) -> Option<ClockPulseSnapshot> {
+        self.shared.wait_for_tempo_revision(revision)
+    }
+
+    pub fn wait_for_pulse(&self, target_pulse: u64) -> Option<ClockPulseSnapshot> {
+        self.shared.wait_for_pulse(target_pulse)
+    }
+
+    pub fn latest_running_pulse(&self) -> Option<ClockPulseSnapshot> {
+        self.shared.latest_running_pulse()
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct ClockPulseTestHarness {
+    shared: Arc<PulseSync>,
+    next_pulse_index: u64,
+    applied_centibpm: u32,
+    applied_revision: u64,
+}
+
+#[cfg(test)]
+impl ClockPulseTestHarness {
+    pub(crate) fn new(initial_centibpm: u32) -> Self {
+        Self {
+            shared: Arc::new(PulseSync::new(initial_centibpm)),
+            next_pulse_index: 0,
+            applied_centibpm: initial_centibpm.max(1),
+            applied_revision: 0,
+        }
+    }
+
+    pub(crate) fn monitor(&self) -> ClockPulseMonitor {
+        ClockPulseMonitor {
+            shared: Arc::clone(&self.shared),
+        }
+    }
+
+    pub(crate) fn set_centibpm(&self, centibpm: u32) -> u64 {
+        self.shared.request_tempo(centibpm)
+    }
+
+    pub(crate) fn publish_pulse(&mut self, epoch_micros: u64) -> ClockPulseSnapshot {
+        let snapshot = self.shared.publish_pulse(
+            self.next_pulse_index,
+            epoch_micros,
+            self.applied_centibpm,
+            self.applied_revision,
+        );
+        self.next_pulse_index = self.next_pulse_index.saturating_add(1);
+        self.applied_centibpm = snapshot.centibpm;
+        self.applied_revision = snapshot.tempo_revision;
+        snapshot
+    }
+
+    pub(crate) fn stop(&self) {
+        self.shared.mark_stopped();
+    }
+}
+
 /// Calculate the interval between clock ticks for a given tempo,
 /// where tempo is expressed in centi-BPM (BPM x 100). Exposed for unit
 /// tests; the clock thread uses `tick_period_micros` directly so
@@ -47,10 +411,16 @@ pub fn tick_interval(centibpm: u32) -> Duration {
 /// is expressed in centi-BPM (BPM x 100).
 #[allow(dead_code)] // used by tests::web_tests
 pub fn pattern_wrap_duration(centibpm: u32, active_steps: u8, triplet: bool) -> Duration {
+    let pulse_count = pattern_wrap_pulses(active_steps, triplet);
+    Duration::from_micros(tick_period_micros(centibpm).saturating_mul(pulse_count))
+}
+
+/// MIDI Clock pulses in one pattern cycle. Normal steps consume six pulses;
+/// triplet steps consume eight.
+pub fn pattern_wrap_pulses(active_steps: u8, triplet: bool) -> u64 {
     let steps_per_beat = if triplet { 3 } else { 4 };
     let pulses_per_step = PPQN / steps_per_beat;
-    let pulse_count = active_steps.max(1) as u64 * pulses_per_step as u64;
-    Duration::from_micros(tick_period_micros(centibpm).saturating_mul(pulse_count))
+    active_steps.max(1) as u64 * pulses_per_step as u64
 }
 
 /// Integer tick period in microseconds for a centi-BPM tempo. Centi-BPM
@@ -78,14 +448,25 @@ struct SendRequest {
     done: Sender<Result<(), Td3Error>>,
 }
 
-/// Handle to a running clock thread. Call `stop()` (or drop) to shut
-/// it down cleanly - the thread emits MIDI Stop (0xFC) and joins.
-///
-/// Tempo state is stored as centi-BPM (BPM x 100) in an `AtomicU32`,
-/// giving 0.01 BPM resolution without floats.
-pub struct ClockRunner {
-    centibpm: Arc<AtomicU32>,
+struct ClockSignals {
+    start_sync: Arc<StartSync>,
+    pulse_sync: Arc<PulseSync>,
     stop: Arc<AtomicBool>,
+    abandon: Arc<AtomicBool>,
+}
+
+/// Handle to a clock thread. Call `stop()` (or drop) to shut it down cleanly.
+/// Once MIDI Start has been sent, the thread emits MIDI Stop (0xFC) and joins.
+///
+/// Tempo state uses integer centi-BPM (BPM x 100), giving 0.01 BPM
+/// resolution without floats. Successful pulses publish synchronization
+/// snapshots for tempo acknowledgements and wrap waiters.
+pub struct ClockRunner {
+    start_sync: Arc<StartSync>,
+    start_wait_timeout: Duration,
+    pulse_sync: Arc<PulseSync>,
+    stop: Arc<AtomicBool>,
+    abandon: Arc<AtomicBool>,
     /// Sender for the SysEx send queue. Handlers clone nothing -
     /// they hold `&ClockRunner` and submit through `send_blocking`.
     send_tx: Sender<SendRequest>,
@@ -100,36 +481,78 @@ impl ClockRunner {
         initial_centibpm: u32,
         start_delay: Duration,
     ) -> Result<Self, Td3Error> {
-        let centibpm = Arc::new(AtomicU32::new(initial_centibpm.max(1)));
+        let start_sync = Arc::new(StartSync::new());
+        let start_wait_timeout = start_delay.saturating_add(START_ACK_GRACE);
+        let pulse_sync = Arc::new(PulseSync::new(initial_centibpm));
         let stop = Arc::new(AtomicBool::new(false));
+        let abandon = Arc::new(AtomicBool::new(false));
         let (send_tx, send_rx) = mpsc::channel::<SendRequest>();
 
         let thread = {
-            let centibpm = Arc::clone(&centibpm);
+            let start_sync = Arc::clone(&start_sync);
+            let pulse_sync = Arc::clone(&pulse_sync);
             let stop = Arc::clone(&stop);
+            let abandon = Arc::clone(&abandon);
             thread::Builder::new()
                 .name("td3-midi-clock".into())
                 .spawn(move || {
                     let mut out = out_conn;
-                    run_clock(&mut out, centibpm, stop, send_rx, start_delay);
+                    run_clock(
+                        &mut out,
+                        initial_centibpm.max(1),
+                        ClockSignals {
+                            start_sync,
+                            pulse_sync,
+                            stop,
+                            abandon,
+                        },
+                        send_rx,
+                        start_delay,
+                    );
                     out
                 })
                 .map_err(|e| Td3Error::Midi(format!("failed to spawn MIDI clock thread: {}", e)))?
         };
 
         Ok(Self {
-            centibpm,
+            start_sync,
+            start_wait_timeout,
+            pulse_sync,
             stop,
+            abandon,
             send_tx,
             thread: Some(thread),
         })
     }
 
-    /// Update the tempo in centi-BPM (BPM x 100). Takes effect on the
-    /// next tick. The thread re-anchors its phase reference so the new
-    /// period applies from that moment (no accumulated drift catch-up).
-    pub fn set_centibpm(&self, new_centibpm: u32) {
-        self.centibpm.store(new_centibpm.max(1), Ordering::Release);
+    /// Return a monitor that resolves only after the clock thread has
+    /// successfully written MIDI Start, or reports why it could not start.
+    pub fn start_monitor(&self) -> ClockStartMonitor {
+        ClockStartMonitor {
+            shared: Arc::clone(&self.start_sync),
+            timeout: self.start_wait_timeout,
+        }
+    }
+
+    /// Queue a tempo in centi-BPM (BPM x 100) and return its revision.
+    /// The clock adopts the newest pending revision after a successful
+    /// pulse, then schedules the following pulse one full new period later.
+    pub fn set_centibpm(&self, new_centibpm: u32) -> u64 {
+        self.pulse_sync.request_tempo(new_centibpm)
+    }
+
+    pub fn pulse_monitor(&self) -> ClockPulseMonitor {
+        ClockPulseMonitor {
+            shared: Arc::clone(&self.pulse_sync),
+        }
+    }
+
+    /// Signal the clock thread and release synchronization waiters without
+    /// waiting for a potentially blocked MIDI driver call to return.
+    pub(crate) fn request_stop(&self) {
+        self.stop.store(true, Ordering::Release);
+        self.start_sync.mark_stopped();
+        self.pulse_sync.mark_stopped();
     }
 
     /// Enqueue a byte sequence to be sent on the clock thread's
@@ -167,8 +590,47 @@ impl ClockRunner {
     /// thread panicked (very unusual - `run_clock` cannot panic in
     /// normal operation).
     pub fn stop(mut self) -> Option<midir::MidiOutputConnection> {
-        self.stop.store(true, Ordering::Release);
+        self.request_stop();
         self.thread.take().and_then(|t| t.join().ok())
+    }
+
+    /// Signal shutdown and detach the OS thread when a MIDI driver call has
+    /// already exceeded its API timeout. The connection is discarded when
+    /// the thread eventually exits.
+    pub(crate) fn stop_detached(mut self, cleanup_pending: Arc<AtomicUsize>) {
+        self.abandon.store(true, Ordering::Release);
+        self.request_stop();
+        let Some(clock_thread) = self.thread.take() else {
+            return;
+        };
+        cleanup_pending.fetch_add(1, Ordering::AcqRel);
+        let holder = Arc::new(Mutex::new(Some(clock_thread)));
+        let worker_holder = Arc::clone(&holder);
+        let cleanup_flag = Arc::clone(&cleanup_pending);
+        let spawned = thread::Builder::new()
+            .name("td3-midi-clock-cleanup".to_string())
+            .spawn(move || {
+                let clock_thread = worker_holder
+                    .lock()
+                    .ok()
+                    .and_then(|mut holder| holder.take());
+                let Some(clock_thread) = clock_thread else {
+                    log::error!(
+                        "clock cleanup lost its join handle; MIDI reconnect remains blocked"
+                    );
+                    return;
+                };
+                let _ = clock_thread.join();
+                cleanup_flag.fetch_sub(1, Ordering::AcqRel);
+            });
+        if spawned.is_err() {
+            // Retain the join handle so neither it nor a completed thread's
+            // output connection can be dropped on the request thread.
+            std::mem::forget(holder);
+            log::error!(
+                "clock cleanup thread could not start; MIDI reconnect remains blocked for safety"
+            );
+        }
     }
 }
 
@@ -179,7 +641,7 @@ impl Drop for ClockRunner {
         // the thread and join so we never leak the OS thread or hold
         // the MIDI port open indefinitely. The connection drops with
         // the join result - reconnect will re-open the port.
-        self.stop.store(true, Ordering::Release);
+        self.request_stop();
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
@@ -194,11 +656,17 @@ impl SysexSender for ClockRunner {
 
 fn run_clock(
     out: &mut midir::MidiOutputConnection,
-    centibpm: Arc<AtomicU32>,
-    stop: Arc<AtomicBool>,
+    initial_centibpm: u32,
+    signals: ClockSignals,
     send_rx: Receiver<SendRequest>,
     start_delay: Duration,
 ) {
+    let ClockSignals {
+        start_sync,
+        pulse_sync,
+        stop,
+        abandon,
+    } = signals;
     // Raise Windows timer resolution to 1 ms for the whole playback
     // session. Kept alive in a local so `Drop` runs when this function
     // returns - after the final MIDI Stop - restoring the process-wide
@@ -216,45 +684,38 @@ fn run_clock(
 
     if !start_delay.is_zero() {
         let start_at = Instant::now() + start_delay;
-        sleep_until(start_at, &stop);
-        if stop.load(Ordering::Acquire) {
+        if !wait_for_scheduled_start(start_at, &stop) {
+            start_sync.mark_stopped();
+            pulse_sync.mark_stopped();
             return;
         }
     }
 
-    // Fire MIDI Start first so the device resets its clock division
-    // before the first 0xF8 arrives. Failure is logged but not fatal:
-    // some USB-MIDI stacks return transient errors that clear on the
-    // very next send, and the tick loop below will surface a real
-    // disconnect quickly anyway.
-    if let Err(e) = out.send(&[MIDI_START]) {
-        log::warn!("clock: MIDI Start send failed: {}", e);
+    // Fire MIDI Start first so the device resets its clock division before
+    // the first 0xF8 arrives. A failed Start is fatal because neither the
+    // device nor the HTTP caller can treat the transport as running.
+    if let Err(err) = out.send(&[MIDI_START]) {
+        let message = format!("MIDI Start send failed: {}", err);
+        log::warn!("clock: {}", message);
+        start_sync.mark_failed(message);
+        pulse_sync.mark_stopped();
+        return;
     }
+    start_sync.mark_started();
 
-    // Phase-locked schedule. `epoch` is the reference moment; tick N
-    // is scheduled at `epoch + N * period`. Tick 0 fires immediately
-    // after Start to match the prior `tokio::time::interval` behavior
-    // (which also fires the first tick on the same instant).
-    let mut epoch = Instant::now();
-    let mut tick_idx: u64 = 0;
-    let mut current_centibpm = centibpm.load(Ordering::Acquire).max(1);
+    // Tick zero fires immediately after Start. Stable-tempo deadlines remain
+    // phase-locked to the prior deadline. A tempo update is adopted only
+    // after a successful pulse and schedules the next pulse one complete new
+    // period later, preserving musical pulse position without a compressed
+    // double tick.
+    let mut next_deadline = Instant::now();
+    let mut pulse_index: u64 = 0;
+    let mut current_centibpm = initial_centibpm.max(1);
+    let mut current_tempo_revision = 0u64;
     let mut period_us = tick_period_micros(current_centibpm);
 
     while !stop.load(Ordering::Acquire) {
-        // Tempo change? Re-anchor to "now" so the new tempo applies from
-        // this moment - no catch-up burst from the old schedule.
-        let latest_centibpm = centibpm.load(Ordering::Acquire).max(1);
-        if latest_centibpm != current_centibpm {
-            current_centibpm = latest_centibpm;
-            period_us = tick_period_micros(current_centibpm);
-            epoch = Instant::now();
-            tick_idx = 0;
-        }
-
-        // Compute the deadline for this tick. `saturating_mul` guards
-        // against theoretical overflow on multi-year uninterrupted runs.
-        let elapsed = Duration::from_micros(period_us.saturating_mul(tick_idx));
-        let deadline = epoch + elapsed;
+        let mut deadline = next_deadline;
         let now = Instant::now();
 
         if deadline > now {
@@ -277,8 +738,7 @@ fn run_clock(
             // Fell more than one full period behind - re-anchor instead
             // of burst-firing the backlog. Burst-firing was exactly
             // what compressed the clock in the scope trace.
-            epoch = now;
-            tick_idx = 0;
+            deadline = now;
         }
         // else: we're late by <1 period - fire immediately, the phase
         // lock tightens over the next few ticks.
@@ -297,30 +757,45 @@ fn run_clock(
             break;
         }
 
-        tick_idx = tick_idx.saturating_add(1);
+        let sent_at = Instant::now();
+        let snapshot = pulse_sync.publish_pulse(
+            pulse_index,
+            current_epoch_micros(),
+            current_centibpm,
+            current_tempo_revision,
+        );
+        pulse_index = pulse_index.saturating_add(1);
+
+        let tempo_changed = snapshot.tempo_revision != current_tempo_revision;
+        current_centibpm = snapshot.centibpm;
+        current_tempo_revision = snapshot.tempo_revision;
+        period_us = tick_period_micros(current_centibpm);
+        next_deadline = next_tick_deadline(deadline, sent_at, period_us, tempo_changed);
 
         // After the tick, drain any queued SysEx sends until close to
         // the next deadline. Handlers (e.g. pattern save during the
         // progression hot-swap) wait on the reply channel.
-        drain_send_queue(out, &send_rx, epoch, period_us, tick_idx);
+        drain_send_queue(out, &send_rx, next_deadline, &stop, &abandon);
     }
 
-    // Drain any remaining queued sends before the port closes so
-    // handlers don't hang on their completion receiver. They'll see
-    // an error because we're already past the tick loop, but a real
-    // reply (or failure) is better than a timeout.
+    pulse_sync.mark_stopped();
+
+    let abandoned = abandon.load(Ordering::Acquire);
+    let shutdown_message = if abandoned {
+        "clock transport was abandoned after a MIDI timeout"
+    } else {
+        "clock transport stopped before queued send"
+    };
     while let Ok(req) = send_rx.try_recv() {
-        let result = out
-            .send(&req.bytes)
-            .map_err(|e| Td3Error::Midi(format!("queued send during shutdown: {}", e)));
-        let _ = req.done.send(result);
+        let _ = req
+            .done
+            .send(Err(Td3Error::Midi(shutdown_message.to_string())));
     }
 
-    // Always attempt MIDI Stop on the way out, even after a send
-    // failure above - the driver may have recovered, and emitting a
-    // stray 0xFC is cheap.
-    if let Err(e) = out.send(&[MIDI_STOP]) {
-        log::warn!("clock: MIDI Stop send failed: {}", e);
+    if !abandoned {
+        if let Err(e) = out.send(&[MIDI_STOP]) {
+            log::warn!("clock: MIDI Stop send failed: {}", e);
+        }
     }
     // `out` drops here - the MIDI connection closes.
 }
@@ -331,13 +806,15 @@ fn run_clock(
 fn drain_send_queue(
     out: &mut midir::MidiOutputConnection,
     send_rx: &Receiver<SendRequest>,
-    epoch: Instant,
-    period_us: u64,
-    next_tick_idx: u64,
+    next_deadline: Instant,
+    stop: &AtomicBool,
+    abandon: &AtomicBool,
 ) {
-    let next_deadline = epoch + Duration::from_micros(period_us.saturating_mul(next_tick_idx));
-
     loop {
+        if queued_send_rejection(stop, abandon).is_some() {
+            return;
+        }
+
         // Bail out if we're already close to the next deadline. The
         // check is at the top of each iteration so a send that ran
         // long doesn't cause us to start another one.
@@ -348,6 +825,10 @@ fn drain_send_queue(
 
         match send_rx.try_recv() {
             Ok(req) => {
+                if let Some(message) = queued_send_rejection(stop, abandon) {
+                    let _ = req.done.send(Err(Td3Error::Midi(message.to_string())));
+                    return;
+                }
                 let result = out
                     .send(&req.bytes)
                     .map_err(|e| Td3Error::Midi(format!("queued send failed: {}", e)));
@@ -357,5 +838,62 @@ fn drain_send_queue(
             }
             Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => return,
         }
+    }
+}
+
+pub(crate) fn queued_send_rejection(
+    stop: &AtomicBool,
+    abandon: &AtomicBool,
+) -> Option<&'static str> {
+    if abandon.load(Ordering::Acquire) {
+        Some("clock transport was abandoned after a MIDI timeout")
+    } else if stop.load(Ordering::Acquire) {
+        Some("clock transport stopped before queued send")
+    } else {
+        None
+    }
+}
+
+fn current_epoch_micros() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_micros().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
+}
+
+pub(crate) fn wait_for_scheduled_start(deadline: Instant, stop: &AtomicBool) -> bool {
+    loop {
+        if stop.load(Ordering::Acquire) {
+            return false;
+        }
+
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return true;
+        }
+
+        if remaining <= SCHEDULE_PRECISION_WINDOW {
+            sleep_until(deadline, stop);
+            return !stop.load(Ordering::Acquire);
+        }
+
+        let coarse_wait = remaining
+            .saturating_sub(SCHEDULE_PRECISION_WINDOW)
+            .min(SCHEDULE_STOP_POLL_INTERVAL);
+        thread::sleep(coarse_wait);
+    }
+}
+
+pub(crate) fn next_tick_deadline(
+    scheduled_deadline: Instant,
+    sent_at: Instant,
+    period_us: u64,
+    tempo_changed: bool,
+) -> Instant {
+    let period = Duration::from_micros(period_us);
+    if tempo_changed {
+        sent_at + period
+    } else {
+        scheduled_deadline + period
     }
 }

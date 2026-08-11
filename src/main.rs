@@ -9,14 +9,17 @@ mod error;
 mod formats;
 mod launcher;
 mod library;
+mod midi_diagnostics;
 mod midi_exchange_lock;
 mod midi_io;
 mod midi_ports;
 mod midi_session;
 mod path_safety;
 mod pattern;
+mod startup_log;
 mod step;
 mod td3_protocol;
+mod triplet_morph;
 mod web;
 
 #[cfg(test)]
@@ -47,6 +50,10 @@ fn main() {
                 _ => 1,
             };
             eprintln!("error: {}", err);
+            // The launcher spawns this process and exits without ever
+            // learning whether it started, so the failure also goes to a
+            // file the user can read afterwards.
+            startup_log::record(&err.to_string(), exit_code);
             std::process::exit(exit_code);
         }
     }

@@ -72,14 +72,14 @@ pub(super) async fn play_item(
     // `/api/transport/start` path produces.
     let started_at_epoch_ms = crate::web::handlers::current_epoch_millis_for_clock();
     let transport_id = crate::web::handlers::next_transport_id(&state);
-    let runner = spawn_clock_runner(&state, centibpm, std::time::Duration::ZERO).await?;
-    *state.playback.clock.lock().await = Some(ClockState {
+    start_clock_transport(
+        &state,
         centibpm,
         started_at_epoch_ms,
         transport_id,
-        playing: true,
-        runner: Some(runner),
-    });
+        std::time::Duration::ZERO,
+    )
+    .await?;
 
     *state.playback.playing_item_id.lock().await = Some(id.clone());
 

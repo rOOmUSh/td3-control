@@ -50,40 +50,45 @@ function test(name, fn) {
 
 console.log('step-highlight tests:');
 
-test('applyStepHighlight stores original backgrounds and adds active classes', () => {
+test('applyStepHighlight adds only the semantic active class', () => {
     const card = makeCard(['step-card', 'bg-surface-container-highest', 'step-downbeat']);
 
     applyStepHighlight(card);
 
-    assert(card.dataset.origBg === 'bg-surface-container-highest', 'original bg stored');
-    assert(!has(card, 'bg-surface-container-highest'), 'original bg removed');
-    assert(has(card, 'bg-primary-fixed'), 'active bg added');
+    assert(has(card, 'bg-surface-container-highest'), 'original bg preserved');
     assert(has(card, 'step-active'), 'step-active added');
+    assert(!has(card, 'step-pulse'), 'pulse class not added');
+    assert(!has(card, 'led-glow-green-bright'), 'extra glow class not added');
+    assert(!has(card, 'bg-primary-fixed'), 'active background utility not added');
     assert(has(card, 'step-downbeat'), 'non-bg classes preserved');
+    assert(card.dataset.origBg === undefined, 'no background bookkeeping stored');
 });
 
-test('restoreStepHighlight removes active bg and restores original background', () => {
+test('restoreStepHighlight removes active state without changing the base card', () => {
     const card = makeCard(['step-card', 'step-downbeat', 'bg-surface-container-highest']);
 
     applyStepHighlight(card);
     restoreStepHighlight(card);
 
     assert(!has(card, 'step-active'), 'step-active removed');
-    assert(!has(card, 'step-pulse'), 'step-pulse removed');
-    assert(!has(card, 'led-glow-green-bright'), 'glow removed');
-    assert(!has(card, 'bg-primary-fixed'), 'active bg removed');
-    assert(has(card, 'bg-surface-container-highest'), 'original bg restored');
+    assert(has(card, 'bg-surface-container-highest'), 'original bg remains');
     assert(has(card, 'step-downbeat'), 'downbeat class preserved');
-    assert(card.dataset.origBg === undefined, 'origBg cleared after restore');
+    assert(card.dataset.origBg === undefined, 'no background bookkeeping created');
 });
 
-test('restoreStepHighlight clears stale active bg even when no origBg is stored', () => {
-    const card = makeCard(['step-card', 'bg-primary-fixed', 'step-active', 'step-downbeat']);
+test('apply and restore are idempotent', () => {
+    const card = makeCard(['step-card', 'bg-surface-container-high', 'step-downbeat']);
+
+    applyStepHighlight(card);
+    applyStepHighlight(card);
+    assert(has(card, 'step-active'), 'repeated apply leaves card active');
+    assert(has(card, 'bg-surface-container-high'), 'repeated apply preserves base bg');
 
     restoreStepHighlight(card);
+    restoreStepHighlight(card);
 
-    assert(!has(card, 'bg-primary-fixed'), 'stale active bg removed');
-    assert(!has(card, 'step-active'), 'stale active class removed');
+    assert(!has(card, 'step-active'), 'repeated restore leaves card inactive');
+    assert(has(card, 'bg-surface-container-high'), 'repeated restore preserves base bg');
     assert(has(card, 'step-downbeat'), 'downbeat class preserved');
 });
 

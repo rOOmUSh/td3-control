@@ -137,6 +137,19 @@ The progression page offers multiple listening paths:
 
 All preview paths are coordinated so only one preview mode is active at a time.
 
+When `LIVE` is off, TD-3 acid-pattern preview, selected bassline-archetype preview, and full progression playback use non-saving host audition. They share the same session `GATE` value as the Control page. Changing gate while one of these paths is active waits for the current Note Off and updates later notes without restarting playback.
+
+The `TRIPLET` morph control is also available on this page while `LIVE`
+is off. It applies to all three of those audition paths and warps them
+from a straight feel toward a triplet feel without changing tempo, bar
+length, or the stored patterns. The amount is separate from the Control
+page's amount, because a morph is only valid against the exact patterns
+it was started on. Editing a pattern row is refused while the knob is
+between `1%` and `99%`, and limited to the surviving notes at `100%`.
+See [Triplet Morph](TRIPLET_MORPH.md).
+
+WebAudio MIDI preview is unchanged and does not use the host-audition gate setting. Device-sequenced preview while `LIVE` is on is also unchanged.
+
 ## Export and Packaging
 
 Progression packages are exported as ZIP archives by the backend module in `src/web/package_export.rs`.

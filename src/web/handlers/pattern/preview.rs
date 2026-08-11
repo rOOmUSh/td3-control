@@ -54,14 +54,14 @@ pub async fn pattern_play_preview(
 
     let started_at_epoch_ms = current_epoch_millis();
     let transport_id = next_transport_id(&state);
-    let runner = spawn_clock_runner(&state, centibpm, Duration::ZERO).await?;
-    *state.playback.clock.lock().await = Some(ClockState {
+    start_clock_transport(
+        &state,
         centibpm,
         started_at_epoch_ms,
         transport_id,
-        playing: true,
-        runner: Some(runner),
-    });
+        Duration::ZERO,
+    )
+    .await?;
 
     *state.playback.playing_item_id.lock().await = None;
 

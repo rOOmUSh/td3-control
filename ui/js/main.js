@@ -10,7 +10,14 @@ import * as multipatternDeviceIo from './multipattern/multipattern-device-io.js'
 import * as multipatternTimeline from './multipattern/multipattern-timeline.js';
 import * as multipatternPreview from './multipattern/multipattern-preview.js';
 import * as multipatternReset from './multipattern/multipattern-reset.js';
-import { buildRbsExportPayload, buildSingleFileExportPlan } from './multipattern/multipattern-export.js';
+import {
+    buildRbsExportFilename,
+    buildRbsExportPayload,
+    buildSingleFileExportPlan,
+    formatPatternExportTimestamp,
+    PATTERN_SET_NAME_INPUT_MAX_LENGTH,
+    sanitizePatternSetName,
+} from './multipattern/multipattern-export.js';
 import { detectImportFormat, unsupportedImportMessage } from './multipattern/multipattern-import.js';
 import * as transport from './transport.js';
 import * as remoteSync from './remote-sync.js';
@@ -21,16 +28,25 @@ import * as keyboard from './keyboard.js';
 import * as history from './history.js';
 import * as deviceBackup from './device-backup.js';
 import { resolveLiveUpdateTargetIndex } from './multipattern/live-update-target.js';
+import * as tripletMorphSend from './multipattern/triplet-morph-send.js';
 import { api } from './api.js';
 import { bankApi } from './bank/bank-api.js';
+import { promptModal } from './bank/bank-modal.js';
 import { subscribeControlQueue } from './shared/add-to-control.js';
-import { loadAppConfig, applyUiDefaults } from './app-config.js';
+import { loadAppConfig, getAppConfig, applyUiDefaults } from './app-config.js';
 import { openImportBankPicker } from './import-bank-picker.js';
 import { detectKey, formatKey, buildPitchClassHistogram, CONFIDENCE_HIGH } from './key-detection.js';
 import { rankScales, applyRankedOrder, resetToDefaultOrder } from './scale-ranking.js';
 import { getAllScales, getTagGroups } from './scales.js';
 import { formatPatternAsStepsTxt } from './shared/steps-txt-format.js';
-import { parseStepsTxt, looksLikeStepsTxt } from './shared/steps-txt-parse.js';
+import { parseStepsTxtDocument, looksLikeStepsTxt } from './shared/steps-txt-parse.js';
+import { initMidiChannelControl } from './shared/midi-channel-control.js';
+import { initGateControl } from './shared/gate-control.js';
+import { initTripletMorphControl } from './shared/triplet-morph-control.js';
+import { initTripletMorphEndpointToggle } from './shared/triplet-morph-toggle.js';
+import * as tripletMorphView from './multipattern/triplet-morph-view.js';
+import { morphEditNotice } from './shared/triplet-morph-editing.js';
+import { runDownloadBatches } from './shared/download-batches.js';
 
 // Write the focused pattern to the OS clipboard as `.steps.txt` text so the
 // user can paste the pattern into any text target (Notepad, chat, email).
@@ -43,7 +59,7 @@ async function copyFocusedPatternToSystemClipboard() {
         if (focused === null) return false;
         const pat = state.getPattern(focused);
         if (!pat) return false;
-        await navigator.clipboard.writeText(formatPatternAsStepsTxt(pat));
+        await navigator.clipboard.writeText(formatPatternAsStepsTxt(pat, state.getBpm()));
         return true;
     } catch (_) {
         return false;
@@ -59,8 +75,9 @@ async function tryPasteFromSystemClipboard(focusedIdx) {
         if (!navigator.clipboard || !navigator.clipboard.readText) return false;
         const text = await navigator.clipboard.readText();
         if (!looksLikeStepsTxt(text)) return false;
-        const pat = parseStepsTxt(text);
-        state.setPattern(focusedIdx, pat);
+        const { pattern, centibpm } = parseStepsTxtDocument(text);
+        if (centibpm !== null) transport.applyImportedBpm(centibpm);
+        state.setPattern(focusedIdx, pattern);
         return true;
     } catch (_) {
         return false;
@@ -70,6 +87,7 @@ async function tryPasteFromSystemClipboard(focusedIdx) {
 const statusLog = document.getElementById('status-log');
 const activeStepsInput = document.getElementById('active-steps');
 const tripletToggle = document.getElementById('triplet-toggle');
+const tripletMorphSendToggle = document.getElementById('triplet-morph-send');
 const btnReset = document.getElementById('btn-reset');
 const btnLive = document.getElementById('btn-live');
 const slicerInput = document.getElementById('slicer-input');
@@ -167,27 +185,130 @@ function scheduleLiveSave() {
     }, 150);
 }
 
+// Latest-wins guard for the LIVE ON sequence: a rapid double click
+// supersedes the older transition so a stale morph audition can never be
+// re-enabled after LIVE becomes ON.
+let liveToggleGeneration = 0;
+let liveTransitionTarget = null;
+
 async function toggleLiveUpdate() {
-    const next = !state.isLiveUpdate();
-    state.setLiveUpdate(next);
+    const current = liveTransitionTarget ?? state.isLiveUpdate();
+    const next = !current;
+    liveTransitionTarget = next;
+    const generation = ++liveToggleGeneration;
     if (!next) {
+        state.setLiveUpdate(false);
         cancelLiveSave();
         setStatus('Live update OFF');
+        if (generation === liveToggleGeneration) liveTransitionTarget = null;
         return;
     }
 
+    // LIVE ON with a morph audition possibly running: stop and silence
+    // host audition, restore the canonical view, reset the morph amount,
+    // and only then allow normal LIVE behavior.
     try {
         await multipatternPreview.stop();
         await transport.stopPlaybackForModeChange();
+        if (state.isTripletMorphActive()) {
+            try { await api.auditionStop(); } catch (_) { /* already idle */ }
+        }
+        if (generation !== liveToggleGeneration) return;
+        state.resetTripletMorphSession();
+        state.setLiveUpdate(true);
         await saveLivePatternNow('Live update ON, sent');
     } catch (err) {
         setStatus('Live update ON, send error: ' + err.message);
+    } finally {
+        if (generation === liveToggleGeneration) liveTransitionTarget = null;
     }
 }
 
 // Update the LIVE button appearance
 function updateLiveBtn() {
     btnLive.classList.toggle('is-active', state.isLiveUpdate());
+    gateControl.render();
+    midiChannelControl.render();
+    tripletMorphControl.render();
+    tripletMorphEndpointToggle.render();
+}
+
+const gateControl = initGateControl({
+    getValue: () => state.getGatePercent(),
+    setValue: (value) => state.setGatePercent(value),
+    isVisible: () => !state.isLiveUpdate(),
+    onValueChange: () => {
+        transport.syncAuditionPattern();
+        multipatternPreview.syncActiveAudition();
+    },
+});
+
+// The device only sounds channel-voice messages on its own channel, and
+// only host audition sends those, so the selector follows the GATE knob
+// in appearing when Live Update is off. A change takes effect on the
+// next audition request; nothing is restarted.
+const midiChannelControl = initMidiChannelControl({
+    getValue: () => state.getMidiChannel(),
+    setValue: (value) => state.setMidiChannel(value),
+    isVisible: () => !state.isLiveUpdate(),
+    onValueChange: () => {
+        transport.syncAuditionPattern();
+        multipatternPreview.syncActiveAudition();
+    },
+});
+
+
+// Shared by the TRIPLET knob and its endpoint toggle: apply the amount
+// with one refusal message, and resync audition on any real change.
+function setTripletMorphAmount(value) {
+    const before = state.getTripletMorphPercent();
+    state.setTripletMorphPercent(value);
+    if (state.getTripletMorphPercent() === before
+        && Number(value) > 0
+        && !state.isTripletMorphSourceEligible()) {
+        setStatus('TRIPLET morph needs 16-step straight patterns');
+    }
+}
+
+function onTripletMorphAmountChange(value) {
+    if (value > 0) {
+        setStatus('Triplet audition is derived. Return TRIPLET to 0 to edit.');
+    } else {
+        setStatus('TRIPLET morph off - canonical view restored');
+    }
+    transport.syncAuditionPattern();
+    multipatternPreview.syncActiveAudition();
+}
+
+const tripletMorphControl = initTripletMorphControl({
+    getValue: () => state.getTripletMorphPercent(),
+    setValue: setTripletMorphAmount,
+    isVisible: () => !state.isLiveUpdate(),
+    onValueChange: onTripletMorphAmountChange,
+});
+
+const tripletMorphEndpointToggle = initTripletMorphEndpointToggle({
+    getValue: () => state.getTripletMorphPercent(),
+    setValue: setTripletMorphAmount,
+    onValueChange: onTripletMorphAmountChange,
+});
+
+// Editing gate across the morph range. At 0 everything is allowed. At
+// the 100 endpoint, per-step edits and randomizers are allowed and
+// restrict themselves to the surviving notes. Between 1 and 99 the
+// positions are mid-transform and nothing may change.
+//
+// Bulk operations that move or replace whole patterns (shift, transpose,
+// reset, add, delete, import, undo, redo, paste, active steps, native
+// triplet) stay blocked at the endpoint: they would rewrite the losing
+// notes too and scramble the derived mapping.
+function canonicalEditBlocked({ allowedAtEndpoint = false } = {}) {
+    const amount = state.getTripletMorphPercent();
+    if (amount === 0) return false;
+    if (amount >= 100 && allowedAtEndpoint) return false;
+    const notice = morphEditNotice(amount);
+    if (notice) setStatus(notice);
+    return true;
 }
 
 // Update slicer button appearance
@@ -243,6 +364,7 @@ state.onChange((patternChanged) => {
     updateSlicerBtn();
     updateKbToggles();
 //    updateBankDisplay();
+    if (tripletMorphSendToggle) tripletMorphSendToggle.checked = state.isTripletMorphSend();
     const tripletAllOn = isTripletAllOnForTargets();
     tripletToggle.textContent = tripletAllOn ? 'ON' : 'OFF';
     tripletToggle.classList.toggle('is-active', tripletAllOn);
@@ -274,6 +396,7 @@ document.addEventListener('keydown', async (e) => {
 
     if (k === 'z' && !e.shiftKey) {
         e.preventDefault();
+        if (canonicalEditBlocked()) return;
         const snap = await history.undo('multipattern');
         if (snap) {
             isRestoring = true;
@@ -286,6 +409,7 @@ document.addEventListener('keydown', async (e) => {
         }
     } else if (k === 'y' || (k === 'z' && e.shiftKey)) {
         e.preventDefault();
+        if (canonicalEditBlocked()) return;
         const snap = await history.redo('multipattern');
         if (snap) {
             isRestoring = true;
@@ -310,6 +434,7 @@ document.addEventListener('keydown', async (e) => {
     } else if (k === 'v' && !e.shiftKey && !e.altKey) {
         if (inEditableTarget(e)) return;
         e.preventDefault();
+        if (canonicalEditBlocked()) return;
         const cur = state.getFocusedIdx();
         if (cur === null) { setStatus('Nothing focused to paste into'); return; }
         // Prefer the OS clipboard when it holds a valid .steps.txt body so
@@ -330,6 +455,7 @@ document.addEventListener('keydown', async (e) => {
 // user accepts the conflict-resolution rule (bump global → all patterns
 // follow; ctrl-z to revert if it wasn't intended).
 activeStepsInput.addEventListener('change', () => {
+    if (canonicalEditBlocked()) return;
     state.setAllActiveSteps(parseInt(activeStepsInput.value) || 16);
 });
 
@@ -338,6 +464,7 @@ activeStepsInput.addEventListener('change', () => {
 // from scrolling while the pointer sits over the input.
 activeStepsInput.addEventListener('wheel', (e) => {
     e.preventDefault();
+    if (canonicalEditBlocked()) return;
     const cur = state.getMaxActiveSteps();
     // deltaY < 0 → wheel up → increase steps.
     const delta = e.deltaY < 0 ? 1 : -1;
@@ -349,16 +476,66 @@ activeStepsInput.addEventListener('wheel', (e) => {
 //   ≥1 checked → toggle just those, else → toggle every pattern.
 // Display reflects the aggregate: ON only when every target is ON;
 // any mixed/all-OFF state shows OFF, so a click flips the herd to ON.
-tripletToggle.addEventListener('click', () => {
+// Both TRIPLET buttons - the global one here and the per-pattern one in
+// the row module - route through this so morph send behaves identically
+// whichever is pressed. Each caller supplies its own `useMorph`: the
+// global checkbox for the global button, the row checkbox for its row,
+// so one pattern can be projected while its neighbours are not.
+//
+// Switching off always tries to restore first, whatever the checkbox
+// says now: a projection is undone because this session made it, not
+// because a mode happens to be set.
+async function applyTripletPress(targets, next, useMorph) {
+    if (!next) {
+        const restored = tripletMorphSend.restoreProjectedSources(state, targets);
+        const remaining = targets.filter((index) => !restored.includes(index));
+        if (remaining.length > 0) state.setTripletBulk(remaining, false);
+        return { restored, morphed: [], skipped: [] };
+    }
+    if (!useMorph) {
+        state.setTripletBulk(targets, true);
+        return { restored: [], morphed: [], skipped: [] };
+    }
+    const { morphed, skipped } = await tripletMorphSend.applyEndpointProjection(state, targets);
+    // An ineligible source or an unavailable plan still gets the press it
+    // was given, as the plain triplet flag.
+    if (skipped.length > 0) state.setTripletBulk(skipped, true);
+    return { restored: [], morphed, skipped };
+}
+
+function tripletPressLabel(next, outcome) {
+    if (!next) {
+        return outcome.restored.length > 0
+            ? `Triplet OFF, ${outcome.restored.length} restored to 16 steps`
+            : 'Triplet OFF';
+    }
+    if (outcome.morphed.length > 0 && outcome.skipped.length > 0) {
+        return `Triplet ON, ${outcome.morphed.length} morphed, ${outcome.skipped.length} flag only`;
+    }
+    if (outcome.morphed.length > 0) return 'Triplet ON, morphed to 12 steps';
+    return 'Triplet ON';
+}
+
+export async function pressTripletFor(indices, next, useMorph) {
+    return applyTripletPress(indices, next, useMorph);
+}
+
+tripletToggle.addEventListener('click', async () => {
+    if (canonicalEditBlocked()) return;
     const targets = bulkTargets();
     if (targets.length === 0) return;
     const next = !targets.every((i) => state.getTriplet(i));
-    state.setTripletBulk(targets, next);
+    const outcome = await applyTripletPress(targets, next, state.isTripletMorphSend());
     if (remoteSync.isEnabled()) {
         remoteSync.relayTriplet(next)
             .catch(err => setStatus('Remote triplet error: ' + err.message));
     }
-    setStatus(bulkLabel(`Triplet ${next ? 'ON' : 'OFF'}`));
+    setStatus(bulkLabel(tripletPressLabel(next, outcome)));
+});
+
+tripletMorphSendToggle?.addEventListener('change', () => {
+    state.setTripletMorphSend(!!tripletMorphSendToggle.checked);
+    setStatus(`Triplet morph send ${tripletMorphSendToggle.checked ? 'ON' : 'OFF'}`);
 });
 
 function isTripletAllOnForTargets() {
@@ -384,11 +561,11 @@ slicerInput.addEventListener('input', () => {
 // RST / SL / AC - direct-action randomizers. Each click shuffles only
 // its attribute family on the current pattern using the configured slider
 // percentage and the current slicer window.
-btnRandRst.addEventListener('click', () => { randomize.randomizeCategory('rst'); setStatus('Randomized rests'); });
-btnRandSl.addEventListener('click',  () => { randomize.randomizeCategory('sl');  setStatus('Randomized slides'); });
-btnRandAcc.addEventListener('click', () => { randomize.randomizeCategory('ac');  setStatus('Randomized accents'); });
+btnRandRst.addEventListener('click', () => { if (canonicalEditBlocked({ allowedAtEndpoint: true })) return; randomize.randomizeCategory('rst'); setStatus('Randomized rests'); });
+btnRandSl.addEventListener('click',  () => { if (canonicalEditBlocked({ allowedAtEndpoint: true })) return; randomize.randomizeCategory('sl');  setStatus('Randomized slides'); });
+btnRandAcc.addEventListener('click', () => { if (canonicalEditBlocked({ allowedAtEndpoint: true })) return; randomize.randomizeCategory('ac');  setStatus('Randomized accents'); });
 if (btnRandUd) {
-    btnRandUd.addEventListener('click', () => { randomize.randomizeCategory('ud'); setStatus('Randomized UP/DOWN'); });
+    btnRandUd.addEventListener('click', () => { if (canonicalEditBlocked({ allowedAtEndpoint: true })) return; randomize.randomizeCategory('ud'); setStatus('Randomized UP/DOWN'); });
 }
 
 // Shift steps - toolbar bulk: ≥1 checked → just those, else ALL patterns.
@@ -403,14 +580,15 @@ function bulkLabel(suffix) {
     const checked = state.getCheckedSet().size;
     return checked > 0 ? `${suffix} (${checked} checked)` : `${suffix} (all)`;
 }
-btnShiftBack4.addEventListener('click', () => { state.shiftStepsBulk(bulkTargets(), -4); setStatus(bulkLabel('Shifted back 4')); });
-btnShiftBack2.addEventListener('click', () => { state.shiftStepsBulk(bulkTargets(), -2); setStatus(bulkLabel('Shifted back 2')); });
-btnShiftBack1.addEventListener('click', () => { state.shiftStepsBulk(bulkTargets(), -1); setStatus(bulkLabel('Shifted back 1')); });
-btnShiftFwd1.addEventListener('click',  () => { state.shiftStepsBulk(bulkTargets(),  1); setStatus(bulkLabel('Shifted forward 1')); });
-btnShiftFwd2.addEventListener('click',  () => { state.shiftStepsBulk(bulkTargets(),  2); setStatus(bulkLabel('Shifted forward 2')); });
-btnShiftFwd4.addEventListener('click',  () => { state.shiftStepsBulk(bulkTargets(),  4); setStatus(bulkLabel('Shifted forward 4')); });
+btnShiftBack4.addEventListener('click', () => { if (canonicalEditBlocked()) return; state.shiftStepsBulk(bulkTargets(), -4); setStatus(bulkLabel('Shifted back 4')); });
+btnShiftBack2.addEventListener('click', () => { if (canonicalEditBlocked()) return; state.shiftStepsBulk(bulkTargets(), -2); setStatus(bulkLabel('Shifted back 2')); });
+btnShiftBack1.addEventListener('click', () => { if (canonicalEditBlocked()) return; state.shiftStepsBulk(bulkTargets(), -1); setStatus(bulkLabel('Shifted back 1')); });
+btnShiftFwd1.addEventListener('click',  () => { if (canonicalEditBlocked()) return; state.shiftStepsBulk(bulkTargets(),  1); setStatus(bulkLabel('Shifted forward 1')); });
+btnShiftFwd2.addEventListener('click',  () => { if (canonicalEditBlocked()) return; state.shiftStepsBulk(bulkTargets(),  2); setStatus(bulkLabel('Shifted forward 2')); });
+btnShiftFwd4.addEventListener('click',  () => { if (canonicalEditBlocked()) return; state.shiftStepsBulk(bulkTargets(),  4); setStatus(bulkLabel('Shifted forward 4')); });
 if (btnShuffleAll) {
     btnShuffleAll.addEventListener('click', () => {
+        if (canonicalEditBlocked()) return;
         state.shuffleStepsBulk(bulkTargets());
         setStatus(bulkLabel('Shuffled steps'));
     });
@@ -418,10 +596,10 @@ if (btnShuffleAll) {
 
 // Transpose ±1 / ±12 semitones - mutates step.note only, preserves
 // step.transpose. Same checked-or-all semantics as SHIFT.
-btnTrnspsUp.addEventListener('click',   () => { state.transposeBulk(bulkTargets(), +1);  setStatus(bulkLabel('Transposed +1')); });
-btnTrnspsDn.addEventListener('click',   () => { state.transposeBulk(bulkTargets(), -1);  setStatus(bulkLabel('Transposed −1')); });
-btnTrnspsUp12.addEventListener('click', () => { state.transposeBulk(bulkTargets(), +12); setStatus(bulkLabel('Transposed +12')); });
-btnTrnspsDn12.addEventListener('click', () => { state.transposeBulk(bulkTargets(), -12); setStatus(bulkLabel('Transposed −12')); });
+btnTrnspsUp.addEventListener('click',   () => { if (canonicalEditBlocked()) return; state.transposeBulk(bulkTargets(), +1);  setStatus(bulkLabel('Transposed +1')); });
+btnTrnspsDn.addEventListener('click',   () => { if (canonicalEditBlocked()) return; state.transposeBulk(bulkTargets(), -1);  setStatus(bulkLabel('Transposed −1')); });
+btnTrnspsUp12.addEventListener('click', () => { if (canonicalEditBlocked()) return; state.transposeBulk(bulkTargets(), +12); setStatus(bulkLabel('Transposed +12')); });
+btnTrnspsDn12.addEventListener('click', () => { if (canonicalEditBlocked()) return; state.transposeBulk(bulkTargets(), -12); setStatus(bulkLabel('Transposed −12')); });
 
 // Keyboard edit toggles
 btnKbEdit.addEventListener('click', () => {
@@ -438,6 +616,7 @@ btnAutoStep.addEventListener('click', () => {
 // RESET button uses checked patterns when checks are active, otherwise the
 // full pattern list.
 btnReset.addEventListener('click', () => {
+    if (canonicalEditBlocked()) return;
     const result = multipatternReset.resetCheckedOrAll(state);
     setStatus(result.mode === 'all'
         ? 'All patterns reset'
@@ -560,7 +739,10 @@ function applyKeyDetection(pattern) {
 const btnImport = document.getElementById('btn-import');
 const fileImport = document.getElementById('file-import');
 
-btnImport.addEventListener('click', () => fileImport.click());
+btnImport.addEventListener('click', () => {
+    if (canonicalEditBlocked()) return;
+    fileImport.click();
+});
 
 fileImport.addEventListener('change', async () => {
     const files = Array.from(fileImport.files || []);
@@ -623,6 +805,9 @@ fileImport.addEventListener('change', async () => {
                     payload.content = await file.text();
                 }
                 const res = await api.importPattern(payload);
+                if (res.centibpm !== null && res.centibpm !== undefined) {
+                    transport.applyImportedBpm(res.centibpm);
+                }
                 const idx = state.appendPattern(res.pattern);
                 if (idx == null) {
                     capHit = true;
@@ -652,9 +837,19 @@ fileImport.addEventListener('change', async () => {
     fileImport.value = '';
 });
 
+function patternExportNamePromptEnabled() {
+    const value = getAppConfig()?.uiPatternExportNamePrompt;
+    return value === undefined || value === null ? true : Boolean(value);
+}
+
+function patternExportBatchDelayMs() {
+    const value = Number(getAppConfig()?.uiPatternExportBatchDelayMs);
+    return Number.isInteger(value) && value >= 0 ? value : 2000;
+}
+
 // Export pattern - dropdown delegates per-format click to /api/pattern/export
-// and triggers a browser download. Filename encodes current sidebar selection
-// so round-tripped files stay distinguishable.
+// and triggers browser downloads. Each export captures one shared filename
+// component so every selected pattern remains visibly part of the same set.
 const exportPanel = document.getElementById('export-format-panel');
 if (exportPanel) {
     exportPanel.addEventListener('click', async (ev) => {
@@ -662,11 +857,29 @@ if (exportPanel) {
         if (!btn) return;
         const format = btn.dataset.format;
         const ext = btn.dataset.ext || format;
+        const clickedAt = formatPatternExportTimestamp();
         try {
+            let patternSetName = clickedAt;
+            if (patternExportNamePromptEnabled()) {
+                const enteredName = await promptModal({
+                    title: 'Export Patterns',
+                    label: 'Pattern set name',
+                    placeholder: 'Enter a pattern set name',
+                    okLabel: 'Export',
+                    cancelLabel: 'Cancel',
+                    inputId: 'pattern-export-name',
+                    inputMaxLength: PATTERN_SET_NAME_INPUT_MAX_LENGTH,
+                    cancelDanger: true,
+                    cancelClassName: 'td3-toolbar-btn td3-toolbar-btn--secondary tactile-button',
+                    okClassName: 'td3-toolbar-btn td3-toolbar-btn--primary pattern-export-submit tactile-button',
+                    noScrim: false,
+                    isValueAllowed: value => sanitizePatternSetName(value).length > 0,
+                });
+                if (enteredName === null) return;
+                patternSetName = sanitizePatternSetName(enteredName);
+            }
+
             setStatus(`Exporting ${format}...`);
-            const g = state.getGroup();
-            const p = state.getPatternNum();
-            const s = state.getSide();
             if (format === 'rbs') {
                 const exportData = buildRbsExportPayload(
                     state.getPatterns(),
@@ -680,10 +893,7 @@ if (exportPanel) {
                     patterns: exportData.payload.patterns,
                     rbs_mode: exportData.payload.rbs_mode,
                 });
-                const mode = exportData.payload.rbs_mode.toLowerCase();
-                const filename = exportData.count > 1
-                    ? `patterns_${mode}_${exportData.count}.${ext}`
-                    : `pattern_G${g}P${p}${s}.${ext}`;
+                const filename = buildRbsExportFilename(patternSetName, ext);
                 downloadBlob(blob, filename);
                 setStatus(`Exported ${filename}`);
             } else {
@@ -691,15 +901,17 @@ if (exportPanel) {
                     state.getPatterns(),
                     state.getCheckedArray(),
                     ext,
-                    { group: g, pattern: p, side: s },
+                    patternSetName,
                 );
                 if (exportPlan.error) {
                     throw new Error(`Export failed: ${exportPlan.error}`);
                 }
-                for (const file of exportPlan.files) {
-                    const blob = await api.exportPattern(file.pattern, format);
+                await runDownloadBatches(exportPlan.files, async (file) => {
+                    const blob = await api.exportPattern(file.pattern, format, {
+                        centibpm: Math.round(state.getBpm() * 100),
+                    });
                     downloadBlob(blob, file.filename);
-                }
+                }, patternExportBatchDelayMs());
                 setStatus(exportPlan.count === 1
                     ? `Exported ${exportPlan.files[0].filename}`
                     : `Exported ${exportPlan.count} ${format} files`);
@@ -784,12 +996,17 @@ multipatternPreview.init(setStatus, scratch);
 // Build the multipattern card list + subscribe to state changes before any
 // other init calls so the first notify() paints into a populated DOM.
 multipatternList.init({
+    onTripletPress: (idx, next, useMorph) => applyTripletPress([idx], next, useMorph),
     setStatus,
     onBankPattern: (idx) => multipatternBank.openSingleToBank(idx),
     // Drag-to-reorder during timeline playback - re-queue the new next
     // pattern into scratch so the device wraps into the right buffer.
     onStructuralChange: () => transport.rescratchUpcoming(),
+    applyImportedBpm: (centibpm) => transport.applyImportedBpm(centibpm),
 });
+// Derived morph renderer subscribes after the list so its transforms are
+// re-applied over every fresh card DOM.
+tripletMorphView.init({ documentRef: document });
 multipatternToolbar.init({ setStatus });
 multipatternViewport.init({ setStatus });
 multipatternBank.init({ state, bankApi, setStatus });

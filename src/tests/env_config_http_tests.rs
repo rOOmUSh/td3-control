@@ -121,10 +121,19 @@ async fn full_returns_sections_fields_and_values() {
     let fields = json["fields"].as_array().expect("fields array");
     let values = json["values"].as_object().expect("values object");
 
-    // All 7 sections declared in env_metadata.
-    assert_eq!(sections.len(), 7, "sections: {:#?}", sections);
-    // 29 editable keys = all template keys
-    assert_eq!(fields.len(), 29, "fields: {}", fields.len());
+    // All sections declared in env_metadata.
+    assert_eq!(sections.len(), 8, "sections: {:#?}", sections);
+    assert!(sections.iter().any(|section| {
+        section["id"] == "pattern_export" && section["title"] == "PATTERN EXPORT"
+    }));
+    // 32 editable keys = all template keys
+    assert_eq!(fields.len(), 32, "fields: {}", fields.len());
+    assert!(
+        fields.iter().any(|field| {
+            field["key"] == "MIDI_DEVICE_CHANNEL" && field["section_id"] == "midi_device"
+        }),
+        "device channel must be editable from the settings UI: {fields:#?}"
+    );
     // Each field has a value populated from the template.
     for f in fields {
         let key = f["key"].as_str().unwrap();
@@ -146,6 +155,8 @@ async fn full_values_reflect_user_overrides_and_template_fallback() {
     assert_eq!(values["WEB_PORT"], "4040");
     // UI_DEFAULT_BPM not in the user file → comes from the bundled template.
     assert_eq!(values["UI_DEFAULT_BPM"], "120");
+    assert_eq!(values["UI_PATTERN_EXPORT_NAME_PROMPT"], "1");
+    assert_eq!(values["UI_PATTERN_EXPORT_BATCH_DELAY_MS"], "2000");
 }
 
 #[tokio::test]
@@ -191,6 +202,66 @@ async fn full_field_kinds_carry_ranges_and_options() {
     assert_eq!(slide["kind"], "enum");
     let opts = slide["options"].as_array().unwrap();
     assert_eq!(opts.len(), 3);
+
+    let name_prompt = fields
+        .iter()
+        .find(|f| f["key"] == "UI_PATTERN_EXPORT_NAME_PROMPT")
+        .expect("pattern export name prompt field");
+    assert_eq!(name_prompt["section_id"], "pattern_export");
+    assert_eq!(name_prompt["kind"], "bool");
+
+    let batch_delay = fields
+        .iter()
+        .find(|f| f["key"] == "UI_PATTERN_EXPORT_BATCH_DELAY_MS")
+        .expect("pattern export batch delay field");
+    assert_eq!(batch_delay["section_id"], "pattern_export");
+    assert_eq!(batch_delay["kind"], "integer");
+    assert_eq!(batch_delay["min"], 0);
+    assert_eq!(batch_delay["max"], 60_000);
+}
+
+#[tokio::test]
+async fn post_save_accepts_pattern_export_settings_at_range_boundaries() {
+    let env_path = unique_env_path("post-pattern-export-settings");
+    write_template_to(&env_path);
+    let app = build_router(env_path.clone());
+
+    let (status, body) = post_json(
+        app,
+        "/api/config/env",
+        serde_json::json!({
+            "updates": {
+                "UI_PATTERN_EXPORT_NAME_PROMPT": "0",
+                "UI_PATTERN_EXPORT_BATCH_DELAY_MS": "60000"
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {}", body);
+
+    let on_disk = std::fs::read_to_string(&env_path).unwrap();
+    assert!(on_disk.contains("UI_PATTERN_EXPORT_NAME_PROMPT=0"));
+    assert!(on_disk.contains("UI_PATTERN_EXPORT_BATCH_DELAY_MS=60000"));
+}
+
+#[tokio::test]
+async fn post_save_rejects_pattern_export_delay_above_maximum() {
+    let env_path = unique_env_path("post-pattern-export-delay-oor");
+    write_template_to(&env_path);
+    let app = build_router(env_path.clone());
+
+    let (status, body) = post_json(
+        app,
+        "/api/config/env",
+        serde_json::json!({
+            "updates": { "UI_PATTERN_EXPORT_BATCH_DELAY_MS": "60001" }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {}", body);
+    assert!(std::fs::read_to_string(&env_path)
+        .unwrap()
+        .contains("UI_PATTERN_EXPORT_BATCH_DELAY_MS=2000"));
 }
 
 // ── POST /api/config/env ─────────────────────────────────────────────

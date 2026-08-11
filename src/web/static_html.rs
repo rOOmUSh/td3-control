@@ -91,11 +91,14 @@ fn build_inline_script(c: &UiConfigSnapshot) -> String {
 /// fetch endpoint cannot drift.
 pub fn build_payload(c: &UiConfigSnapshot) -> serde_json::Value {
     serde_json::json!({
+        "midiDeviceChannel": c.midi_device_channel,
         "uiAutoConnectToMidi": c.ui_auto_connect_to_midi,
         "uiAutoSetLiveUpdate": c.ui_auto_set_live_update,
         "uiDefaultBpm": c.ui_default_bpm,
         "uiDefaultTriplet": c.ui_default_triplet,
         "uiMaxBankHistorySize": c.ui_max_bank_history_size,
+        "uiPatternExportNamePrompt": c.ui_pattern_export_name_prompt,
+        "uiPatternExportBatchDelayMs": c.ui_pattern_export_batch_delay_ms,
         "uiRandDefaultRoot": c.ui_rand_default_root,
         "uiRandDefaultScale": c.ui_rand_default_scale,
         "uiRandNotePercent": c.ui_rand_note_percent,

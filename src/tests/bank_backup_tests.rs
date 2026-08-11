@@ -7,11 +7,14 @@
 // or from a `control` UI-session auto-dump.
 
 use std::fs;
+use std::io::Read;
 use std::path::PathBuf;
 
 use crate::bank::backup::{write_backup_zip, BackupKind};
 use crate::formats::mid::MidiExportOptions;
 use crate::formats::sqs::{self, Bank, BankRecord, RECORD_COUNT};
+use crate::formats::steps_txt;
+use crate::pattern::pattern_to_sysex;
 
 fn scratch_dir(label: &str) -> PathBuf {
     let stamp = std::time::SystemTime::now()
@@ -51,6 +54,15 @@ fn sample_bank() -> Bank {
         version_bytes: sqs::VERSION_UTF16BE.to_vec(),
         records: records_arr,
     }
+}
+
+fn sample_bank_with_short_pattern() -> Bank {
+    let mut bank = sample_bank();
+    let pattern =
+        steps_txt::import(include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt")).unwrap();
+    let sysex = pattern_to_sysex(&pattern, 0, 0, 0).unwrap();
+    bank.records[0].payload = sysex[3..].to_vec();
+    bank
 }
 
 #[test]
@@ -221,4 +233,42 @@ fn backup_dir_path_is_a_file_returns_bank_backup_failed() {
     );
 
     rmrf(&dir);
+}
+
+#[test]
+fn backup_steps_sidecar_uses_configured_bpm_and_short_rows() {
+    let dir = scratch_dir("backup_steps_bpm");
+    let bank = sample_bank_with_short_pattern();
+    let options = MidiExportOptions {
+        bpm: 156,
+        ..MidiExportOptions::default()
+    };
+    let result = write_backup_zip(&dir, &bank, BackupKind::PreUi, &options).unwrap();
+
+    let file = fs::File::open(&result.path).unwrap();
+    let mut archive = zip::ZipArchive::new(file).unwrap();
+    let mut entry = archive.by_name("G1P1A/G1P1A.steps.txt").unwrap();
+    let mut text = String::new();
+    entry.read_to_string(&mut text).unwrap();
+    assert!(text.contains("\nbpm=156\n"));
+    assert!(text.contains("\n03 "));
+    assert!(!text.contains("\n04 "));
+
+    rmrf(&dir);
+}
+
+#[test]
+fn backup_rejects_invalid_stepdsl_bpm_before_creating_directory() {
+    let parent = scratch_dir("backup_invalid_bpm_parent");
+    let target = parent.join("not-created");
+    let options = MidiExportOptions {
+        bpm: 301,
+        ..MidiExportOptions::default()
+    };
+    let err = write_backup_zip(&target, &sample_bank(), BackupKind::PreUi, &options)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("centibpm"), "got: {}", err);
+    assert!(!target.exists());
+    rmrf(&parent);
 }

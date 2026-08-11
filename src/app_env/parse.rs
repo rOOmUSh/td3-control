@@ -42,6 +42,12 @@ pub(super) fn parse_env(
         )?,
         midi_timeout_ms: parse_u64("MIDI_TIMEOUT_MS", get("MIDI_TIMEOUT_MS")?)?,
         midi_retries: parse_u32("MIDI_RETRIES", get("MIDI_RETRIES")?)?,
+        midi_device_channel: parse_u8_range(
+            "MIDI_DEVICE_CHANNEL",
+            get("MIDI_DEVICE_CHANNEL")?,
+            1,
+            16,
+        )?,
 
         web_port: parse_u16("WEB_PORT", get("WEB_PORT")?)?,
         web_bind: get("WEB_BIND")?.to_owned(),
@@ -60,6 +66,16 @@ pub(super) fn parse_env(
         ui_max_bank_history_size: parse_u32(
             "UI_MAX_BANK_HISTORY_SIZE",
             get("UI_MAX_BANK_HISTORY_SIZE")?,
+        )?,
+        ui_pattern_export_name_prompt: parse_bool(
+            "UI_PATTERN_EXPORT_NAME_PROMPT",
+            get("UI_PATTERN_EXPORT_NAME_PROMPT")?,
+        )?,
+        ui_pattern_export_batch_delay_ms: parse_u32_range(
+            "UI_PATTERN_EXPORT_BATCH_DELAY_MS",
+            get("UI_PATTERN_EXPORT_BATCH_DELAY_MS")?,
+            0,
+            60_000,
         )?,
 
         ui_rand_default_root: parse_u8_range(

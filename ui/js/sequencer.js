@@ -5,6 +5,7 @@ import { applyStepHighlight, restoreStepHighlight } from './step-highlight.js';
 import { createStepCard as createSharedStepCard } from './step-card-view.js';
 
 const grid = document.getElementById('sequencer-grid');
+let highlightedStepIdx = -1;
 
 // Render all 16 step cards
 export function render() {
@@ -12,19 +13,22 @@ export function render() {
     for (let i = 0; i < 16; i++) {
         grid.appendChild(createStepCardNode(i));
     }
+    paintStepHighlight();
 }
 
 /**
- * Highlight the current playing step (add/remove pulse class).
+ * Highlight the current playing step without rebuilding the DOM.
  * Called by transport at step intervals - does NOT rebuild the DOM.
  */
 export function highlightStep(stepIndex) {
-    // Remove previous highlight
-    const prev = grid.querySelector('.step-active');
-    if (prev) restoreStepHighlight(prev);
-    if (stepIndex < 0) return; // -1 = clear all
-    // Add highlight to current step
-    const card = grid.querySelector(`[data-step="${stepIndex}"]`);
+    highlightedStepIdx = Number.isInteger(stepIndex) ? stepIndex : -1;
+    paintStepHighlight();
+}
+
+function paintStepHighlight() {
+    grid.querySelectorAll('.step-active').forEach(restoreStepHighlight);
+    if (highlightedStepIdx < 0 || highlightedStepIdx >= 16) return;
+    const card = grid.querySelector(`[data-step="${highlightedStepIdx}"]`);
     if (!card) return;
     applyStepHighlight(card);
 }

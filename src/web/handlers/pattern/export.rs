@@ -7,6 +7,7 @@ enum RbsExportMode {
 }
 
 pub async fn export_pool(
+    State(state): State<Arc<AppState>>,
     payload: Result<Json<ExportPoolRequest>, JsonRejection>,
 ) -> Result<Json<ExportPoolResponse>, AppError> {
     let req = json_payload(payload, "pattern export pool")?;
@@ -15,7 +16,7 @@ pub async fn export_pool(
         let pattern = web_to_pattern(web)?;
         let toml_str = formats::toml_fmt::export(&pattern).map_err(AppError::Midi)?;
         let json_str = formats::json::export(&pattern).map_err(AppError::Midi)?;
-        let steps_str = formats::steps_txt::export(&pattern);
+        let steps_str = export_steps_with_resolved_bpm(&pattern, req.centibpm, &state)?;
         files.push(ExportedFile {
             name: format!("pattern_{:03}", i + 1),
             toml: toml_str,
@@ -46,7 +47,7 @@ pub async fn pattern_export(
             "application/json; charset=utf-8",
         ),
         "steps_txt" | "steps" => (
-            formats::steps_txt::export(&pattern).into_bytes(),
+            export_steps_with_resolved_bpm(&pattern, req.centibpm, &state)?.into_bytes(),
             "text/plain; charset=utf-8",
         ),
         "pat" => (
@@ -83,6 +84,24 @@ pub async fn pattern_export(
         .body(Body::from(bytes))
         .map_err(|e| Td3Error::Other(format!("failed to build export response: {}", e)))?;
     Ok(resp)
+}
+
+fn export_steps_with_resolved_bpm(
+    pattern: &crate::pattern::Pattern,
+    requested_centibpm: Option<u32>,
+    state: &AppState,
+) -> Result<String, AppError> {
+    let centibpm = match requested_centibpm {
+        Some(value) => value,
+        None => state
+            .midi
+            .export_options
+            .bpm
+            .checked_mul(100)
+            .ok_or_else(|| AppError::BadRequest("configured BPM is too large".to_string()))?,
+    };
+    formats::steps_txt::export_with_bpm(pattern, centibpm)
+        .map_err(|error| AppError::BadRequest(error.to_string()))
 }
 
 fn export_rbs(req: &PatternExportRequest) -> Result<Vec<u8>, AppError> {

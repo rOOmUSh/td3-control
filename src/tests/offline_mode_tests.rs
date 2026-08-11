@@ -40,6 +40,7 @@ fn control_config_with_unmatched_port(backup_dir: PathBuf) -> Config {
             request_timeout: Duration::from_secs(1),
             strict_name_match: true,
             retry_count: 0,
+            device_channel: 1,
         },
         target: None,
         files: ArtifactPaths::default(),

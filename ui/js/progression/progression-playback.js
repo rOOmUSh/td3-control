@@ -1,3 +1,5 @@
+import { morphRequestPercent } from '../shared/triplet-morph-timing.js';
+
 // Shared progression playback helpers.
 //
 // `progression-main.js` owns the DOM and button wiring; this module owns the
@@ -19,6 +21,9 @@ export async function startPlayback({
     getPattern,
     scratch,
     bpm,
+    gatePercent = null,
+    tripletMorphPercent = null,
+    midiChannel = null,
     transport,
     stopAllPreviews,
     liveUpdate = true,
@@ -31,7 +36,16 @@ export async function startPlayback({
 
     const firstPatIdx = firstTimelinePatternIndex(timeline);
     if (!liveUpdate) {
-        await api.auditionPattern(getPattern(firstPatIdx), bpm, true);
+        const firstPattern = getPattern(firstPatIdx);
+        await api.auditionPattern(
+            firstPattern,
+            bpm,
+            true,
+            null,
+            gatePercent,
+            morphRequestPercent(firstPattern, tripletMorphPercent),
+            midiChannel,
+        );
         setPlaying(true);
         await transport.start(null);
         setStatus(`Host audition: P${firstPatIdx + 1} (no save)`);

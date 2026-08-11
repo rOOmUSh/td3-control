@@ -22,6 +22,10 @@ pub struct CombinedFormats {
 pub struct ExportPackageRequest {
     pub package_id: String,
     pub formats: Vec<String>,
+    /// StepDSL tempo in centi-BPM. Legacy clients may omit this and use the
+    /// server's resolved export BPM.
+    #[serde(default)]
+    pub centibpm: Option<u32>,
     #[serde(default)]
     pub combined_formats: CombinedFormats,
     pub scale_name: String,

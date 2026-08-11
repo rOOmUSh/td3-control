@@ -34,8 +34,8 @@ use crate::td3_protocol;
 use crate::web::Td3Error;
 
 use super::api_types::*;
-use super::handlers::{spawn_clock_runner, stop_audition, stop_clock, web_to_pattern, AppError};
-use super::state::{AppState, ClockState};
+use super::handlers::{start_clock_transport, stop_audition, stop_clock, web_to_pattern, AppError};
+use super::state::AppState;
 
 mod audition;
 mod compare;

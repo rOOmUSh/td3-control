@@ -59,6 +59,13 @@ pub async fn connect(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ConnectRequest>,
 ) -> Result<Json<ConnectResponse>, AppError> {
+    let _lifecycle = state.playback.midi_owner_lifecycle.lock().await;
+    if state.playback.midi_cleanup_pending.load(Ordering::Acquire) != 0 {
+        return Err(AppError::Conflict(
+            "MIDI cleanup is still running after a timeout; reconnect when cleanup finishes"
+                .to_string(),
+        ));
+    }
     let mut guard = state.midi.session.lock().await;
 
     // If already connected, return existing session info instead of an error
@@ -103,6 +110,7 @@ pub async fn connect(
     }
 
     *guard = Some(MidiSession {
+        generation: state.midi.next_session_generation(),
         out_conn: Some(established.out_conn),
         rx: established.rx,
         _in_conn: established.in_conn,
@@ -123,11 +131,7 @@ pub async fn disconnect(State(state): State<Arc<AppState>>) -> Json<DisconnectRe
     // MIDI output handle before we drop the main session. Otherwise
     // disconnect leaves the port half-owned and a subsequent reconnect
     // can fail with "port already in use" on some drivers.
-    stop_clock(&state).await;
-
-    let mut guard = state.midi.session.lock().await;
-    let was_connected = guard.is_some();
-    *guard = None;
+    let was_connected = disconnect_midi_session(&state).await;
     Json(DisconnectResponse {
         disconnected: was_connected,
     })

@@ -29,7 +29,7 @@ The main page is built around a simple loop:
 1. connect to the TD-3
 2. load or import patterns
 3. edit one or many patterns in the multipattern canvas
-4. preview or live-send through the scratch slot
+4. preview through the scratch slot, or use non-saving host audition while `LIVE` is off
 5. export, push to progression mode, or save to the bank
 
 The UI keeps this loop local. There is no external service and no cloud dependency.
@@ -44,6 +44,7 @@ The page can:
 - read device status
 - start and stop the MIDI transport
 - control BPM
+- control `1-100%` gate for non-saving host audition
 - preview notes
 - load from and save to device slots
 - switch the device's MIDI sync source between INT, USB, DIN, and TRIG from a four-pill column in the transport bar
@@ -55,6 +56,8 @@ The MIDI status indicator next to the connect button is tri-state:
 - green when the device is connected and synced to USB
 
 The server side for this lives primarily under `src/web/handlers.rs`. Sync-source changes are served by `POST /api/midi/sync-source` and are disabled while the app is in offline mode.
+
+When `LIVE` is off, Control playback and row preview can use host-sequenced audition instead of writing the scratch slot. The shared `GATE` control sets ordinary note length as a percentage of one step and carries across the Control and Progression pages for the browser session.
 
 ### 2. Multipattern editing
 
@@ -100,17 +103,19 @@ That makes it the place where raw pattern editing and more compositional workflo
 
 ## Why The Scratch Slot Exists
 
-The TD-3 only gives the software one real place to audition and update data on the hardware: a writable device slot. The app formalizes that into a configured scratch slot.
+Device-sequenced preview and live update require a writable TD-3 slot. The app formalizes that into a configured scratch slot.
 
 The scratch slot is used for:
 
 - live update
-- pattern preview
+- device-sequenced pattern preview
 - bank audition
-- progression preview
-- transport-driven playback
+- device-sequenced progression preview
+- device-sequenced transport playback
 
 By naming the slot explicitly in config and warning the user on startup, the app makes the tradeoff visible instead of hiding it.
+
+Non-saving host audition is the exception. It sends timed MIDI notes directly to the TD-3 without writing pattern memory or starting the TD-3 sequencer. Its `GATE` setting is session-level playback state, not part of the pattern or scratch slot.
 
 ## Relationship To The Other Pages
 

@@ -8,7 +8,12 @@ async function request(method, path, body, signal) {
     if (signal) opts.signal = signal;
     const res = await fetch(BASE + path, opts);
     const json = await res.json();
-    if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+    if (!res.ok) {
+        const error = new Error(json.error || `HTTP ${res.status}`);
+        error.status = res.status;
+        error.response = json;
+        throw error;
+    }
     return json;
 }
 
@@ -43,21 +48,69 @@ export const api = {
     // On/Off from the host with no MIDI Start and no scratch-slot write, so
     // the device sequencer stays idle and device memory is untouched. Stop
     // is /pattern/audition/stop. `looping` defaults to true server-side.
-    auditionPattern:(pattern, bpm, looping = true, targetEpochMicros = null) => {
+    auditionPattern:(
+        pattern,
+        bpm,
+        looping = true,
+        targetEpochMicros = null,
+        gatePercent = null,
+        tripletMorphPercent = null,
+        midiChannel = null,
+    ) => {
         const body = bpm != null
             ? { pattern, centibpm: Math.round(bpm * 100), looping }
             : { pattern, looping };
         if (targetEpochMicros != null) body.targetEpochMicros = targetEpochMicros;
+        if (gatePercent != null) body.gatePercent = gatePercent;
+        if (tripletMorphPercent != null) body.tripletMorphPercent = tripletMorphPercent;
+        if (midiChannel != null) body.midiChannel = midiChannel;
         return request('POST', '/pattern/audition', body);
     },
-    auditionUpdate:(pattern, bpm, looping = true) => request(
-        'POST',
-        '/pattern/audition/update',
-        bpm != null
+    auditionUpdate:(
+        pattern,
+        bpm,
+        looping = true,
+        expectedScheduleGeneration = null,
+        gatePercent = null,
+        tripletMorphPercent = null,
+        midiChannel = null,
+    ) => {
+        const body = bpm != null
             ? { pattern, centibpm: Math.round(bpm * 100), looping }
-            : { pattern, looping },
-    ),
+            : { pattern, looping };
+        if (expectedScheduleGeneration != null) {
+            body.expectedScheduleGeneration = expectedScheduleGeneration;
+        }
+        if (gatePercent != null) body.gatePercent = gatePercent;
+        if (tripletMorphPercent != null) body.tripletMorphPercent = tripletMorphPercent;
+        if (midiChannel != null) body.midiChannel = midiChannel;
+        return request('POST', '/pattern/audition/update', body);
+    },
+    auditionQueueNextCycle:(
+        pattern,
+        bpm,
+        looping = true,
+        expectedScheduleGeneration = null,
+        gatePercent = null,
+        tripletMorphPercent = null,
+        midiChannel = null,
+    ) => {
+        const body = bpm != null
+            ? { pattern, centibpm: Math.round(bpm * 100), looping }
+            : { pattern, looping };
+        if (expectedScheduleGeneration != null) {
+            body.expectedScheduleGeneration = expectedScheduleGeneration;
+        }
+        if (gatePercent != null) body.gatePercent = gatePercent;
+        if (tripletMorphPercent != null) body.tripletMorphPercent = tripletMorphPercent;
+        if (midiChannel != null) body.midiChannel = midiChannel;
+        return request('POST', '/pattern/audition/queue-next-cycle', body);
+    },
     auditionStop: () => request('POST', '/pattern/audition/stop', {}),
+    // MIDI-independent triplet morph plan for one canonical pattern. The
+    // response caches per exact canonical source identity; the UI only
+    // interpolates the returned rational offsets visually.
+    tripletMorphPlan:(pattern) => request('POST', '/pattern/triplet-morph/plan', { pattern }),
     exportPool:(patterns) => request('POST', '/pattern/export-pool', { patterns }),
     exportPattern: async (pattern, format, extra = {}) => {
         const res = await fetch(BASE + '/pattern/export', {
@@ -80,7 +133,11 @@ export const api = {
     transportStop: ()   => request('POST', '/transport/stop', {}),
     transportBpm:  (bpm)=> request('POST', '/transport/bpm', { centibpm: Math.round(bpm * 100) }),
     transportWrapPulse: (body, signal) => request('POST', '/transport/wrap-pulse', body, signal),
-    notePreview:   (note, transpose, accent) => request('POST', '/note/preview', { note, transpose, accent }),
+    notePreview:   (note, transpose, accent, midiChannel = null) => {
+        const body = { note, transpose, accent };
+        if (midiChannel != null) body.midiChannel = midiChannel;
+        return request('POST', '/note/preview', body);
+    },
     getKeyboardConfig: () => request('GET', '/config/keyboard'),
     saveKeyboardConfig: (config) => request('POST', '/config/keyboard', config),
     getScalesConfig: () => request('GET', '/config/scales'),

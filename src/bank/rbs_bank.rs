@@ -53,6 +53,7 @@ pub fn extract_rbs_bank(
     force: bool,
     midi_opts: &MidiExportOptions,
 ) -> Result<(), Td3Error> {
+    formats_mod::steps_txt::centibpm_from_integer_bpm(midi_opts.bpm)?;
     let data = fs::read(input)?;
     let patterns = rbs::import_bank(&data)?;
     if patterns.len() != TOTAL {
@@ -117,7 +118,10 @@ fn write_per_pattern(
             filename,
             formats_mod::mid::export(pattern, address, midi_opts)?,
         )?,
-        Format::StepsTxt => fs::write(filename, formats_mod::steps_txt::export(pattern))?,
+        Format::StepsTxt => fs::write(
+            filename,
+            formats_mod::steps_txt::export_with_integer_bpm(pattern, midi_opts.bpm)?,
+        )?,
         Format::Seq => fs::write(filename, formats_mod::seq::export(pattern)?)?,
         Format::Pat => fs::write(filename, formats_mod::pat::export(pattern))?,
         Format::Rbs => {

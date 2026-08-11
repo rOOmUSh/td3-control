@@ -117,3 +117,14 @@ pub const FIRMWARE_RESP_1_3_7: &[u8] = &[0x09, 0x00, 0x01, 0x03, 0x07];
 
 /// Upload ACK response payload (3 bytes).
 pub const UPLOAD_ACK_RESP: &[u8] = &[0x01, 0x00, 0x00];
+
+// ===========================================================================
+// Triplet morph fixtures
+// ===========================================================================
+
+/// 16-step straight pattern: all C notes, Normal transpose, all Normal
+/// time, no accent or slide. The all-equal triplet morph source.
+pub fn straight_sixteen() -> crate::pattern::Pattern {
+    crate::pattern::Pattern::new(false, 16, [crate::step::Step::default(); 16])
+        .expect("all-default 16-step pattern is valid")
+}

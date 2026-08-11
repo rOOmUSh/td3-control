@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 use crate::bank::{extract_bank, pack_bank};
 use crate::formats::mid::MidiExportOptions;
 use crate::formats::mid_import::MidiImportOptions;
-use crate::formats::sqs;
+use crate::formats::{rbs, sqs, steps_txt};
+use crate::pattern::{pattern_to_sysex, Pattern};
 
 fn golden_path(name: &str) -> PathBuf {
     PathBuf::from(format!(
@@ -71,6 +72,82 @@ fn extract_creates_64_subfolders_and_manifest() {
         }
     }
 
+    rmrf(&scratch);
+}
+
+#[test]
+fn sqs_extraction_steps_sidecar_uses_configured_bpm_and_short_rows() {
+    let scratch = scratch_dir("extract_steps_bpm");
+    let input = scratch.join("source.sqs");
+    let output = scratch.join("bank");
+    let mut bank =
+        sqs::parse_bank(&fs::read(golden_path("ALL TD-3 PATTERNS.sqs")).unwrap()).unwrap();
+    let pattern =
+        steps_txt::import(include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt")).unwrap();
+    let sysex = pattern_to_sysex(&pattern, 0, 0, 0).unwrap();
+    bank.records[0].payload = sysex[3..].to_vec();
+    fs::write(&input, sqs::serialize_bank(&bank).unwrap()).unwrap();
+
+    let options = MidiExportOptions {
+        bpm: 157,
+        ..MidiExportOptions::default()
+    };
+    extract_bank(&input, &output, false, &options).unwrap();
+
+    let text = fs::read_to_string(output.join("G1P1A").join("G1P1A.steps.txt")).unwrap();
+    assert!(text.contains("\nbpm=157\n"));
+    assert!(text.contains("\n03 "));
+    assert!(!text.contains("\n04 "));
+    rmrf(&scratch);
+}
+
+#[test]
+fn rbs_extraction_steps_sidecar_uses_configured_bpm_and_short_rows() {
+    let scratch = scratch_dir("rbs_extract_steps_bpm");
+    let input = scratch.join("source.rbs");
+    let output = scratch.join("bank");
+    let patterns = (0..crate::bank::rbs_bank::TOTAL)
+        .map(|index| {
+            if index == 0 {
+                steps_txt::import(include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt"))
+                    .unwrap()
+            } else {
+                Pattern::default()
+            }
+        })
+        .collect();
+    fs::write(&input, rbs::export_bank(patterns).unwrap()).unwrap();
+
+    let options = MidiExportOptions {
+        bpm: 158,
+        ..MidiExportOptions::default()
+    };
+    extract_bank(&input, &output, false, &options).unwrap();
+
+    let text = fs::read_to_string(output.join("G1P1A").join("G1P1A.steps.txt")).unwrap();
+    assert!(text.contains("\nbpm=158\n"));
+    assert!(text.contains("\n03 "));
+    assert!(!text.contains("\n04 "));
+    rmrf(&scratch);
+}
+
+#[test]
+fn bank_extraction_rejects_invalid_stepdsl_bpm_before_creating_output() {
+    let scratch = scratch_dir("extract_invalid_bpm");
+    let options = MidiExportOptions {
+        bpm: 301,
+        ..MidiExportOptions::default()
+    };
+
+    for extension in ["sqs", "rbs"] {
+        let input = scratch.join(format!("missing.{}", extension));
+        let output = scratch.join(format!("output-{}", extension));
+        let err = extract_bank(&input, &output, false, &options)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("centibpm"), "got: {}", err);
+        assert!(!output.exists());
+    }
     rmrf(&scratch);
 }
 

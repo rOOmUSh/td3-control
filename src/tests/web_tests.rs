@@ -12,7 +12,9 @@ use crate::pattern::Pattern;
 use crate::step;
 use crate::web::api_types::*;
 use crate::web::clock;
-use crate::web::handlers::{pattern_to_web, validate_group, validate_pattern, web_to_pattern};
+use crate::web::handlers::{
+    audition_update_error, pattern_to_web, validate_group, validate_pattern, web_to_pattern,
+};
 use crate::web::state::{AppState, ClockState, ScratchSlot, UiConfigSnapshot};
 
 // =========================================================================
@@ -483,6 +485,7 @@ fn note_preview_request_midi_note_mapping() {
         note: "C#".into(),
         transpose: "UP".into(),
         accent: false,
+        midi_channel: None,
     };
     assert_eq!(req.midi_note().unwrap(), 49);
 }
@@ -493,6 +496,7 @@ fn note_preview_request_accepts_case_insensitive_note() {
         note: "c#".into(),
         transpose: "normal".into(),
         accent: true,
+        midi_channel: None,
     };
     assert_eq!(req.midi_note().unwrap(), 37);
 }
@@ -503,6 +507,7 @@ fn note_preview_request_rejects_unknown_transpose() {
         note: "C".into(),
         transpose: "SIDEWAYS".into(),
         accent: false,
+        midi_channel: None,
     };
     assert!(req.midi_note().is_err());
 }
@@ -624,12 +629,48 @@ async fn disconnect_when_not_connected_returns_false() {
     assert!(!response.0.disconnected);
 }
 
+#[tokio::test]
+async fn connect_rejects_while_fatal_midi_cleanup_is_pending() {
+    let state = AppState::for_tests(
+        ScratchSlot {
+            patgroup: 0,
+            slot: 0,
+            side: 0,
+        },
+        make_test_library(),
+        String::new(),
+        UiConfigSnapshot::for_tests(),
+        std::path::PathBuf::from("TD3_CONFIG.env"),
+    );
+    state
+        .playback
+        .midi_cleanup_pending
+        .store(2, std::sync::atomic::Ordering::Release);
+
+    let result = crate::web::handlers::connect(
+        axum::extract::State(state),
+        axum::Json(ConnectRequest {
+            in_port: None,
+            out_port: None,
+        }),
+    )
+    .await;
+
+    match result {
+        Err(crate::web::handlers::AppError::Conflict(message)) => {
+            assert!(message.contains("cleanup is still running"));
+        }
+        _ => panic!("connect should reject while fatal MIDI cleanup is pending"),
+    }
+}
+
 // =========================================================================
 // HTTP integration: router-level tests
 // =========================================================================
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use axum::response::IntoResponse;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
@@ -669,9 +710,18 @@ fn build_test_router() -> axum::Router {
             post(handlers::pattern_audition_update),
         )
         .route(
+            "/api/pattern/audition/queue-next-cycle",
+            post(handlers::pattern_audition_queue_next_cycle),
+        )
+        .route(
             "/api/pattern/audition/stop",
             post(handlers::pattern_audition_stop),
         )
+        .route(
+            "/api/pattern/triplet-morph/plan",
+            post(handlers::pattern_triplet_morph_plan),
+        )
+        .route("/api/note/preview", post(handlers::note_preview))
         .route("/api/pattern/export-pool", post(handlers::export_pool))
         .route("/api/pattern/export", post(handlers::pattern_export))
         .route("/api/transport/start", post(handlers::transport_start))
@@ -713,10 +763,15 @@ fn make_test_library() -> std::sync::Arc<crate::library::LibraryStore> {
 
 /// Helper: build a valid 16-step WebPattern JSON for save requests.
 fn valid_web_pattern_json() -> String {
+    valid_web_pattern_json_with_active_steps(16)
+}
+
+fn valid_web_pattern_json_with_active_steps(active_steps: u8) -> String {
     let step = r#"{"note":"C","transpose":"NORMAL","accent":false,"slide":false,"time":"NORMAL"}"#;
     let steps: Vec<&str> = (0..16).map(|_| step).collect();
     format!(
-        r#"{{"active_steps":16,"triplet":false,"steps":[{}]}}"#,
+        r#"{{"active_steps":{},"triplet":false,"steps":[{}]}}"#,
+        active_steps,
         steps.join(",")
     )
 }
@@ -864,6 +919,7 @@ async fn transport_wrap_pulse_returns_inactive_when_stopped_after_acceptance() {
     let started_at_epoch_ms = crate::web::handlers::current_epoch_millis_for_clock();
     let mut clock_guard = state.playback.clock.lock().await;
     *clock_guard = Some(ClockState {
+        session_generation: 0,
         centibpm: 30_000,
         started_at_epoch_ms,
         transport_id: 7,
@@ -874,6 +930,7 @@ async fn transport_wrap_pulse_returns_inactive_when_stopped_after_acceptance() {
     let req = TransportWrapPulseRequest {
         transport_id: 7,
         anchor_epoch_ms: started_at_epoch_ms,
+        anchor_pulse_index: None,
         wrap_index: 3,
         active_steps: 1,
         triplet: false,
@@ -1008,6 +1065,102 @@ async fn http_pattern_save_requires_connection() {
         "error should mention connection: {}",
         err.error
     );
+}
+
+/// The channel is validated before the device is touched, so these run
+/// without hardware: an out-of-range channel is rejected outright, while
+/// an in-range one gets as far as the missing connection.
+async fn audition_error_for_channel(channel: &str) -> (StatusCode, String) {
+    let app = build_test_router();
+    let body = format!(
+        r#"{{"pattern":{},"centibpm":12000,"midiChannel":{}}}"#,
+        valid_web_pattern_json(),
+        channel
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/audition")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let err: ErrorBody = serde_json::from_slice(&bytes).unwrap();
+    (status, err.error)
+}
+
+#[tokio::test]
+async fn http_pattern_audition_rejects_out_of_range_channel() {
+    // Clamping would hide the caller's bug and play on the wrong channel.
+    for channel in ["0", "17", "255"] {
+        let (status, error) = audition_error_for_channel(channel).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "channel {channel}");
+        assert!(
+            error.contains("midi channel must be 1-16"),
+            "channel {channel} should be named as the fault: {error}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn http_pattern_audition_accepts_every_valid_channel() {
+    // Reaching "not connected" proves the channel passed validation:
+    // the device is only touched after the channel is resolved.
+    for channel in ["1", "3", "16"] {
+        let (status, error) = audition_error_for_channel(channel).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "channel {channel}");
+        assert!(
+            error.contains("not connected"),
+            "channel {channel} should have passed validation: {error}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn http_note_preview_rejects_out_of_range_channel() {
+    let app = build_test_router();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/note/preview")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            r#"{"note":"C","transpose":"NORMAL","accent":false,"midiChannel":17}"#,
+        ))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let err: ErrorBody = serde_json::from_slice(&bytes).unwrap();
+    assert!(
+        err.error.contains("midi channel must be 1-16"),
+        "preview should reject the channel before anything else: {}",
+        err.error
+    );
+}
+
+#[test]
+fn audition_request_reads_both_channel_spellings_and_tolerates_absence() {
+    let with_camel: PatternAuditionRequest = serde_json::from_str(&format!(
+        r#"{{"pattern":{},"midiChannel":3}}"#,
+        valid_web_pattern_json()
+    ))
+    .expect("camelCase channel parses");
+    assert_eq!(with_camel.midi_channel, Some(3));
+
+    let with_snake: PatternAuditionRequest = serde_json::from_str(&format!(
+        r#"{{"pattern":{},"midi_channel":9}}"#,
+        valid_web_pattern_json()
+    ))
+    .expect("snake_case channel parses");
+    assert_eq!(with_snake.midi_channel, Some(9));
+
+    // A caller written before the control existed sends no channel at
+    // all, and must keep working on the configured default.
+    let without: PatternAuditionRequest =
+        serde_json::from_str(&format!(r#"{{"pattern":{}}}"#, valid_web_pattern_json()))
+            .expect("an absent channel parses");
+    assert_eq!(without.midi_channel, None);
 }
 
 #[tokio::test]
@@ -1352,6 +1505,7 @@ async fn http_import_toml_returns_valid_pattern() {
     assert!(!result.pattern.triplet);
     assert_eq!(result.pattern.steps.len(), 16);
     assert_eq!(result.pattern.steps[0].note.as_str(), "C");
+    assert_eq!(result.centibpm, None);
 }
 
 #[tokio::test]
@@ -1371,13 +1525,42 @@ async fn http_import_json_returns_valid_pattern() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = resp.into_body().collect().await.unwrap().to_bytes();
-    let result: PatternImportResponse = serde_json::from_slice(&body).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        value.get("centibpm").is_none(),
+        "non-StepDSL response should omit centibpm"
+    );
+    let result: PatternImportResponse = serde_json::from_value(value).unwrap();
     assert_eq!(result.pattern.active_steps, 16);
     assert_eq!(result.pattern.steps.len(), 16);
+    assert_eq!(result.centibpm, None);
 }
 
 #[tokio::test]
-async fn http_import_steps_returns_valid_pattern() {
+async fn http_import_pat_omits_centibpm() {
+    let app = build_test_router();
+    let content = crate::formats::pat::export(&Pattern::default());
+    let body = serde_json::json!({ "content": content, "format": "pat" }).to_string();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/import")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        value.get("centibpm").is_none(),
+        "PAT response should omit centibpm"
+    );
+    let result: PatternImportResponse = serde_json::from_value(value).unwrap();
+    assert_eq!(result.centibpm, None);
+}
+
+#[tokio::test]
+async fn http_pattern_import_steps_returns_valid_pattern() {
     let app = build_test_router();
     let body = serde_json::json!({
         "content": sample_steps_pattern(),
@@ -1393,9 +1576,66 @@ async fn http_import_steps_returns_valid_pattern() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = resp.into_body().collect().await.unwrap().to_bytes();
-    let result: PatternImportResponse = serde_json::from_slice(&body).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        value.get("centibpm").is_none(),
+        "legacy StepDSL response should omit centibpm"
+    );
+    let result: PatternImportResponse = serde_json::from_value(value).unwrap();
     assert_eq!(result.pattern.active_steps, 16);
     assert_eq!(result.pattern.steps.len(), 16);
+    assert_eq!(result.centibpm, None);
+}
+
+#[tokio::test]
+async fn http_pattern_import_steps_returns_exact_bpm_and_defaults_short_tail() {
+    let app = build_test_router();
+    let content = include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt")
+        .replace("bpm=128", "bpm=128.37");
+    let body = serde_json::json!({
+        "content": content,
+        "format": "steps"
+    })
+    .to_string();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/import")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let result: PatternImportResponse = serde_json::from_slice(&body).unwrap();
+    assert_eq!(result.centibpm, Some(12_837));
+    assert_eq!(result.pattern.active_steps, 3);
+    assert_eq!(result.pattern.steps.len(), 16);
+    let first_default = &result.pattern.steps[3];
+    assert_eq!(first_default.note.as_str(), "C");
+    assert_eq!(first_default.transpose.as_str(), "NORMAL");
+    assert!(!first_default.accent);
+    assert!(!first_default.slide);
+    assert_eq!(first_default.time.as_str(), "NORMAL");
+}
+
+#[tokio::test]
+async fn http_pattern_import_steps_rejects_invalid_bpm_with_400() {
+    let app = build_test_router();
+    let content = include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt")
+        .replace("bpm=128", "bpm=300.001");
+    let body = serde_json::json!({
+        "content": content,
+        "format": "steps"
+    })
+    .to_string();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/import")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -1436,7 +1676,7 @@ async fn http_import_toml_preserves_note_and_flags() {
 }
 
 #[tokio::test]
-async fn http_import_steps_preserves_flags() {
+async fn http_pattern_import_steps_preserves_flags() {
     let steps_content = "\
 format=td3-stepdsl-v1\n\
 active_steps=4\n\
@@ -1595,6 +1835,7 @@ async fn http_export_pool_single_pattern() {
     assert!(result.files[0].toml.contains("td3-control"));
     assert!(result.files[0].json.contains("td3-control"));
     assert!(result.files[0].steps.contains("td3-stepdsl-v1"));
+    assert!(result.files[0].steps.contains("bpm=120\n"));
 }
 
 #[tokio::test]
@@ -1616,6 +1857,56 @@ async fn http_export_pool_multiple_patterns() {
     assert_eq!(result.files[0].name, "pattern_001");
     assert_eq!(result.files[1].name, "pattern_002");
     assert_eq!(result.files[2].name, "pattern_003");
+}
+
+#[tokio::test]
+async fn http_export_pool_applies_requested_bpm_and_active_rows_to_every_file() {
+    let app = build_test_router();
+    let pat = valid_web_pattern_json_with_active_steps(3);
+    let body = format!(r#"{{"patterns":[{},{}],"centibpm":12837}}"#, pat, pat);
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/export-pool")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let result: ExportPoolResponse = serde_json::from_slice(&body).unwrap();
+    assert_eq!(result.files.len(), 2);
+    for file in result.files {
+        assert!(file.steps.contains("bpm=128.37\n"));
+        let step_rows = file
+            .steps
+            .lines()
+            .filter(|line| {
+                let bytes = line.as_bytes();
+                bytes.len() >= 3
+                    && bytes[0].is_ascii_digit()
+                    && bytes[1].is_ascii_digit()
+                    && bytes[2] == b' '
+            })
+            .count();
+        assert_eq!(step_rows, 3, "steps body: {}", file.steps);
+    }
+}
+
+#[tokio::test]
+async fn http_export_pool_rejects_invalid_centibpm() {
+    let app = build_test_router();
+    let body = format!(
+        r#"{{"patterns":[{}],"centibpm":30001}}"#,
+        valid_web_pattern_json()
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/export-pool")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -2298,6 +2589,8 @@ async fn http_config_env_returns_ui_defaults_from_snapshot() {
     assert_eq!(json["uiDefaultBpm"], 120);
     assert_eq!(json["uiDefaultTriplet"], false);
     assert_eq!(json["uiMaxBankHistorySize"], 200);
+    assert_eq!(json["uiPatternExportNamePrompt"], true);
+    assert_eq!(json["uiPatternExportBatchDelayMs"], 2_000);
     assert_eq!(json["uiRandDefaultRoot"], 0);
     assert_eq!(json["uiRandDefaultScale"], "minor");
     assert_eq!(json["uiRandNotePercent"], 50);
@@ -2322,11 +2615,14 @@ async fn http_config_env_keys_are_stable_camel_case() {
     let obj = json.as_object().expect("payload must be a JSON object");
 
     let expected_keys = [
+        "midiDeviceChannel",
         "uiAutoConnectToMidi",
         "uiAutoSetLiveUpdate",
         "uiDefaultBpm",
         "uiDefaultTriplet",
         "uiMaxBankHistorySize",
+        "uiPatternExportNamePrompt",
+        "uiPatternExportBatchDelayMs",
         "uiRandDefaultRoot",
         "uiRandDefaultScale",
         "uiRandNotePercent",
@@ -2575,12 +2871,311 @@ async fn http_pattern_audition_update_rejects_when_idle() {
         .body(Body::from(body))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let err: ErrorBody = serde_json::from_slice(&body).unwrap();
-    assert!(
-        err.error.contains("audition is not running"),
-        "error should mention idle audition: {}",
-        err.error
+    assert_eq!(err.code.as_deref(), Some("audition_stopped"));
+}
+
+#[test]
+fn pattern_audition_request_accepts_expected_schedule_generation_camel_case() {
+    let body = format!(
+        r#"{{"pattern":{},"centibpm":12000,"expectedScheduleGeneration":7}}"#,
+        valid_web_pattern_json()
     );
+    let request: PatternAuditionRequest = serde_json::from_str(&body).unwrap();
+
+    assert_eq!(request.expected_schedule_generation, Some(7));
+}
+
+#[test]
+fn pattern_audition_request_accepts_gate_names_and_defaults_to_50() {
+    let camel_case = format!(
+        r#"{{"pattern":{},"centibpm":12000,"gatePercent":25}}"#,
+        valid_web_pattern_json()
+    );
+    let snake_case = format!(
+        r#"{{"pattern":{},"centibpm":12000,"gate_percent":75}}"#,
+        valid_web_pattern_json()
+    );
+    let omitted = format!(
+        r#"{{"pattern":{},"centibpm":12000}}"#,
+        valid_web_pattern_json()
+    );
+
+    // The names this field carried before the control was renamed from
+    // DECAY to GATE. A caller written against either still works.
+    let legacy_camel = format!(
+        r#"{{"pattern":{},"centibpm":12000,"noteDecayPercent":30}}"#,
+        valid_web_pattern_json()
+    );
+    let legacy_snake = format!(
+        r#"{{"pattern":{},"centibpm":12000,"note_decay_percent":80}}"#,
+        valid_web_pattern_json()
+    );
+
+    let camel_request: PatternAuditionRequest = serde_json::from_str(&camel_case).unwrap();
+    let snake_request: PatternAuditionRequest = serde_json::from_str(&snake_case).unwrap();
+    let default_request: PatternAuditionRequest = serde_json::from_str(&omitted).unwrap();
+    let legacy_camel_request: PatternAuditionRequest = serde_json::from_str(&legacy_camel).unwrap();
+    let legacy_snake_request: PatternAuditionRequest = serde_json::from_str(&legacy_snake).unwrap();
+
+    assert_eq!(camel_request.gate_percent, 25);
+    assert_eq!(snake_request.gate_percent, 75);
+    assert_eq!(default_request.gate_percent, 50);
+    assert_eq!(legacy_camel_request.gate_percent, 30);
+    assert_eq!(legacy_snake_request.gate_percent, 80);
+}
+
+#[tokio::test]
+async fn http_pattern_audition_routes_reject_note_gate_out_of_range() {
+    let routes = [
+        "/api/pattern/audition",
+        "/api/pattern/audition/update",
+        "/api/pattern/audition/queue-next-cycle",
+    ];
+
+    for route in routes {
+        for gate_percent in [0, 101] {
+            let app = build_test_router();
+            let body = format!(
+                r#"{{"pattern":{},"centibpm":12000,"gatePercent":{}}}"#,
+                valid_web_pattern_json(),
+                gate_percent
+            );
+            let req = Request::builder()
+                .method("POST")
+                .uri(route)
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap();
+            let resp = app.oneshot(req).await.unwrap();
+
+            assert_eq!(
+                resp.status(),
+                StatusCode::BAD_REQUEST,
+                "route {route} should reject gate {gate_percent}"
+            );
+            let body = resp.into_body().collect().await.unwrap().to_bytes();
+            let err: ErrorBody = serde_json::from_slice(&body).unwrap();
+            assert!(err.error.contains("gate percent must be 1-100"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn audition_update_failures_return_stable_http_error_codes() {
+    let cases = [
+        (
+            clock::AuditionUpdateError::GenerationConflict,
+            StatusCode::CONFLICT,
+            "generation_conflict",
+        ),
+        (
+            clock::AuditionUpdateError::Superseded,
+            StatusCode::CONFLICT,
+            "superseded",
+        ),
+        (
+            clock::AuditionUpdateError::AuditionStopped,
+            StatusCode::CONFLICT,
+            "audition_stopped",
+        ),
+        (
+            clock::AuditionUpdateError::PlaybackFailed("test send failure".to_string()),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "playback_failed",
+        ),
+    ];
+
+    for (error, expected_status, expected_code) in cases {
+        let response = audition_update_error(error).into_response();
+        assert_eq!(response.status(), expected_status);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let error_body: ErrorBody = serde_json::from_slice(&body).unwrap();
+        assert_eq!(error_body.code.as_deref(), Some(expected_code));
+        assert!(!error_body.error.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn http_pattern_audition_next_cycle_rejects_when_idle() {
+    let app = build_test_router();
+    let body = format!(r#"{{"pattern":{},"bpm":120}}"#, valid_web_pattern_json());
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/audition/queue-next-cycle")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let err: ErrorBody = serde_json::from_slice(&body).unwrap();
+    assert_eq!(err.code.as_deref(), Some("audition_stopped"));
+}
+
+// =========================================================================
+// Triplet morph HTTP contract
+// =========================================================================
+
+fn triplet_web_pattern_json() -> String {
+    valid_web_pattern_json().replace(r#""triplet":false"#, r#""triplet":true"#)
+}
+
+#[tokio::test]
+async fn http_triplet_morph_plan_returns_a_deterministic_plan() {
+    let app = build_test_router();
+    let body = format!(r#"{{"pattern":{}}}"#, valid_web_pattern_json());
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/triplet-morph/plan")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["eligible"], true);
+    let plan = &json["plan"];
+    assert_eq!(plan["planVersion"], 2);
+    assert_eq!(plan["beats"].as_array().unwrap().len(), 4);
+    assert_eq!(plan["beats"][0]["pairRank"], 0);
+    assert_eq!(plan["beats"][0]["selected"][0], 1);
+    assert_eq!(plan["beats"][0]["selected"][1], 3);
+    assert_eq!(plan["beats"][0]["loser"], 2);
+    let assignments = plan["assignments"].as_array().unwrap();
+    assert_eq!(assignments.len(), 16);
+    assert_eq!(assignments[1]["sourceOffset"]["num"], 1);
+    assert_eq!(assignments[1]["sourceOffset"]["den"], 4);
+    assert_eq!(assignments[1]["targetOffset"]["num"], 1);
+    assert_eq!(assignments[1]["targetOffset"]["den"], 3);
+    assert_eq!(assignments[2]["survivor"], false);
+    let cells = plan["endpointCells"].as_array().unwrap();
+    assert_eq!(cells.len(), 12);
+    assert_eq!(cells[0]["sourceStep"], 0);
+    assert_eq!(cells[0]["role"], "attack");
+    assert_eq!(cells[1]["sourceStep"], 1);
+}
+
+#[tokio::test]
+async fn http_triplet_morph_plan_reports_ineligible_sources_with_a_reason() {
+    let cases = [
+        (triplet_web_pattern_json(), "native triplet"),
+        (
+            valid_web_pattern_json_with_active_steps(7),
+            "4, 8, 12, or 16 active steps",
+        ),
+    ];
+    for (pattern_json, expected) in cases {
+        let app = build_test_router();
+        let body = format!(r#"{{"pattern":{}}}"#, pattern_json);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/pattern/triplet-morph/plan")
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["eligible"], false);
+        assert!(
+            json["reason"].as_str().unwrap().contains(expected),
+            "reason {:?} should mention {:?}",
+            json["reason"],
+            expected
+        );
+        assert!(json.get("plan").is_none());
+    }
+}
+
+#[tokio::test]
+async fn http_audition_routes_reject_out_of_range_morph_amounts() {
+    let routes = [
+        "/api/pattern/audition",
+        "/api/pattern/audition/update",
+        "/api/pattern/audition/queue-next-cycle",
+    ];
+    for route in routes {
+        let app = build_test_router();
+        let body = format!(
+            r#"{{"pattern":{},"centibpm":12000,"tripletMorphPercent":101}}"#,
+            valid_web_pattern_json()
+        );
+        let req = Request::builder()
+            .method("POST")
+            .uri(route)
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "route {route}");
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let err: ErrorBody = serde_json::from_slice(&body).unwrap();
+        assert!(err.error.contains("triplet morph amount out of range"));
+    }
+}
+
+#[tokio::test]
+async fn http_audition_routes_reject_morph_for_ineligible_sources() {
+    let routes = [
+        "/api/pattern/audition",
+        "/api/pattern/audition/update",
+        "/api/pattern/audition/queue-next-cycle",
+    ];
+    for route in routes {
+        for (pattern_json, percent) in [
+            (triplet_web_pattern_json(), 0),
+            (triplet_web_pattern_json(), 50),
+            (valid_web_pattern_json_with_active_steps(7), 50),
+        ] {
+            let app = build_test_router();
+            let body = format!(
+                r#"{{"pattern":{},"centibpm":12000,"tripletMorphPercent":{}}}"#,
+                pattern_json, percent
+            );
+            let req = Request::builder()
+                .method("POST")
+                .uri(route)
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap();
+            let resp = app.oneshot(req).await.unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::BAD_REQUEST,
+                "route {route} percent {percent} must reject the ineligible source"
+            );
+            let body = resp.into_body().collect().await.unwrap().to_bytes();
+            let err: ErrorBody = serde_json::from_slice(&body).unwrap();
+            assert!(err.error.contains("triplet morph"), "got {:?}", err.error);
+        }
+    }
+}
+
+#[tokio::test]
+async fn http_audition_update_without_morph_field_keeps_native_triplet_path() {
+    // An omitted field must not be routed into the custom straight
+    // morph path: a native-triplet pattern builds a legacy schedule and
+    // the request only fails later because no audition is running.
+    let app = build_test_router();
+    let body = format!(
+        r#"{{"pattern":{},"centibpm":12000}}"#,
+        triplet_web_pattern_json()
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/audition/update")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let err: ErrorBody = serde_json::from_slice(&body).unwrap();
+    assert_eq!(err.code.as_deref(), Some("audition_stopped"));
 }

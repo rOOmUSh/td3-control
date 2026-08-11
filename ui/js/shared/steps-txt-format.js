@@ -1,5 +1,5 @@
 // JS-side renderer for the `.steps.txt` pattern DSL. Mirrors
-// `src/formats/steps_txt.rs::export` byte-for-byte so the text a user
+// `src/formats/steps_txt.rs::export_with_bpm` byte-for-byte so the text a user
 // paste-lands in Notepad / WhatsApp / chat / email is the same as what the
 // backend would emit via `/api/pattern/export?format=steps_txt`.
 //
@@ -8,6 +8,8 @@
 // alongside the in-memory clipboard buffer that drives the PASTE FULL
 // button. Kept pure (no DOM / no fetch) so it is trivially unit-tested
 // and can run in Node.
+
+import { bpmValueToCentibpm, formatBpmCentibpm } from './steps-txt-bpm.js';
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B', 'C^'];
 
@@ -39,20 +41,27 @@ function pad02(n) {
  * endings (matching the Rust exporter) and ends with a trailing newline
  * after the final comment.
  */
-export function formatPatternAsStepsTxt(pattern) {
+export function formatPatternAsStepsTxt(pattern, bpm) {
     if (!pattern || !Array.isArray(pattern.steps) || pattern.steps.length !== 16) {
         throw new Error('formatPatternAsStepsTxt: pattern must have 16 steps');
     }
-    const activeSteps = Number.isInteger(pattern.active_steps) ? pattern.active_steps : 16;
+    if (!Number.isInteger(pattern.active_steps)
+        || pattern.active_steps < 1
+        || pattern.active_steps > 16) {
+        throw new Error('formatPatternAsStepsTxt: active_steps must be 1-16');
+    }
+    const activeSteps = pattern.active_steps;
     const triplet = pattern.triplet ? 'on' : 'off';
+    const centibpm = bpmValueToCentibpm(bpm);
 
     let out = '';
     out += 'format=td3-stepdsl-v1\n';
     out += `active_steps=${activeSteps}\n`;
     out += `triplet_time=${triplet}\n`;
+    out += `bpm=${formatBpmCentibpm(centibpm)}\n`;
     out += '\n';
 
-    for (let i = 0; i < 16; i++) {
+    for (let i = 0; i < activeSteps; i++) {
         const s = pattern.steps[i];
         const note = NOTE_NAMES.includes(s.note) ? s.note : 'C';
         const t = transposeChar(s.transpose);

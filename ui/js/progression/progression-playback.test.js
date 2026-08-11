@@ -110,8 +110,10 @@ await test('startPlayback uses host audition when live update is off', async () 
 
     const firstPatIdx = await startPlayback({
         api: {
-            auditionPattern: async (data, bpm, looping) => {
-                calls.push(`audition:${data.name}:${bpm}:${looping}`);
+            auditionPattern: async (data, bpm, looping, targetEpochMicros, gatePercent) => {
+                calls.push(
+                    `audition:${data.name}:${bpm}:${looping}:${targetEpochMicros}:${gatePercent}`,
+                );
             },
             savePattern: async () => { calls.push('save'); },
             transportStart: async () => { calls.push('start'); },
@@ -120,6 +122,7 @@ await test('startPlayback uses host audition when live update is off', async () 
         getPattern: (idx) => patterns[idx],
         scratch: { group: 1, pattern: 1, side: 'A', label: 'G1-P1A' },
         bpm: 119.5,
+        gatePercent: 37,
         transport: { start: async (sync) => { calls.push(`transport.start:${sync === null}`); } },
         stopAllPreviews: async () => { calls.push('stopPreviews'); },
         liveUpdate: false,
@@ -129,7 +132,8 @@ await test('startPlayback uses host audition when live update is off', async () 
 
     assert(firstPatIdx === 1, 'returns first pattern index');
     assert(calls[0] === 'stopPreviews', 'previews stop first');
-    assert(calls[1] === 'audition:P2:119.5:true', 'auditionPattern starts selected pattern');
+    assert(calls[1] === 'audition:P2:119.5:true:null:37',
+        'auditionPattern starts selected pattern with gate');
     assert(!calls.includes('save'), 'savePattern not called');
     assert(!calls.includes('start'), 'transportStart not called');
     assert(calls[2] === 'playing:true', 'playing flips true after audition starts');

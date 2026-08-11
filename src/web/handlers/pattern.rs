@@ -6,6 +6,7 @@ mod conversion;
 mod export;
 mod import;
 mod load_save;
+mod morph_plan;
 mod package;
 mod preview;
 
@@ -15,5 +16,6 @@ pub(crate) use conversion::*;
 pub use export::*;
 pub use import::*;
 pub use load_save::*;
+pub use morph_plan::*;
 pub use package::*;
 pub use preview::*;

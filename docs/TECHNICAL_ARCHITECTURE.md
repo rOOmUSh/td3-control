@@ -84,6 +84,7 @@ The route groups currently cover:
 - MIDI status, port listing, connect, disconnect, and sync source
 - pattern load, save, import, export, parse-bank, preview, and export-pool
 - transport start, stop, and BPM
+- host-audition start, immediate update, next-cycle queue, and stop
 - keyboard, scales, progression, and runtime config
 - progression package export
 - Bank items, snapshots, tags, scans, imports, compare, merge, related, duplicates, and audition
@@ -102,6 +103,16 @@ When idle, the app keeps a direct `MidiOutputConnection` in the active session.
 ### Playing state
 
 When transport playback starts, a dedicated clock runner thread takes ownership of that output connection.
+
+### Host audition scheduling
+
+When `LIVE` is off, host audition sends scheduled MIDI Note On and Note Off messages without writing a scratch slot or starting the TD-3 sequencer. The audition runner owns the MIDI output connection while this path is active.
+
+The start, immediate-update, and next-cycle queue requests accept an optional `gatePercent` value. The Rust request type also accepts `gate_percent`. Omitted values default to `50`, and handlers reject values outside `1..=100` with HTTP 400.
+
+Host audition uses an explicit MIDI timeline variant that converts gate to the nearest whole MIDI tick, clamped between one tick and one full step. The gate applies to ordinary notes and the final tail of tied-note groups. Rest behavior, accent velocity, terminal slide duration, connected TD-3 slide overlap, and cycle duration remain unchanged. The legacy timeline and MIDI export builders keep their previous `50%` behavior.
+
+An immediate update does not replace the schedule until currently sounding notes reach their existing Note Off. A next-cycle update uses the runner's schedule generation so a newer pattern, BPM, or gate pair supersedes older queued work without restarting playback or moving the browser highlight.
 
 ### Why that matters
 
@@ -133,11 +144,11 @@ The scratch slot is the core hardware bridge.
 Many features depend on it:
 
 - main-page live update
-- progression preview
+- device-sequenced progression preview
 - bank item audition
-- note preview and transport workflows
+- device-sequenced pattern preview and transport workflows
 
-By centralizing those actions around a declared scratch slot, the app avoids pretending it can do "temporary" hardware playback without using real device memory.
+By centralizing device-sequenced temporary playback around a declared scratch slot, the app makes those memory writes explicit. Host audition and keyboard note preview are separate MIDI-note paths that do not write pattern memory.
 
 ## Format Pipeline
 
@@ -207,6 +218,8 @@ Key characteristics:
 - sessionStorage and localStorage for lightweight persistence
 
 The main page, progression page, and bank page all have different state models because they solve different problems.
+
+The Control and Progression state modules share host-audition gate through the `td3_gate_percent` session key and the dependency-free `ui/js/shared/gate-control.js` module. The value is deliberately outside pattern models, saved formats, and persistent storage schemas.
 
 That separation is a strength, not a weakness.
 

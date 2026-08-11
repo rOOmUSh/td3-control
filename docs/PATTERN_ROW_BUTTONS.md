@@ -118,7 +118,9 @@ When `NO SAVE` is checked, the row preview uses host-sequenced audition:
 
 When Live Update is off, row preview also uses the same non-saving audition path even if the row `NO SAVE` checkbox is not checked. This keeps Live Update off as a no-write editing mode.
 
-During non-saving audition, changes to the row pattern are heard during playback without stopping and starting preview again. The update is applied at a safe note boundary so the currently sounding note is not cut short by the edit.
+During non-saving audition, row pattern and `GATE` changes are heard without stopping and starting preview again. The currently sounding note reaches its existing Note Off before the updated schedule takes over.
+
+The selected `GATE` value controls ordinary note length for host-sequenced row preview. An explicit `NO SAVE` preview retains and uses that value even when `LIVE` is on and the footer control is hidden. See [Bottom Toolbar](BOTTOM_TOOLBAR.md#gate) for the range and controls.
 
 Use `NO SAVE` when you want to hear a row on the hardware without replacing the configured scratch pattern. Use normal preview when you want the TD-3 sequencer and scratch-slot playback behavior.
 

@@ -140,12 +140,14 @@ fn env_carries_midi_runtime_keys() {
 #[test]
 fn env_carries_ui_keys() {
     let env = env_with_overrides(
-        "UI_DEFAULT_BPM=200\nUI_AUTO_CONNECT_TO_MIDI=0\nUI_AUTO_SET_LIVE_UPDATE=0\nUI_MAX_BANK_HISTORY_SIZE=42\n",
+        "UI_DEFAULT_BPM=200\nUI_AUTO_CONNECT_TO_MIDI=0\nUI_AUTO_SET_LIVE_UPDATE=0\nUI_MAX_BANK_HISTORY_SIZE=42\nUI_PATTERN_EXPORT_NAME_PROMPT=0\nUI_PATTERN_EXPORT_BATCH_DELAY_MS=3456\n",
     );
     assert_eq!(env.ui_default_bpm, 200);
     assert!(!env.ui_auto_connect_to_midi);
     assert!(!env.ui_auto_set_live_update);
     assert_eq!(env.ui_max_bank_history_size, 42);
+    assert!(!env.ui_pattern_export_name_prompt);
+    assert_eq!(env.ui_pattern_export_batch_delay_ms, 3_456);
 }
 
 #[test]
@@ -190,6 +192,7 @@ fn web_midi_runtime_uses_resolved_midi_names() {
         request_timeout: std::time::Duration::from_millis(2222),
         strict_name_match: true,
         retry_count: 3,
+        device_channel: 1,
     };
 
     let runtime = midi_runtime_config_from_resolved(&midi);

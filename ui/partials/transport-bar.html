@@ -1,5 +1,5 @@
 <footer class="flex-shrink-0 flex justify-between items-center h-20 bg-[#0d0f0f] border-t-4 border-[#1e2020] px-4 shadow-[0px_-10px_30px_rgba(0,0,0,0.8)]">
-  <div class="flex items-center gap-5">
+  <div class="transport-cluster flex items-center gap-5">
     <div class="flex flex-col items-center">
       <button id="btn-midi" class="w-10 h-10 rounded-full border-2 border-secondary-container flex items-center justify-center led-glow-red transition-all active:scale-95 tactile-button">
         <span class="material-symbols-outlined text-secondary-container text-lg">sync_problem</span>
@@ -27,6 +27,13 @@
       </button>
       <span class="text-[0.9rem] font-black text-on-surface-variant mt-1 tracking-widest">UPDATE</span>
     </div>
+    <div id="midi-channel-controls" class="hidden items-center justify-center">
+      <div class="device-channel-grid">
+        <select id="midi-channel-select" aria-label="Device MIDI channel"
+                class="device-channel-select bg-black border border-surface-container-highest rounded text-[1rem] font-mono text-on-secondary-fixed-variant outline-none"></select>
+        <span class="device-channel-label text-[0.9rem] font-black text-on-surface-variant tracking-widest">CH</span>
+      </div>
+    </div>
     <div id="remote-sync-controls" class="hidden items-center justify-center">
       <div class="remote-sync-grid">
         <button id="remote-sync-toggle" type="button" class="sync-pill remote-sync-toggle" aria-pressed="false">OFF</button>
@@ -49,7 +56,46 @@
         <span class="text-[1rem] font-bold text-on-surface-variant">BPM</span>
       </div>
     </div>
-    <div class="w-px h-14 bg-surface-container-highest"></div>
+    <div id="gate-controls" class="hidden flex items-center gap-3">
+      <div class="w-px h-14 bg-surface-container-highest"></div>
+      <div class="flex items-center gap-3 bg-surface-container-lowest p-1 rounded-xl border border-surface-container-highest shadow-inner">
+        <div class="w-[4.5rem] bg-black px-2 py-2 rounded-lg border-2 border-surface-container-highest bpm-display flex items-center justify-center">
+          <span id="gate-display" class="text-3xl font-digital text-on-secondary-fixed-variant leading-none text-center tabular-nums" style="text-shadow: 0 0 10px #8b0000;">50%</span>
+        </div>
+        <div class="flex flex-col items-center gap-1">
+          <div id="gate-knob" tabindex="0" role="slider" aria-label="Gate" aria-valuemin="1" aria-valuemax="100" aria-valuenow="50"
+               class="w-10 h-10 rounded-full bg-surface-container-highest border-2 border-surface-bright knob-shadow flex items-center justify-center relative cursor-pointer tactile-button focus:outline-none focus:ring-2 focus:ring-primary-fixed">
+            <div id="gate-indicator" class="w-0.5 h-4 bg-primary-fixed absolute top-1 left-1/2 -translate-x-1/2 origin-bottom knob-indicator"></div>
+            <div class="w-full h-full rounded-full milled-texture opacity-30"></div>
+          </div>
+          <span class="text-[1rem] font-bold text-on-surface-variant">GATE</span>
+        </div>
+      </div>
+    </div>
+    <div id="triplet-morph-controls" class="hidden flex items-center gap-3">
+      <div class="w-px h-14 bg-surface-container-highest"></div>
+      <div class="flex items-center gap-3 bg-surface-container-lowest p-1 rounded-xl border border-surface-container-highest shadow-inner">
+        <div class="w-[4.5rem] bg-black px-2 py-2 rounded-lg border-2 border-surface-container-highest bpm-display flex items-center justify-center">
+          <span id="triplet-morph-display" class="text-3xl font-digital text-on-secondary-fixed-variant leading-none text-center tabular-nums" style="text-shadow: 0 0 10px #8b0000;">0%</span>
+        </div>
+        <div class="flex flex-col items-center gap-1">
+          <div id="triplet-morph-knob" tabindex="0" role="slider" aria-label="Triplet morph" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+               class="w-10 h-10 rounded-full bg-surface-container-highest border-2 border-surface-bright knob-shadow flex items-center justify-center relative cursor-pointer tactile-button focus:outline-none focus:ring-2 focus:ring-primary-fixed">
+            <div id="triplet-morph-indicator" class="w-0.5 h-4 bg-primary-fixed absolute top-1 left-1/2 -translate-x-1/2 origin-bottom knob-indicator"></div>
+            <div class="w-full h-full rounded-full milled-texture opacity-30"></div>
+          </div>
+          <span class="text-[1rem] font-bold text-on-surface-variant">TRIPLET</span>
+        </div>
+        <div class="flex flex-col items-center">
+          <span class="text-[0.65rem] font-bold text-on-surface-variant leading-none">0</span>
+          <button id="triplet-morph-endpoint-toggle" type="button" role="switch" aria-checked="false" aria-label="Triplet endpoint toggle"
+                  class="relative w-5 h-8 my-0.5 rounded-full bg-black border-2 border-surface-container-highest cursor-pointer tactile-button focus:outline-none focus:ring-2 focus:ring-primary-fixed">
+            <div id="triplet-morph-endpoint-thumb" class="absolute left-1/2 -translate-x-1/2 top-0.5 w-3 h-3 rounded-full bg-primary-fixed knob-indicator transition-all"></div>
+          </button>
+          <span class="text-[0.65rem] font-bold text-on-surface-variant leading-none">100</span>
+        </div>
+      </div>
+    </div>
     <!-- <div class="flex items-center gap-2">
       <div class="flex flex-col items-center gap-0.5">
         <div class="flex items-baseline gap-0.5 font-mono text-gray-400">

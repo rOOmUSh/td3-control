@@ -23,27 +23,13 @@ pub struct EstablishedTd3MidiSession {
 pub fn establish_td3_midi_session(
     config: Td3MidiSessionConfig<'_>,
 ) -> Result<EstablishedTd3MidiSession, Td3Error> {
-    let (out_midi, out_port, in_midi, in_port) = midi_io::open_ports(
+    let (mut out_conn, rx, in_conn) = midi_io::open_device_with_retry(
         config.output_port_name,
         config.input_port_name,
         config.strict_name_match,
+        "td3-web",
+        "",
     )?;
-
-    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
-    let in_conn = in_midi
-        .connect(
-            &in_port,
-            "td3-web",
-            move |_stamp, msg, _| {
-                let _ = tx.send(msg.to_owned());
-            },
-            (),
-        )
-        .map_err(|e| midi_io::classify_connect_error("MIDI input", e))?;
-
-    let mut out_conn = out_midi
-        .connect(&out_port, "")
-        .map_err(|e| midi_io::classify_connect_error("MIDI output", e))?;
 
     let info = td3_protocol::establish_session(
         &mut out_conn,

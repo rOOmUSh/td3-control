@@ -6,14 +6,27 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use axum::routing::get;
 use axum::Router;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
 use crate::web::embedded_ui;
+use crate::web::state::{ConfigState, UiConfigSnapshot};
 
 fn build_app() -> Router {
     Router::new().fallback(embedded_ui::serve_asset)
+}
+
+fn build_injected_html_app() -> Router {
+    let state = ConfigState {
+        ui_config: UiConfigSnapshot::for_tests(),
+        env_file_path: std::path::PathBuf::from("TD3_CONFIG.env"),
+        user_config_dir: std::path::PathBuf::from("config"),
+    };
+    Router::new()
+        .route("/", get(crate::web::static_html::serve_index))
+        .with_state(state)
 }
 
 #[tokio::test]
@@ -55,6 +68,19 @@ async fn explicit_index_path_returns_html() {
         "expected text/html, got {}",
         ct
     );
+}
+
+#[tokio::test]
+async fn index_inlines_pattern_export_runtime_config_as_camel_case() {
+    let app = build_injected_html_app();
+    let req = Request::builder().uri("/").body(Body::empty()).unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let html = std::str::from_utf8(&body).unwrap();
+    assert!(html.contains("\"uiPatternExportNamePrompt\":true"));
+    assert!(html.contains("\"uiPatternExportBatchDelayMs\":2000"));
 }
 
 #[tokio::test]

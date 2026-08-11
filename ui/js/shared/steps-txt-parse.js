@@ -1,5 +1,5 @@
 // JS-side parser for the `.steps.txt` pattern DSL. Mirrors the validation
-// rules in `src/formats/steps_txt.rs::import` so text that round-trips
+// rules in `src/formats/steps_txt.rs::import_document` so text that round-trips
 // through the backend importer also round-trips through the UI paste path.
 //
 // Used by the main Control page PASTE path (Ctrl+V and the per-card
@@ -8,6 +8,8 @@
 // in-memory FULL clipboard (`td3_multipattern_clipboard`).
 //
 // Throws a plain Error on malformed input. Kept pure (no DOM / no fetch).
+
+import { parseBpmCentibpm } from './steps-txt-bpm.js';
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B', 'C^'];
 
@@ -22,17 +24,20 @@ export function looksLikeStepsTxt(text) {
 }
 
 /**
- * Parse `text` into a pattern object matching the UI's pattern shape:
+ * Parse `text` into `{ pattern, centibpm }`. The pattern matches the UI shape:
  *   { active_steps: number, triplet: boolean, steps: Step[16] }
  *   Step: { note, transpose: 'NORMAL'|'UP'|'DOWN', accent, slide,
  *           time: 'NORMAL'|'TIE'|'REST'|'TIE_REST' }
- * Throws on any validation failure. All 16 step indices must be present.
+ * Throws on any validation failure. Rows through active_steps are required;
+ * omitted trailing rows keep their safe defaults.
  */
-export function parseStepsTxt(text) {
-    if (typeof text !== 'string') throw new Error('parseStepsTxt: not a string');
+export function parseStepsTxtDocument(text) {
+    if (typeof text !== 'string') throw new Error('parseStepsTxtDocument: not a string');
 
     let activeSteps = null;
     let triplet = null;
+    let centibpm = null;
+    let bpmSeen = false;
     const steps = Array.from({ length: 16 }, () => defaultStep());
     let stepsSeen = 0;
 
@@ -60,7 +65,23 @@ export function parseStepsTxt(text) {
         }
         if (trimmed.startsWith('triplet_time=')) {
             const val = trimmed.slice('triplet_time='.length).trim().toLowerCase();
-            triplet = val === 'on';
+            if (val === 'on') triplet = true;
+            else if (val === 'off') triplet = false;
+            else throw new Error(`line ${lineNum}: invalid triplet_time '${val}' (expected on/off)`);
+            continue;
+        }
+        if (trimmed.startsWith('bpm=')) {
+            if (bpmSeen) throw new Error(`line ${lineNum}: duplicate bpm field`);
+            bpmSeen = true;
+            const raw = trimmed.slice('bpm='.length);
+            if (lines[i].trimEnd() !== lines[i]) {
+                throw new Error(`line ${lineNum}: invalid bpm '${raw}'`);
+            }
+            try {
+                centibpm = parseBpmCentibpm(raw);
+            } catch (err) {
+                throw new Error(`line ${lineNum}: ${err.message}`);
+            }
             continue;
         }
 
@@ -71,12 +92,15 @@ export function parseStepsTxt(text) {
             throw new Error(`line ${lineNum}: step line too short: '${trimmed}'`);
         }
         const idxStr = trimmed.slice(0, 2).trim();
-        const idx = Number.parseInt(idxStr, 10);
-        if (!Number.isInteger(idx)) {
+        if (!/^\d+$/.test(idxStr)) {
             throw new Error(`line ${lineNum}: invalid step index '${idxStr}'`);
         }
+        const idx = Number(idxStr);
         if (idx < 1 || idx > 16) {
             throw new Error(`line ${lineNum}: step index out of range: ${idx}`);
+        }
+        if (stepsSeen & (1 << (idx - 1))) {
+            throw new Error(`line ${lineNum}: duplicate step index: ${idx}`);
         }
 
         const rest = trimmed.slice(3);
@@ -122,17 +146,28 @@ export function parseStepsTxt(text) {
         stepsSeen |= 1 << (idx - 1);
     }
 
-    if (stepsSeen !== 0xFFFF) {
+    const declaredActiveSteps = activeSteps ?? 16;
+    const requiredMask = (1 << declaredActiveSteps) - 1;
+    if ((stepsSeen & requiredMask) !== requiredMask) {
         const missing = [];
-        for (let i = 1; i <= 16; i++) if (!(stepsSeen & (1 << (i - 1)))) missing.push(i);
+        for (let i = 1; i <= declaredActiveSteps; i++) {
+            if (!(stepsSeen & (1 << (i - 1)))) missing.push(i);
+        }
         throw new Error(`missing steps: [${missing.join(', ')}]`);
     }
 
     return {
-        active_steps: activeSteps ?? 16,
-        triplet: triplet ?? false,
-        steps,
+        pattern: {
+            active_steps: declaredActiveSteps,
+            triplet: triplet ?? false,
+            steps,
+        },
+        centibpm,
     };
+}
+
+export function parseStepsTxt(text) {
+    return parseStepsTxtDocument(text).pattern;
 }
 
 function defaultStep() {

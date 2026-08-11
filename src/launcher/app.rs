@@ -199,11 +199,11 @@ impl eframe::App for LauncherApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         if self.closing {
-            egui::CentralPanel::default().show_inside(ui, |_ui| {});
+            egui::CentralPanel::default().show(ui, |_ui| {});
             return;
         }
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.heading("TD-3 Control Launcher");
             ui.add_space(6.0);
 

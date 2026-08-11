@@ -4,7 +4,8 @@ use crate::config::{
     ArtifactPaths, BankJob, Config, ControlRuntime, MidiRuntime, Mode, RenderProfile,
 };
 use crate::formats::mid::{
-    build_timeline, encode_vlq, export, MidiExportOptions, MidiSlideMode, DEFAULT_PPQN,
+    build_timeline, build_timeline_with_gate, encode_vlq, export, MidiExportOptions, MidiSlideMode,
+    DEFAULT_PPQN,
 };
 use crate::formats::Format;
 use crate::pattern::Pattern;
@@ -126,6 +127,31 @@ fn timeline_no_slide_note_releases_at_half_step() {
         .map(|event| event.tick)
         .collect();
     assert_eq!(note_offs, vec![half_tick]);
+}
+
+#[test]
+fn legacy_timeline_keeps_truncated_half_step_for_odd_step_widths() {
+    let mut pattern = Pattern::default();
+    pattern.active_steps = 1;
+    pattern.step[0] = make_step(0, Transpose::Normal, Accent::Off, Slide::Off, Time::Normal);
+    let options = MidiExportOptions {
+        ppqn: 100,
+        ..MidiExportOptions::default()
+    };
+
+    let legacy = build_timeline(&pattern, "G1-P1A", &options).unwrap();
+    let rounded = build_timeline_with_gate(&pattern, "audition", &options, 50).unwrap();
+    let legacy_note_off = legacy
+        .iter()
+        .find(|event| event.data.first().map(|byte| byte & 0xF0) == Some(0x80))
+        .unwrap();
+    let rounded_note_off = rounded
+        .iter()
+        .find(|event| event.data.first().map(|byte| byte & 0xF0) == Some(0x80))
+        .unwrap();
+
+    assert_eq!(legacy_note_off.tick, 12);
+    assert_eq!(rounded_note_off.tick, 13);
 }
 
 #[test]
@@ -428,6 +454,7 @@ fn bars_resolve_to_loop_count_for_full_pattern() {
             request_timeout: Duration::from_secs(5),
             strict_name_match: false,
             retry_count: 0,
+            device_channel: 1,
         },
         target: None,
         files: ArtifactPaths::default(),
@@ -467,6 +494,7 @@ fn bars_override_loop_count() {
             request_timeout: Duration::from_secs(5),
             strict_name_match: false,
             retry_count: 0,
+            device_channel: 1,
         },
         target: None,
         files: ArtifactPaths::default(),

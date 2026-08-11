@@ -130,10 +130,9 @@ fn parse_filename(name: &str) -> Option<Parsed> {
     // Detect kind by prefix.
     let (kind, rest) = if let Some(r) = stem.strip_prefix("bank_preimport_backup_") {
         (BackupKind::PreImport, r)
-    } else if let Some(r) = stem.strip_prefix("bank_ui_backup_") {
-        (BackupKind::PreUi, r)
     } else {
-        return None;
+        let r = stem.strip_prefix("bank_ui_backup_")?;
+        (BackupKind::PreUi, r)
     };
 
     // `rest` is `<timestamp>[-<pid>]-<short-hash>`.

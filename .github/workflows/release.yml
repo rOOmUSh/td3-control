@@ -8,6 +8,8 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   WINDOWS_PLATFORM: windows-x86_64
   WINDOWS_TARGET: x86_64-pc-windows-msvc
+  LINUX_PLATFORM: linux-x86_64
+  LINUX_TARGET: x86_64-unknown-linux-gnu
 
 permissions:
   contents: read
@@ -19,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2025-vs2026, macos-latest]
+        os: [ubuntu-latest, windows-2025-vs2026, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -27,8 +29,22 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test --no-fail-fast
+      # midir needs ALSA; the eframe launcher needs X11, Wayland and GL.
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev \
+            libudev-dev \
+            libgl1-mesa-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxrandr-dev \
+            libxi-dev
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked --no-fail-fast
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
@@ -37,8 +53,10 @@ jobs:
       - if: runner.os == 'Windows'
         run: call scripts\dev\js_tests_win.bat <NUL
         shell: cmd
-      - if: runner.os != 'Windows'
+      - if: runner.os == 'macOS'
         run: bash scripts/dev/js_tests_macos.sh
+      - if: runner.os == 'Linux'
+        run: bash scripts/dev/js_tests_linux.sh
 
   build-and-package-windows:
     needs: test
@@ -58,7 +76,7 @@ jobs:
           node-version: '24'
       - run: npm ci
       - run: npm run build:tailwind
-      - run: cargo build --release --target ${{ env.WINDOWS_TARGET }}
+      - run: cargo build --release --locked --target ${{ env.WINDOWS_TARGET }}
       - name: Azure login with OIDC
         uses: azure/login@v3
         with:
@@ -97,6 +115,46 @@ jobs:
         with:
           name: td3-control-${{ env.WINDOWS_PLATFORM }}
           path: dist/*.zip
+          if-no-files-found: error
+
+  build-and-package-linux:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: ${{ env.LINUX_TARGET }}
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      # midir needs ALSA; the eframe launcher needs X11, Wayland and GL.
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev \
+            libudev-dev \
+            libgl1-mesa-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxrandr-dev \
+            libxi-dev
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm run build:tailwind
+      - run: cargo build --release --locked --target ${{ env.LINUX_TARGET }}
+      - name: Package release
+        shell: bash
+        run: bash scripts/package-release.sh "${GITHUB_REF_NAME}" "${LINUX_PLATFORM}" "${LINUX_TARGET}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: td3-control-${{ env.LINUX_PLATFORM }}
+          path: dist/*.zip
+          if-no-files-found: error
 
   build-and-package-macos:
     needs: test
@@ -124,7 +182,7 @@ jobs:
           node-version: '24'
       - run: npm ci
       - run: npm run build:tailwind
-      - run: cargo build --release --target ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
       - name: Package release
         shell: bash
         run: bash scripts/package-release.sh "${GITHUB_REF_NAME}" "${{ matrix.platform }}" "${{ matrix.target }}"
@@ -132,10 +190,12 @@ jobs:
         with:
           name: td3-control-${{ matrix.platform }}
           path: dist/*.zip
+          if-no-files-found: error
 
   release:
     needs:
       - build-and-package-windows
+      - build-and-package-linux
       - build-and-package-macos
     runs-on: ubuntu-latest
     permissions:
@@ -150,3 +210,4 @@ jobs:
         with:
           files: dist/*.zip
           body_path: CHANGELOG.md
+          fail_on_unmatched_files: true

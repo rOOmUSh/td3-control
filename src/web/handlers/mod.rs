@@ -19,7 +19,10 @@ use crate::td3_protocol;
 use super::api_types::*;
 use super::clock;
 use super::config_storage;
-use super::state::{AppState, ClockState, ConfigState, MidiSession, MidiState, PlaybackState};
+use super::midi_channel::channel_status;
+use super::state::{
+    AppState, AuditionState, ClockState, ConfigState, MidiSession, MidiState, PlaybackState,
+};
 use super::user_config::{KeyboardConfig, ProgressionConfig, ScalesConfig, UserConfigFile};
 use crate::midi_io::SysexSender;
 
@@ -31,6 +34,11 @@ use crate::midi_io::SysexSender;
 pub enum AppError {
     BadRequest(String),
     Conflict(String),
+    Coded {
+        status: StatusCode,
+        code: &'static str,
+        message: String,
+    },
     Internal(String),
     NotFound(String),
     Midi(Td3Error),
@@ -38,14 +46,26 @@ pub enum AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let (status, message) = match &self {
-            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
-            AppError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
-            AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
-            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
-            AppError::Midi(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        let (status, message, code) = match &self {
+            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone(), None),
+            AppError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone(), None),
+            AppError::Coded {
+                status,
+                code,
+                message,
+            } => (*status, message.clone(), Some((*code).to_string())),
+            AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone(), None),
+            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone(), None),
+            AppError::Midi(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string(), None),
         };
-        (status, Json(ErrorBody { error: message })).into_response()
+        (
+            status,
+            Json(ErrorBody {
+                error: message,
+                code,
+            }),
+        )
+            .into_response()
     }
 }
 

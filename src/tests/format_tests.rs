@@ -172,6 +172,196 @@ fn steps_roundtrip_default() {
 }
 
 #[test]
+fn steps_document_reads_integer_bpm() {
+    let text = include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt");
+    let document = steps_txt::import_document(text).unwrap();
+    assert_eq!(document.centibpm, Some(12_800));
+}
+
+#[test]
+fn steps_document_reads_fractional_bpm_exactly() {
+    let fixture = include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt");
+    for (value, expected) in [("128.3", 12_830), ("128.30", 12_830), ("128.37", 12_837)] {
+        let text = fixture.replace("bpm=128", &format!("bpm={}", value));
+        let document = steps_txt::import_document(&text).unwrap();
+        assert_eq!(document.centibpm, Some(expected), "bpm={}", value);
+    }
+}
+
+#[test]
+fn steps_document_without_bpm_returns_none() {
+    let text = include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt")
+        .lines()
+        .filter(|line| !line.starts_with("bpm="))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let document = steps_txt::import_document(&text).unwrap();
+    assert_eq!(document.centibpm, None);
+}
+
+#[test]
+fn steps_rejects_bpm_below_20() {
+    let text =
+        include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt").replace("bpm=128", "bpm=19.99");
+    assert!(steps_txt::import_document(&text).is_err());
+}
+
+#[test]
+fn steps_rejects_bpm_above_300() {
+    let text = include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt")
+        .replace("bpm=128", "bpm=300.01");
+    assert!(steps_txt::import_document(&text).is_err());
+}
+
+#[test]
+fn steps_rejects_bpm_with_more_than_two_decimals() {
+    let text = include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt")
+        .replace("bpm=128", "bpm=128.001");
+    assert!(steps_txt::import_document(&text).is_err());
+}
+
+#[test]
+fn steps_accepts_bpm_range_boundaries() {
+    let fixture = include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt");
+    for (value, expected) in [("20", 2_000), ("20.00", 2_000), ("300", 30_000)] {
+        let text = fixture.replace("bpm=128", &format!("bpm={}", value));
+        let document = steps_txt::import_document(&text).unwrap();
+        assert_eq!(document.centibpm, Some(expected), "bpm={}", value);
+    }
+}
+
+#[test]
+fn steps_rejects_malformed_bpm_values() {
+    let fixture = include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt");
+    for value in [
+        "", "+128", "-128", "1e2", "NaN", " 128", "128 ", "12 8", "128..0",
+    ] {
+        let text = fixture.replace("bpm=128", &format!("bpm={}", value));
+        assert!(
+            steps_txt::import_document(&text).is_err(),
+            "bpm={} should be rejected",
+            value
+        );
+    }
+}
+
+#[test]
+fn steps_rejects_duplicate_bpm() {
+    let text = include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt")
+        .replace("bpm=128", "bpm=128\nbpm=129");
+    let err = steps_txt::import_document(&text).unwrap_err().to_string();
+    assert!(err.contains("duplicate bpm"), "got: {}", err);
+}
+
+#[test]
+fn steps_rejects_row_indexes_outside_one_through_sixteen() {
+    let fixture = include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt");
+    for index in ["00", "17"] {
+        let text = fixture.replace("01  G:---:N", &format!("{}  G:---:N", index));
+        let err = steps_txt::import_document(&text).unwrap_err().to_string();
+        assert!(err.contains("step index out of range"), "got: {}", err);
+    }
+}
+
+#[test]
+fn steps_rejects_duplicate_row_indexes() {
+    let text = include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt")
+        .replace("02  G:D--:N", "01  G:D--:N");
+    let err = steps_txt::import_document(&text).unwrap_err().to_string();
+    assert!(err.contains("duplicate step index"), "got: {}", err);
+}
+
+#[test]
+fn legacy_import_discards_optional_bpm_but_keeps_pattern() {
+    let text = include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt");
+    let document = steps_txt::import_document(text).unwrap();
+    let legacy_pattern = steps_txt::import(text).unwrap();
+    assert_patterns_equal(&document.pattern, &legacy_pattern);
+}
+
+#[test]
+fn steps_v11_fixture_defaults_omitted_trailing_rows() {
+    use crate::step::{Accent, Slide, Step, Time, Transpose};
+
+    let text = include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt");
+    let document = steps_txt::import_document(text).unwrap();
+    assert_eq!(document.pattern.active_steps, 3);
+    assert_eq!(document.pattern.step[3], Step::default());
+    assert_eq!(document.pattern.step[15], Step::default());
+    assert_eq!(document.pattern.step[0].note, 7);
+    assert_eq!(document.pattern.step[1].transpose, Transpose::Down);
+    assert_eq!(document.pattern.step[1].accent, Accent::Off);
+    assert_eq!(document.pattern.step[1].slide, Slide::Off);
+    assert_eq!(document.pattern.step[2].time, Time::Tie);
+}
+
+#[test]
+fn steps_legacy_sixteen_rows_preserve_provided_inactive_values() {
+    let text = include_str!("../../tests/fixtures/all_features.steps.txt")
+        .replace("active_steps=16", "active_steps=3");
+    let pattern = steps_txt::import(&text).unwrap();
+    assert_eq!(pattern.active_steps, 3);
+    assert_ne!(pattern.step[15], crate::step::Step::default());
+}
+
+#[test]
+fn steps_export_with_bpm_writes_integer_without_fraction() {
+    let pattern =
+        steps_txt::import(include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt")).unwrap();
+    let exported = steps_txt::export_with_bpm(&pattern, 12_800).unwrap();
+    assert!(exported.contains("\nbpm=128\n"));
+}
+
+#[test]
+fn steps_export_with_bpm_preserves_two_decimal_precision() {
+    let pattern = Pattern::default();
+    let exported = steps_txt::export_with_bpm(&pattern, 12_837).unwrap();
+    assert!(exported.contains("\nbpm=128.37\n"));
+}
+
+#[test]
+fn steps_export_three_active_steps_emits_only_rows_one_to_three() {
+    let pattern =
+        steps_txt::import(include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt")).unwrap();
+    let exported = steps_txt::export_with_bpm(&pattern, 12_800).unwrap();
+    assert!(exported.contains("\n03  G:---:T\n"));
+    assert!(!exported.contains("\n04 "));
+    assert!(!exported.contains("\n16 "));
+}
+
+#[test]
+fn steps_export_sixteen_active_steps_still_emits_all_sixteen_rows() {
+    let pattern = test_pattern();
+    let exported = steps_txt::export_with_bpm(&pattern, 12_000).unwrap();
+    for index in 1..=16 {
+        assert!(
+            exported.contains(&format!("\n{:02} ", index)),
+            "missing step {}",
+            index
+        );
+    }
+}
+
+#[test]
+fn steps_export_rejects_invalid_centibpm() {
+    let pattern = Pattern::default();
+    assert!(steps_txt::export_with_bpm(&pattern, 1_999).is_err());
+    assert!(steps_txt::export_with_bpm(&pattern, 30_001).is_err());
+}
+
+#[test]
+fn steps_v11_roundtrip_preserves_pattern_and_bpm() {
+    let document =
+        steps_txt::import_document(include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt"))
+            .unwrap();
+    let exported =
+        steps_txt::export_with_bpm(&document.pattern, document.centibpm.unwrap()).unwrap();
+    let reparsed = steps_txt::import_document(&exported).unwrap();
+    assert_eq!(reparsed.centibpm, document.centibpm);
+    assert_patterns_equal(&reparsed.pattern, &document.pattern);
+}
+
+#[test]
 fn steps_contains_header() {
     let pat = test_pattern();
     let exported = steps_txt::export(&pat);

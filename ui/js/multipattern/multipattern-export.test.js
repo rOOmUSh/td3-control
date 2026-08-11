@@ -1,6 +1,13 @@
 // Usage: node ui/js/multipattern/multipattern-export.test.js
 
-import { buildRbsExportPayload, buildSingleFileExportPlan } from './multipattern-export.js';
+import {
+    buildRbsExportFilename,
+    buildRbsExportPayload,
+    buildSingleFileExportPlan,
+    formatPatternExportTimestamp,
+    PATTERN_SET_NAME_MAX_BYTES,
+    sanitizePatternSetName,
+} from './multipattern-export.js';
 
 let passed = 0;
 let failed = 0;
@@ -64,11 +71,11 @@ test('single-file export uses all patterns when none are checked', () => {
         patterns,
         [],
         'toml',
-        { group: 2, pattern: 3, side: 'B' },
+        'Acid_Set',
     );
     assert(result.error === null, 'no error');
     assert(result.count === 3, 'all patterns counted');
-    assert(result.files.map(file => file.filename).join(',') === 'pattern_P001.toml,pattern_P002.toml,pattern_P003.toml',
+    assert(result.files.map(file => file.filename).join(',') === 'P001_Acid_Set.toml,P002_Acid_Set.toml,P003_Acid_Set.toml',
         'all filenames are sequence indexed');
 });
 
@@ -77,23 +84,67 @@ test('single-file export uses checked patterns when present', () => {
         patterns,
         [2, 0],
         'json',
-        { group: 2, pattern: 3, side: 'B' },
+        '2026-07-21-08-46-13',
     );
     assert(result.error === null, 'no error');
     assert(result.count === 2, 'checked count');
-    assert(result.files.map(file => file.filename).join(',') === 'pattern_P001.json,pattern_P003.json',
+    assert(result.files.map(file => file.filename).join(',') === 'P001_2026-07-21-08-46-13.json,P003_2026-07-21-08-46-13.json',
         'checked filenames retain source indexes');
 });
 
-test('single-file export preserves the legacy filename for one selected pattern', () => {
+test('single-file export uses the source index for one selected pattern', () => {
     const result = buildSingleFileExportPlan(
         patterns,
         [1],
         'seq',
-        { group: 2, pattern: 3, side: 'B' },
+        'Named Set',
     );
     assert(result.error === null, 'no error');
-    assert(result.files[0].filename === 'pattern_G2P3B.seq', 'single filename uses selected slot');
+    assert(result.files[0].filename === 'P002_Named Set.seq', 'single filename uses source index');
+});
+
+test('single-file export rejects an empty sanitized name', () => {
+    const result = buildSingleFileExportPlan(patterns, [], 'mid', ' ... ');
+    assert(result.error === 'empty-name', 'empty sanitized name rejected');
+});
+
+test('pattern set names are safe filename components', () => {
+    assert(sanitizePatternSetName('  Acid Set  ') === 'Acid Set', 'outer whitespace trimmed');
+    assert(sanitizePatternSetName('unsafe/name?') === 'unsafe_name_', 'forbidden characters replaced');
+    assert(sanitizePatternSetName('Acid Set... ') === 'Acid Set', 'unsafe trailing dots removed');
+    assert(sanitizePatternSetName('CON') === '_CON', 'Windows reserved name protected');
+    assert(sanitizePatternSetName('lpt9.mix') === '_lpt9.mix', 'reserved stem with suffix protected');
+    assert(sanitizePatternSetName(' ... ') === '', 'dot-only name becomes empty');
+});
+
+test('pattern set names are capped without splitting Unicode characters', () => {
+    const ascii = sanitizePatternSetName('A'.repeat(PATTERN_SET_NAME_MAX_BYTES + 40));
+    assert(ascii.length === PATTERN_SET_NAME_MAX_BYTES, 'ASCII name capped');
+
+    const knob = '\u{1f39b}';
+    const unicode = sanitizePatternSetName(knob.repeat(40));
+    assert(new TextEncoder().encode(unicode).length <= PATTERN_SET_NAME_MAX_BYTES,
+        'Unicode name stays inside UTF-8 byte cap');
+    assert(Array.from(unicode).length === 30, 'Unicode name retains every complete character that fits');
+    assert(Array.from(unicode).every(character => character === knob),
+        'Unicode characters remain intact');
+
+    const plan = buildSingleFileExportPlan(patterns, [0], 'steps.txt', 'B'.repeat(200));
+    assert(plan.files[0].filename.length < 140, 'ordinary filename keeps extension headroom');
+    assert(buildRbsExportFilename('C'.repeat(200)).length < 130,
+        'RBS filename keeps extension headroom');
+});
+
+test('export timestamps use local date and time components', () => {
+    const date = new Date(2026, 6, 21, 8, 46, 13);
+    assert(formatPatternExportTimestamp(date) === '2026-07-21-08-46-13', 'timestamp format');
+});
+
+test('RBS export uses only the shared name component', () => {
+    assert(buildRbsExportFilename('Acid/Set', 'rbs') === 'Acid_Set.rbs', 'named RBS filename');
+    assert(buildRbsExportFilename('2026-07-21-08-46-13') === '2026-07-21-08-46-13.rbs',
+        'timestamped RBS filename');
+    assert(buildRbsExportFilename(' ... ') === null, 'empty RBS name rejected');
 });
 
 if (failed > 0) {

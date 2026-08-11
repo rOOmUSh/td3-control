@@ -113,6 +113,7 @@ let pkgState = null;
 let formats = null;
 let setStatusFn = () => {};
 let exportFn = null;
+let getBpmFn = null;
 let btnSave = null;
 let pkgStatusEl = null;
 let pkgLastSavedEl = null;
@@ -122,6 +123,7 @@ let inFlight = false;
 export function init(opts = {}) {
     setStatusFn = typeof opts.setStatus === 'function' ? opts.setStatus : setStatusFn;
     exportFn = typeof opts.exportFn === 'function' ? opts.exportFn : null;
+    getBpmFn = typeof opts.getBpm === 'function' ? opts.getBpm : null;
 
     btnSave = document.getElementById('btn-save-package');
     pkgStatusEl = document.getElementById('pkg-status');
@@ -197,6 +199,12 @@ async function save() {
     let payload;
     try {
         payload = buildExportPayload({ ...pkgState, formats });
+        if (!getBpmFn) throw new Error('BPM provider is not configured');
+        const centibpm = Math.round(Number(getBpmFn()) * 100);
+        if (!Number.isInteger(centibpm) || centibpm < 2000 || centibpm > 30000) {
+            throw new Error('BPM must be between 20 and 300');
+        }
+        payload.centibpm = centibpm;
     } catch (err) {
         setStatusFn(err.message);
         return;

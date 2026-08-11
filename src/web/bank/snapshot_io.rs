@@ -116,14 +116,18 @@ pub(super) async fn export_snapshot_patterns(
         None => snapshot.name.clone(),
     };
 
-    let target_dir = PathBuf::from(&req.target_dir);
     let midi_opts = state.midi.export_options.clone();
+    let centibpm =
+        crate::web::snapshot_export::resolve_stepdsl_centibpm(req.centibpm, midi_opts.bpm)
+            .map_err(|e| AppError::BadRequest(e.to_string()))?;
+    let target_dir = PathBuf::from(&req.target_dir);
     let result = tokio::task::spawn_blocking(move || {
         crate::web::snapshot_export::run(&crate::web::snapshot_export::ExportRequest {
             target_dir: &target_dir,
             folder_stem: &folder_stem,
             slots: &slots,
             formats: &req.formats,
+            centibpm,
             midi_opts: &midi_opts,
         })
     })

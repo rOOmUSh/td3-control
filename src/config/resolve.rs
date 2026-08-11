@@ -34,12 +34,13 @@ impl MidiDeviceArgs {
             request_timeout: Duration::from_millis(self.timeout_ms.unwrap_or(env.midi_timeout_ms)),
             strict_name_match: self.strict_device_name || env.midi_strict_name_match,
             retry_count: self.retries.unwrap_or(env.midi_retries),
+            device_channel: env.midi_device_channel,
         }
     }
 }
 
 impl MidiRenderArgs {
-    fn resolve(&self, env: &AppEnv, requested_formats: Vec<Format>) -> RenderProfile {
+    pub(crate) fn resolve(&self, env: &AppEnv, requested_formats: Vec<Format>) -> RenderProfile {
         RenderProfile {
             requested_formats,
             bpm: self.bpm.unwrap_or(env.ui_default_bpm),

@@ -47,15 +47,19 @@ The scratch pattern is the device slot the app is allowed to overwrite during li
 It is used for:
 
 - live update
-- preview
-- audition
-- playback handoff
+- device-sequenced preview
+- device-sequenced playback handoff
+- Bank audition
 
 The scratch slot is configurable with `UI_SCRATCH_PATTERN` and is intentionally surfaced to the user so it is never a hidden destructive behavior.
+
+When `LIVE` is off, or a row has `NO SAVE` checked, host audition sends timed MIDI notes without writing the scratch slot. The `GATE` control changes note length only for that non-saving path.
 
 ## Will the app overwrite my device data?
 
 It can overwrite the configured scratch slot during normal operation.
+
+Non-saving host audition does not write pattern memory. Leave `LIVE` off, or use a row's `NO SAVE` option, when you want to audition through direct MIDI notes instead of the scratch slot.
 
 For higher-risk operations, the app includes safety steps:
 

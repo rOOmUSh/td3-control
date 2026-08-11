@@ -8,8 +8,10 @@
 // Round-trip coverage pairs this with steps-txt-format.test.js: format
 // then parse, parse then format - the pattern must be stable.
 
+import { readFileSync } from 'node:fs';
+
 import { formatPatternAsStepsTxt } from './steps-txt-format.js';
-import { parseStepsTxt, looksLikeStepsTxt } from './steps-txt-parse.js';
+import { parseStepsTxt, parseStepsTxtDocument, looksLikeStepsTxt } from './steps-txt-parse.js';
 
 let passed = 0;
 let failed = 0;
@@ -39,6 +41,11 @@ function defStep() {
 function defPattern() {
     return { active_steps: 16, triplet: false, steps: Array.from({ length: 16 }, defStep) };
 }
+
+const V11_FIXTURE = readFileSync(
+    new URL('../../../tests/fixtures/stepsdslv1_1.steps.txt', import.meta.url),
+    'utf8',
+).replaceAll(String.fromCharCode(13), '');
 
 const FIXTURE_ALL =
     'format=td3-stepdsl-v1\n' +
@@ -96,7 +103,7 @@ test('parses full-feature fixture', () => {
 });
 
 test('parses minimal default pattern', () => {
-    const text = formatPatternAsStepsTxt(defPattern());
+    const text = formatPatternAsStepsTxt(defPattern(), 120);
     const p = parseStepsTxt(text);
     assert(p.active_steps === 16 && p.triplet === false, 'defaults preserved');
     for (let i = 0; i < 16; i++) {
@@ -109,14 +116,14 @@ test('parses minimal default pattern', () => {
 test('parses active_steps non-default', () => {
     const p = defPattern();
     p.active_steps = 7;
-    const p2 = parseStepsTxt(formatPatternAsStepsTxt(p));
+    const p2 = parseStepsTxt(formatPatternAsStepsTxt(p, 120));
     assert(p2.active_steps === 7, 'active_steps=7');
 });
 
 test('TIE_REST and UP parse correctly', () => {
     const p = defPattern();
     p.steps[0] = { note: 'G', transpose: 'UP', accent: true, slide: true, time: 'TIE_REST' };
-    const back = parseStepsTxt(formatPatternAsStepsTxt(p));
+    const back = parseStepsTxt(formatPatternAsStepsTxt(p, 120));
     const s = back.steps[0];
     assert(s.note === 'G' && s.transpose === 'UP' && s.accent && s.slide && s.time === 'TIE_REST',
         'TIE_REST + UP + accent + slide round-trips');
@@ -147,6 +154,88 @@ test('CRLF line endings parse as well', () => {
     assert(p.steps[0].transpose === 'DOWN', 'CRLF fixture parses');
 });
 
+test('parses the v1.1 fixture as a short document with exact BPM', () => {
+    const doc = parseStepsTxtDocument(V11_FIXTURE);
+    assert(doc.centibpm === 12800, 'integer BPM becomes exact centibpm');
+    assert(doc.pattern.active_steps === 3, 'active_steps=3');
+    assert(doc.pattern.steps.length === 16, 'internal pattern keeps 16 steps');
+    assert(doc.pattern.steps[0].note === 'G', 'fixture row 1 preserved');
+    assert(doc.pattern.steps[1].transpose === 'DOWN', 'fixture row 2 preserved');
+    assert(doc.pattern.steps[2].time === 'TIE', 'fixture row 3 preserved');
+    for (let i = 3; i < 16; i++) {
+        assert(JSON.stringify(doc.pattern.steps[i]) === JSON.stringify(defStep()), `step ${i + 1} defaulted`);
+    }
+});
+
+test('legacy 16-row document preserves rows after active_steps', () => {
+    const text = FIXTURE_ALL.replace('active_steps=16', 'active_steps=3');
+    const doc = parseStepsTxtDocument(text);
+    assert(doc.pattern.active_steps === 3, 'active_steps=3');
+    assert(doc.pattern.steps[15].note === 'E', 'provided row 16 preserved');
+});
+
+test('missing row inside active range is rejected', () => {
+    const text = V11_FIXTURE.replace('02  G:D--:N\n', '');
+    let message = '';
+    try { parseStepsTxtDocument(text); } catch (err) { message = err.message; }
+    assert(message.includes('missing steps: [2]'), 'missing active row reported');
+});
+
+test('reads fractional BPM exactly and missing BPM as null', () => {
+    const fractional = parseStepsTxtDocument(V11_FIXTURE.replace('bpm=128', 'bpm=128.37'));
+    assert(fractional.centibpm === 12837, '128.37 becomes 12837');
+    const oneDigit = parseStepsTxtDocument(V11_FIXTURE.replace('bpm=128', 'bpm=128.3'));
+    assert(oneDigit.centibpm === 12830, '128.3 becomes 12830');
+    const trailingZero = parseStepsTxtDocument(V11_FIXTURE.replace('bpm=128', 'bpm=128.30'));
+    assert(trailingZero.centibpm === 12830, '128.30 becomes 12830');
+    const absent = parseStepsTxtDocument(V11_FIXTURE.replace('bpm=128\n', ''));
+    assert(absent.centibpm === null, 'missing BPM returns null');
+});
+
+test('accepts BPM boundaries and an empty fractional suffix', () => {
+    const minimum = parseStepsTxtDocument(V11_FIXTURE.replace('bpm=128', 'bpm=20'));
+    assert(minimum.centibpm === 2000, '20 BPM accepted');
+    const maximum = parseStepsTxtDocument(V11_FIXTURE.replace('bpm=128', 'bpm=300.00'));
+    assert(maximum.centibpm === 30000, '300.00 BPM accepted');
+    const emptyFraction = parseStepsTxtDocument(V11_FIXTURE.replace('bpm=128', 'bpm=128.'));
+    assert(emptyFraction.centibpm === 12800, '128. accepted');
+});
+
+test('rejects malformed, out-of-range, and duplicate BPM fields', () => {
+    for (const bpm of ['19.99', '300.01', '128.371', '+128', '1e2', 'NaN', ' 128']) {
+        let threw = false;
+        try { parseStepsTxtDocument(V11_FIXTURE.replace('bpm=128', `bpm=${bpm}`)); }
+        catch (_) { threw = true; }
+        assert(threw, `${bpm} rejected`);
+    }
+    let duplicate = false;
+    try { parseStepsTxtDocument(V11_FIXTURE.replace('bpm=128', 'bpm=128\nbpm=129')); }
+    catch (err) { duplicate = /duplicate bpm/.test(err.message); }
+    assert(duplicate, 'duplicate BPM rejected');
+
+    let trailingWhitespace = false;
+    try { parseStepsTxtDocument(V11_FIXTURE.replace('bpm=128', 'bpm=128 ')); }
+    catch (_) { trailingWhitespace = true; }
+    assert(trailingWhitespace, 'trailing BPM whitespace rejected');
+});
+
+test('rejects duplicate step indexes', () => {
+    const text = V11_FIXTURE.replace('02  G:D--:N', '01  G:D--:N');
+    let threw = false;
+    try { parseStepsTxtDocument(text); } catch (err) { threw = /duplicate step/.test(err.message); }
+    assert(threw, 'duplicate row rejected');
+});
+
+test('rejects step indexes 00 and 17', () => {
+    for (const index of ['00', '17']) {
+        const text = V11_FIXTURE.replace('01  G:---:N', `${index}  G:---:N`);
+        let threw = false;
+        try { parseStepsTxtDocument(text); }
+        catch (err) { threw = /step index out of range/.test(err.message); }
+        assert(threw, `step ${index} rejected`);
+    }
+});
+
 // --- Round-trip -----------------------------------------------------------
 
 test('format → parse → format is stable', () => {
@@ -156,9 +245,9 @@ test('format → parse → format is stable', () => {
     p.steps[3] = { note: 'A#', transpose: 'DOWN', accent: true, slide: false, time: 'TIE' };
     p.steps[9] = { note: 'C^', transpose: 'UP', accent: false, slide: true, time: 'REST' };
 
-    const text1 = formatPatternAsStepsTxt(p);
+    const text1 = formatPatternAsStepsTxt(p, 128.37);
     const p2 = parseStepsTxt(text1);
-    const text2 = formatPatternAsStepsTxt(p2);
+    const text2 = formatPatternAsStepsTxt(p2, 128.37);
     assert(text1 === text2, 'round-trip is idempotent');
 });
 

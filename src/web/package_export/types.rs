@@ -11,6 +11,8 @@ pub struct PackageExportInput<'a> {
     pub acid_patterns: &'a [Pattern; 4],
     pub basslines: &'a [Pattern; 4],
     pub basslines_full: Option<&'a [Pattern; 20]>,
+    /// Resolved StepDSL tempo in centi-BPM. This does not affect MIDI export.
+    pub centibpm: u32,
     pub midi_opts: &'a crate::formats::mid::MidiExportOptions,
 }
 

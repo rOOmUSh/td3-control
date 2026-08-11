@@ -30,6 +30,14 @@ MIDI_TIMEOUT_MS=5000
 # Uploads are never retried to prevent partial writes.
 MIDI_RETRIES=0
 
+# MIDI channel (1-16) the connected TD-3 listens on.
+# Used by host audition (NO-LIVE playback) and the keyboard note preview,
+# which address the device with channel-voice Note On/Off messages. A device
+# set to a different channel ignores them and stays silent.
+# Device playback (LIVE mode) is unaffected: it writes the pattern over SysEx
+# and drives the device sequencer with channel-less MIDI realtime messages.
+MIDI_DEVICE_CHANNEL=1
+
 
 # -----------------------------------------------------------------------------
 # 2. WEB UI & SERVER SETTINGS
@@ -145,3 +153,16 @@ MIDI_EXPORT_SLIDE_MODE="td3"
 
 # Default number of times the pattern loops in a single exported MIDI file.
 MIDI_EXPORT_LOOP_COUNT=1
+
+
+# -----------------------------------------------------------------------------
+# 8. PATTERN EXPORT SETTINGS
+# -----------------------------------------------------------------------------
+
+# If 1, the Main page asks for a pattern-set name before exporting patterns.
+# If 0, exported pattern filenames use a shared click-time timestamp.
+UI_PATTERN_EXPORT_NAME_PROMPT=1
+
+# Pause in milliseconds between browser download batches of 10 patterns.
+# Set to 0 to disable the pause (0-60000).
+UI_PATTERN_EXPORT_BATCH_DELAY_MS=2000

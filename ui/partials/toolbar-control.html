@@ -44,7 +44,23 @@
   </div>
   <div class="flex items-center gap-1.5">
     <label for="triplet-toggle" class="text-[0.8rem] font-black text-on-surface-variant tracking-wider">TRIPLET</label>
-    <button id="triplet-toggle" class="td3-toolbar-btn td3-toolbar-btn--neutral tactile-button">OFF</button>
+    <!-- Morph send sits under the button rather than beside it: inline it
+         widened the toolbar row enough to wrap the last button onto a
+         second line. When checked, the global and per-pattern TRIPLET
+         buttons replace their target with the 12-cell projection of the
+         morph plan instead of only setting the native triplet flag.
+         Switching TRIPLET back off restores the source. Unchecked
+         (default) keeps the plain flag behaviour. -->
+    <div class="flex flex-col items-center gap-0.5">
+      <button id="triplet-toggle" class="td3-toolbar-btn td3-toolbar-btn--neutral tactile-button">OFF</button>
+      <label for="triplet-morph-send"
+             class="flex items-center gap-0.5 cursor-pointer select-none leading-none"
+             title="MORPH: TRIPLET writes the 12-step triplet projection of this pattern instead of only setting the triplet flag. Switching TRIPLET off restores the original 16 steps.">
+        <input id="triplet-morph-send" type="checkbox" class="peer sr-only"/>
+        <span class="w-2.5 h-2.5 rounded-sm border border-on-surface-variant bg-transparent flex items-center justify-center text-[0.5rem] font-black leading-none text-black transition-colors peer-checked:bg-amber-400 peer-checked:border-amber-400 after:content-[''] peer-checked:after:content-['V']"></span>
+        <span class="text-[0.55rem] font-bold tracking-wider text-on-surface-variant peer-checked:text-amber-400">MORPH</span>
+      </label>
+    </div>
   </div>
 
   <div class="w-px h-5 bg-surface-container-highest"></div>

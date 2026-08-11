@@ -75,6 +75,18 @@ test('initial state: 1 pattern, focused=0, no checks', () => {
     assert(state.getPattern().steps.length === 16, 'focused pattern 16 steps');
 });
 
+test('gate defaults to 50 and setter clamps into shared session storage', () => {
+    state.setGatePercent(50);
+    assert(state.getGatePercent() === 50, 'default is 50 percent');
+    state.setGatePercent(0);
+    assert(state.getGatePercent() === 1, 'lower value clamps to one');
+    state.setGatePercent(101);
+    assert(state.getGatePercent() === 100, 'upper value clamps to 100');
+    assert(sessionStorage.getItem('td3_gate_percent') === '100',
+        'shared session key stores the current value');
+    state.setGatePercent(50);
+});
+
 test('setStep(stepIdx, step) without patIdx targets focused pattern', () => {
     reset();
     state.setStep(0, { note: 'D#', transpose: 'NORMAL', accent: true, slide: false, time: 'NORMAL' });
@@ -1078,6 +1090,235 @@ test('shuffleStepsBulk no-op on empty list', () => {
     state.shuffleStepsBulk([]);
     assert(notifyCount === 0, 'empty list: no notify');
     assert(state.getStep(0, 0).accent === true, 'empty list: pattern untouched');
+});
+
+// ---------------------------------------------------------------------------
+// Triplet morph session
+// ---------------------------------------------------------------------------
+
+const MORPH_KEY = 'td3_triplet_morph_session_v1';
+
+test('triplet morph starts at zero and never enters the main state blob', () => {
+    reset();
+    state.resetTripletMorphSession();
+    assert(state.getTripletMorphPercent() === 0, 'defaults to zero');
+    assert(!state.isTripletMorphActive(), 'not active at zero');
+    state.setTripletMorphPercent(35);
+    const blob = JSON.parse(sessionStorage.getItem('td3_multipattern'));
+    assert(!('tripletMorphPercent' in blob), 'main blob has no morph amount');
+    assert(!('tripletMorphSession' in blob), 'main blob has no morph session');
+    state.resetTripletMorphSession();
+});
+
+test('a positive amount opens a versioned session with canonical sources', () => {
+    reset();
+    state.resetTripletMorphSession();
+    state.setTripletMorphPercent(50);
+    assert(state.getTripletMorphPercent() === 50, 'amount stored');
+    const session = JSON.parse(sessionStorage.getItem(MORPH_KEY));
+    assert(session.version === 1, 'session version 1');
+    assert(session.amount === 50, 'session amount 50');
+    assert(Array.isArray(session.canonicalSources), 'canonical sources array');
+    assert(session.canonicalSources.length === state.getPatternCount(), 'one text per pattern');
+    assert(session.canonicalSources[0].startsWith('{"active_steps":16,"triplet":false,'),
+        'fixed field order canonical text');
+    state.setTripletMorphPercent(72);
+    const updated = JSON.parse(sessionStorage.getItem(MORPH_KEY));
+    assert(updated.amount === 72, 'knob change updates only the amount');
+    assert(updated.canonicalSources[0] === session.canonicalSources[0], 'sources stable');
+    state.resetTripletMorphSession();
+});
+
+test('amount normalization clamps to integers zero through one hundred', () => {
+    reset();
+    state.resetTripletMorphSession();
+    state.setTripletMorphPercent(150);
+    assert(state.getTripletMorphPercent() === 100, 'clamps high');
+    state.setTripletMorphPercent(-3);
+    assert(state.getTripletMorphPercent() === 0, 'clamps low to zero');
+    state.setTripletMorphPercent('41.4');
+    assert(state.getTripletMorphPercent() === 41, 'rounds numeric strings');
+    state.resetTripletMorphSession();
+});
+
+test('ineligible sources refuse a positive amount', () => {
+    reset();
+    state.resetTripletMorphSession();
+    state.setTriplet(0, true);
+    assert(!state.isTripletMorphSourceEligible(), 'native triplet is ineligible');
+    state.setTripletMorphPercent(30);
+    assert(state.getTripletMorphPercent() === 0, 'native triplet refuses morph');
+    state.setTriplet(0, false);
+    state.setActiveSteps(0, 7);
+    state.setTripletMorphPercent(30);
+    assert(state.getTripletMorphPercent() === 0,
+        'a length that is not whole beats refuses morph');
+    reset();
+
+    // Whole four-step beats are all supported.
+    for (const len of [4, 8, 12, 16]) {
+        state.resetTripletMorphSession();
+        state.setActiveSteps(0, len);
+        assert(state.isTripletMorphSourceEligible(), `${len} steps is eligible`);
+        state.setTripletMorphPercent(30);
+        assert(state.getTripletMorphPercent() === 30, `${len} steps accepts morph`);
+    }
+    reset();
+});
+
+test('a source-changing edit resets the amount and clears the session', () => {
+    reset();
+    state.resetTripletMorphSession();
+    state.setTripletMorphPercent(40);
+    assert(state.isTripletMorphActive(), 'session open');
+    state.setStep(0, 3, {
+        note: 'E', transpose: 'NORMAL', accent: false, slide: false, time: 'NORMAL',
+    });
+    assert(state.getTripletMorphPercent() === 0, 'edit resets to zero');
+    assert(sessionStorage.getItem(MORPH_KEY) === null, 'session storage cleared');
+    assert(state.getStep(0, 3).note === 'E', 'the canonical edit still lands');
+});
+
+test('a structural change resets the amount', () => {
+    reset();
+    state.resetTripletMorphSession();
+    state.setTripletMorphPercent(40);
+    state.addPattern();
+    assert(state.getTripletMorphPercent() === 0, 'add resets to zero');
+    assert(sessionStorage.getItem(MORPH_KEY) === null, 'session storage cleared');
+    reset();
+});
+
+test('returning to zero discards the derived session', () => {
+    reset();
+    state.resetTripletMorphSession();
+    state.setTripletMorphPercent(60);
+    state.setTripletMorphPercent(0);
+    assert(state.getTripletMorphPercent() === 0, 'back at zero');
+    assert(state.getTripletMorphSession() === null, 'session dropped');
+    assert(sessionStorage.getItem(MORPH_KEY) === null, 'storage removed');
+});
+
+test('plans are cached per exact canonical source identity', () => {
+    reset();
+    state.resetTripletMorphSession();
+    state.setTripletMorphPercent(20);
+    const sourceText = JSON.parse(sessionStorage.getItem(MORPH_KEY)).canonicalSources[0];
+    assert(state.getTripletMorphPlan(sourceText) === null, 'no plan yet');
+    state.setTripletMorphPlan(sourceText, { planVersion: 1, beats: [] });
+    assert(state.getTripletMorphPlan(sourceText).planVersion === 1, 'plan cached');
+    const persisted = JSON.parse(sessionStorage.getItem(MORPH_KEY));
+    assert(persisted.plans[sourceText].planVersion === 1, 'plan persisted');
+    state.resetTripletMorphSession();
+});
+
+// Reload restore paths use a fresh module instance over the same
+// sessionStorage polyfill.
+{
+    reset();
+    state.resetTripletMorphSession();
+    state.setTripletMorphPercent(50);
+    const restored = await import('./multipattern-state.js?morph-restore=match');
+    assert(restored.getTripletMorphPercent() === 50,
+        'reload restores the amount when canonical sources match exactly');
+    console.log('  ok: reload restores a matching morph session');
+
+    const tampered = JSON.parse(sessionStorage.getItem(MORPH_KEY));
+    tampered.canonicalSources[0] = tampered.canonicalSources[0].replace(
+        '"note":"C"', '"note":"D#"');
+    sessionStorage.setItem(MORPH_KEY, JSON.stringify(tampered));
+    const mismatched = await import('./multipattern-state.js?morph-restore=mismatch');
+    assert(mismatched.getTripletMorphPercent() === 0,
+        'source mismatch on reload resets to zero');
+    assert(sessionStorage.getItem(MORPH_KEY) === null,
+        'mismatched payload is deleted');
+    console.log('  ok: reload rejects a mismatched morph session');
+
+    sessionStorage.setItem(MORPH_KEY, JSON.stringify({ version: 99, amount: 40 }));
+    const badShape = await import('./multipattern-state.js?morph-restore=shape');
+    assert(badShape.getTripletMorphPercent() === 0,
+        'unknown session version resets to zero');
+    console.log('  ok: reload rejects an unknown session version');
+    state.resetTripletMorphSession();
+}
+
+// The MORPH mode flags have to cross a page load with the patterns they
+// describe: a row still holding a twelve-step projection needs to come
+// back knowing it can undo it.
+{
+    reset();
+    state.addPattern();
+    state.setTripletMorphSend(true);
+    state.setTripletMorphSendFor(1, true);
+    const reloaded = await import('./multipattern-state.js?morph-send=flags');
+    assert(reloaded.isTripletMorphSend() === true,
+        'the global MORPH flag survives a reload');
+    assert(reloaded.isTripletMorphSendFor(1) === true,
+        'a per-row MORPH flag survives a reload');
+    assert(reloaded.isTripletMorphSendFor(0) === false,
+        'a row that was off stays off');
+    console.log('  ok: reload restores the MORPH mode flags');
+    state.setTripletMorphSend(false);
+    state.setTripletMorphSendFor(1, false);
+}
+
+test('an unchanged connected value does not notify', () => {
+    reset();
+    state.setConnected(false);
+    let notifyCount = 0;
+    state.onChange(() => { notifyCount++; });
+
+    // The MIDI status poll calls this every tick. Notifying on an
+    // unchanged value rebuilds every card, which is visible as the row
+    // flickering once per poll.
+    state.setConnected(false);
+    state.setConnected(false);
+    assert(notifyCount === 0, 'repeated identical polls are silent');
+
+    state.setConnected(true);
+    assert(notifyCount === 1, 'a real change still notifies');
+    assert(state.isConnected() === true, 'and is applied');
+    state.setConnected(true);
+    assert(notifyCount === 1, 'and repeats of the new value are silent too');
+    state.setConnected(false);
+});
+
+test('triplet morph send is global plus an independent flag per row', () => {
+    reset();
+    state.addPattern();
+
+    assert(state.isTripletMorphSend() === false, 'global default off');
+    assert(state.isTripletMorphSendFor(0) === false, 'row 0 default off');
+    assert(state.isTripletMorphSendFor(1) === false, 'row 1 default off');
+
+    state.setTripletMorphSendFor(0, true);
+    assert(state.isTripletMorphSendFor(0) === true, 'row 0 set');
+    assert(state.isTripletMorphSendFor(1) === false, 'row 1 untouched by its neighbour');
+    assert(state.isTripletMorphSend() === false, 'a row flag does not set the global one');
+
+    state.setTripletMorphSend(true);
+    assert(state.isTripletMorphSendFor(1) === false, 'the global flag does not set a row');
+
+    state.setTripletMorphSendFor(0, false);
+    assert(state.isTripletMorphSendFor(0) === false, 'row 0 cleared');
+    state.setTripletMorphSend(false);
+
+    // Out-of-range and missing indexes are answered, never thrown on.
+    assert(state.isTripletMorphSendFor(99) === false, 'unknown index reads false');
+    state.setTripletMorphSendFor(null, true);
+    state.setTripletMorphSendFor(undefined, true);
+    assert(state.isTripletMorphSendFor(0) === false, 'a null index writes nothing');
+});
+
+test('setting a row morph flag notifies without touching the pattern', () => {
+    reset();
+    const before = JSON.stringify(state.getPattern(0));
+    let notifyCount = 0;
+    state.onChange(() => { notifyCount++; });
+    state.setTripletMorphSendFor(0, true);
+    assert(notifyCount === 1, 'one notify so the row re-renders its checkbox');
+    assert(JSON.stringify(state.getPattern(0)) === before, 'the pattern is untouched');
+    state.setTripletMorphSendFor(0, false);
 });
 
 // ---------------------------------------------------------------------------

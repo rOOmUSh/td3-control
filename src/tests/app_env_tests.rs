@@ -21,6 +21,8 @@ fn template_parses_without_error() {
     assert_eq!(env.web_port, 3030);
     assert_eq!(env.web_bind, "127.0.0.1");
     assert_eq!(env.ui_scratch_pattern, "G1-P1A");
+    assert!(env.ui_pattern_export_name_prompt);
+    assert_eq!(env.ui_pattern_export_batch_delay_ms, 2_000);
     assert_eq!(env.midi_export_channel, 1);
     assert!(env.midi_timeout_ms >= 1000);
     assert!(!env.library_database_path.is_empty());
@@ -77,6 +79,58 @@ fn user_file_overrides_template_defaults() {
     assert_eq!(env.ui_rand_note_percent, 50);
     // Unspecified keys fall back to template values.
     assert_eq!(env.midi_port_substring, "TD-3");
+    assert!(env.ui_pattern_export_name_prompt);
+    assert_eq!(env.ui_pattern_export_batch_delay_ms, 2_000);
+}
+
+// ── device MIDI channel ──────────────────────────────────────────────
+
+#[test]
+fn template_defaults_the_device_channel_to_one() {
+    // Channel 1 is what host audition sent before the channel became
+    // configurable, so the shipped default must preserve it.
+    let env = AppEnv::from_template().expect("bundled template must parse");
+    assert_eq!(env.midi_device_channel, 1);
+}
+
+#[test]
+fn config_written_before_the_key_existed_still_loads() {
+    // Backward compatibility: a user file saved by an earlier release has
+    // no MIDI_DEVICE_CHANNEL line. Loading must succeed and fall back to
+    // the template default rather than failing on a missing required key.
+    let dir = temp_dir("nochannel");
+    let path = dir.join(CONFIG_FILE_PATH);
+    std::fs::write(&path, "WEB_PORT=4040\nMIDI_PORT_SUBSTRING=\"TD-3\"\n").unwrap();
+
+    let (env, _first_run) = AppEnv::load_or_create(&path).unwrap();
+    assert_eq!(env.midi_device_channel, 1);
+}
+
+#[test]
+fn user_file_selects_the_device_channel() {
+    let dir = temp_dir("channel3");
+    let path = dir.join(CONFIG_FILE_PATH);
+    std::fs::write(&path, "MIDI_DEVICE_CHANNEL=3\n").unwrap();
+
+    let (env, _first_run) = AppEnv::load_or_create(&path).unwrap();
+    assert_eq!(env.midi_device_channel, 3);
+}
+
+#[test]
+fn device_channel_outside_one_through_sixteen_is_rejected() {
+    for value in ["0", "17", "255", "-1", "two"] {
+        let dir = temp_dir(&format!("badchannel{}", value.replace('-', "neg")));
+        let path = dir.join(CONFIG_FILE_PATH);
+        std::fs::write(&path, format!("MIDI_DEVICE_CHANNEL={value}\n")).unwrap();
+
+        let err = AppEnv::load_or_create(&path)
+            .expect_err(&format!("channel '{value}' must be rejected"))
+            .to_string();
+        assert!(
+            err.contains("MIDI_DEVICE_CHANNEL"),
+            "error should name the key: {err}"
+        );
+    }
 }
 
 // ── malformed input ──────────────────────────────────────────────────
@@ -128,6 +182,17 @@ fn invalid_bool_rejected() {
     let err = AppEnv::load_or_create(&path).unwrap_err().to_string();
     assert!(err.contains("MIDI_STRICT_NAME_MATCH"));
     assert!(err.contains("maybe"));
+}
+
+#[test]
+fn pattern_export_delay_out_of_range_rejected() {
+    let dir = temp_dir("pattern-export-delay-oor");
+    let path = dir.join(CONFIG_FILE_PATH);
+    std::fs::write(&path, "UI_PATTERN_EXPORT_BATCH_DELAY_MS=60001\n").unwrap();
+    let err = AppEnv::load_or_create(&path).unwrap_err().to_string();
+    assert!(err.contains("UI_PATTERN_EXPORT_BATCH_DELAY_MS"), "{err}");
+    assert!(err.contains("60001"), "{err}");
+    assert!(err.contains("0..=60000"), "{err}");
 }
 
 #[test]

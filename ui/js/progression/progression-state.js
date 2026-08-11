@@ -5,10 +5,25 @@ import {
     transposeBasslineSetInPlace,
 } from '../shared/transpose-step.js';
 import { envInt, envBool } from '../td3-env.js';
+import {
+    readGatePercent,
+    writeGatePercent,
+} from '../shared/gate-control.js';
+import {
+    readMidiChannel,
+    writeMidiChannel,
+} from '../shared/midi-channel-control.js';
+import { createTripletMorphSession } from '../shared/triplet-morph-session.js';
+import { canonicalPatternText } from '../shared/pattern-canonical.js';
+import { editableSteps } from '../shared/triplet-morph-editing.js';
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B', 'C^'];
 const STORAGE_KEY = 'td3_progression';
 const BANK_KEY = 'td3_bank'; // shared with main page
+// Own key, not shared with the Control page: a morph session is only
+// valid against the exact canonical sources it was opened on, and the
+// two pages hold different pattern sets.
+const TRIPLET_MORPH_SESSION_KEY = 'td3_progression_triplet_morph_session_v1';
 
 // Boot defaults from window.TD3_CONFIG_ENV - no JS-side fallback literals.
 const ENV_BPM         = envInt('uiDefaultBpm');
@@ -35,6 +50,11 @@ let group = 1;
 let patternNum = 1;
 let side = 'A';
 let bpm = parseFloat(sessionStorage.getItem('td3_bpm')) || ENV_BPM;
+let gatePercent = readGatePercent();
+// `MIDI_DEVICE_CHANNEL` is the startup default; a value chosen from the
+// transport bar overrides it for the session. Shared with the Control
+// page through the same session storage key.
+let midiChannel = readMidiChannel(envInt('midiDeviceChannel'));
 let playing = sessionStorage.getItem('td3_playing') === 'true';
 let connected = sessionStorage.getItem('td3_midi_connected') === 'true';
 let liveUpdate = !!ENV_LIVE_UPDATE;
@@ -83,9 +103,80 @@ const listeners = [];
 export function onChange(fn) { listeners.push(fn); }
 
 function notify(patternChanged = false) {
+    // A source-changing action while morph audition is active resets the
+    // amount before observers run: exact canonical identity is the
+    // session's validity condition.
+    if (morphSession.isActive() && (patternChanged || morphSession.sourcesChanged())) {
+        // At the 100 endpoint the user may edit surviving notes, so the
+        // session re-baselines onto the edited source instead of being
+        // discarded. Anywhere below 100 nothing can edit through the UI,
+        // so a source change is an outside mutation and resets.
+        if (morphSession.getPercent() >= 100) morphSession.rebaseline();
+        else morphSession.clear();
+    }
     save();
     listeners.forEach(fn => fn(patternChanged));
 }
+
+// --- Triplet morph session (transient, versioned storage) ---
+//
+// Session identity covers the four acid patterns, the page's canonical
+// editable source. Generated basslines always carry 16 active steps and
+// inherit the acid pattern's triplet flag, so they are structurally
+// eligible whenever the acid patterns are; keeping them out of the
+// identity set means swapping a bassline archetype does not discard the
+// morph session. Each audition call still resolves its own amount, so
+// an ineligible pattern is never silently morphed.
+
+const morphSession = createTripletMorphSession({
+    storageKey: TRIPLET_MORPH_SESSION_KEY,
+    getPatterns: () => patterns,
+});
+
+export function getTripletMorphPercent() { return morphSession.getPercent(); }
+export function isTripletMorphActive() { return morphSession.isActive(); }
+export function getTripletMorphSession() { return morphSession.getSession(); }
+export function isTripletMorphSourceEligible() {
+    return morphSession.isSourceEligible();
+}
+
+export function resetTripletMorphSession() {
+    if (!morphSession.isActive() && !morphSession.getSession()) return;
+    morphSession.clear();
+    notify();
+}
+
+/**
+ * Set the morph amount. A positive amount is refused while any acid
+ * pattern is ineligible; the caller reads the unchanged value back to
+ * detect the refusal. Returning to 0 discards the derived session.
+ */
+export function setTripletMorphPercent(value) {
+    if (morphSession.setPercent(value)) notify();
+}
+
+export function getTripletMorphPlan(canonicalText) {
+    return morphSession.getPlan(canonicalText);
+}
+
+export function setTripletMorphPlan(canonicalText, plan) {
+    morphSession.setPlan(canonicalText, plan);
+}
+/**
+ * Steps the user may edit for one pattern right now. Null means every
+ * step; an empty set means nothing is editable.
+ */
+export function getTripletMorphEditableSteps(patIdx) {
+    const pattern = getPattern(patIdx);
+    const plan = pattern ? morphSession.getPlan(canonicalPatternText(pattern)) : null;
+    return editableSteps(morphSession.getPercent(), plan);
+}
+
+export function isTripletMorphStepEditable(patIdx, step) {
+    const allowed = getTripletMorphEditableSteps(patIdx);
+    return allowed === null || allowed.has(Number(step));
+}
+
 
 // --- Persistence ---
 
@@ -142,6 +233,8 @@ export function getGroup() { return group; }
 export function getPatternNum() { return patternNum; }
 export function getSide() { return side; }
 export function getBpm() { return bpm; }
+export function getGatePercent() { return gatePercent; }
+export function getMidiChannel() { return midiChannel; }
 export function isPlaying() { return playing; }
 export function isConnected() { return connected; }
 export function isLiveUpdate() { return liveUpdate; }
@@ -219,6 +312,18 @@ export function setBpm(b) {
     const safe = Number.isFinite(numeric) ? numeric : 120;
     bpm = Math.round(Math.max(20, Math.min(300, safe)) * 100) / 100;
     sessionStorage.setItem('td3_bpm', String(bpm));
+    notify();
+}
+export function setGatePercent(value) {
+    const next = writeGatePercent(value);
+    if (next === gatePercent) return;
+    gatePercent = next;
+    notify();
+}
+export function setMidiChannel(value) {
+    const next = writeMidiChannel(value);
+    if (next === midiChannel) return;
+    midiChannel = next;
     notify();
 }
 export function setPlaying(v) { playing = v; sessionStorage.setItem('td3_playing', v ? 'true' : 'false'); notify(); }
@@ -324,17 +429,28 @@ export function shiftAllSteps(n) {
     notify(true);
 }
 
+/**
+ * Step indices a randomizer may rewrite for one pattern. At amount 0
+ * this is every step, so randomizing behaves exactly as before; at the
+ * 100 endpoint it is only the notes still visible in triplet mode.
+ */
+function morphEditableIndices(patIdx) {
+    const all = Array.from({ length: 16 }, (_, i) => i);
+    const allowed = getTripletMorphEditableSteps(patIdx);
+    return allowed === null ? all : all.filter(i => allowed.has(i));
+}
+
 // --- Randomize slides on a single pattern ---
 export function randomizeSlides(patIdx, slidePercent) {
     const steps = patterns[patIdx].steps;
-    const active = [];
-    for (let i = 0; i < 16; i++) {
-        if (steps[i].time !== 'REST' && steps[i].time !== 'TIE_REST') active.push(i);
-    }
+    const editable = morphEditableIndices(patIdx);
+    if (editable.length === 0) return;
+    const active = editable.filter(
+        i => steps[i].time !== 'REST' && steps[i].time !== 'TIE_REST',
+    );
     const count = Math.round(active.length * slidePercent);
-    const shuffled = shuffle([...active]);
-    const slideSet = new Set(shuffled.slice(0, count));
-    for (let i = 0; i < 16; i++) {
+    const slideSet = new Set(shuffle([...active]).slice(0, count));
+    for (const i of editable) {
         steps[i].slide = slideSet.has(i);
     }
     notify(true);
@@ -343,14 +459,14 @@ export function randomizeSlides(patIdx, slidePercent) {
 // --- Randomize accents on a single pattern ---
 export function randomizeAccents(patIdx, accPercent) {
     const steps = patterns[patIdx].steps;
-    const active = [];
-    for (let i = 0; i < 16; i++) {
-        if (steps[i].time !== 'REST' && steps[i].time !== 'TIE_REST') active.push(i);
-    }
+    const editable = morphEditableIndices(patIdx);
+    if (editable.length === 0) return;
+    const active = editable.filter(
+        i => steps[i].time !== 'REST' && steps[i].time !== 'TIE_REST',
+    );
     const count = Math.round(active.length * accPercent);
-    const shuffled = shuffle([...active]);
-    const accSet = new Set(shuffled.slice(0, count));
-    for (let i = 0; i < 16; i++) {
+    const accSet = new Set(shuffle([...active]).slice(0, count));
+    for (const i of editable) {
         steps[i].accent = accSet.has(i);
     }
     notify(true);
@@ -363,11 +479,11 @@ export function randomizeAccents(patIdx, accPercent) {
 // steps have slide/accent cleared to match the default REST step semantics.
 export function randomizeRests(patIdx, notePercent) {
     const steps = patterns[patIdx].steps;
-    const indices = Array.from({ length: 16 }, (_, i) => i);
-    const activeCount = Math.round(16 * notePercent);
-    const shuffled = shuffle([...indices]);
-    const newActive = new Set(shuffled.slice(0, activeCount));
-    for (let i = 0; i < 16; i++) {
+    const editable = morphEditableIndices(patIdx);
+    if (editable.length === 0) return;
+    const activeCount = Math.round(editable.length * notePercent);
+    const newActive = new Set(shuffle([...editable]).slice(0, activeCount));
+    for (const i of editable) {
         if (newActive.has(i)) {
             if (steps[i].time === 'REST' || steps[i].time === 'TIE_REST') {
                 steps[i].time = 'NORMAL';
@@ -389,11 +505,11 @@ export function randomizeRests(patIdx, notePercent) {
 // REST and is revealed when the user un-rests the step.
 export function randomizeUd(patIdx, udPercent) {
     const steps = patterns[patIdx].steps;
-    const indices = Array.from({ length: 16 }, (_, i) => i);
-    const count = Math.round(16 * udPercent);
-    const shuffled = shuffle([...indices]);
-    const flagged = new Set(shuffled.slice(0, count));
-    for (let i = 0; i < 16; i++) {
+    const editable = morphEditableIndices(patIdx);
+    if (editable.length === 0) return;
+    const count = Math.round(editable.length * udPercent);
+    const flagged = new Set(shuffle([...editable]).slice(0, count));
+    for (const i of editable) {
         if (flagged.has(i)) {
             steps[i].transpose = Math.random() < 0.5 ? 'UP' : 'DOWN';
         } else {
@@ -512,3 +628,4 @@ export function restoreSnapshot(snap, skipNotify) {
 // --- Init ---
 
 load();
+morphSession.restore();

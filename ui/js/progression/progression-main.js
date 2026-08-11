@@ -39,6 +39,13 @@ import {
     runMagicProgression,
     BUDGET_BULK,
 } from '../magic-randomizer/magic-randomizer.js';
+import { initMidiChannelControl } from '../shared/midi-channel-control.js';
+import { initGateControl } from '../shared/gate-control.js';
+import { initTripletMorphControl } from '../shared/triplet-morph-control.js';
+import { initTripletMorphEndpointToggle } from '../shared/triplet-morph-toggle.js';
+import { morphRequestPercent } from '../shared/triplet-morph-timing.js';
+import * as tripletMorphView from './progression-triplet-morph-view.js';
+import { morphEditNotice } from '../shared/triplet-morph-editing.js';
 
 // Render the four pattern rows into their container before any other module
 // reaches for row-pN / grid-pN / label-pN elements.
@@ -190,8 +197,16 @@ function currentHostAuditionPattern() {
 }
 
 function syncActiveAudition() {
-    if (!state.isConnected()) return false;
-    if (!currentHostAuditionPattern()) return false;
+    // No update will be sent, so nothing will arrive to restart a step
+    // timer a tempo change stopped.
+    if (!state.isConnected()) {
+        transport.resumeHostTempoIfStillPaused();
+        return false;
+    }
+    if (!currentHostAuditionPattern()) {
+        transport.resumeHostTempoIfStillPaused();
+        return false;
+    }
     auditionUpdatePending = true;
     if (!auditionUpdateInFlight) flushAuditionUpdate();
     return true;
@@ -205,7 +220,21 @@ async function flushAuditionUpdate() {
             if (!state.isConnected()) break;
             const pattern = currentHostAuditionPattern();
             if (!pattern) break;
-            await api.auditionUpdate(pattern, state.getBpm(), true);
+            const response = await api.auditionUpdate(
+                pattern,
+                state.getBpm(),
+                true,
+                null,
+                state.getGatePercent(),
+                morphRequestPercent(pattern, state.getTripletMorphPercent()),
+                state.getMidiChannel(),
+            );
+            if (!auditionUpdatePending
+                && playbackMode === 'audition'
+                && state.isPlaying()
+                && !transport.applyAuditionTiming(response)) {
+                setStatus('Audition sync error: applied timing acknowledgement missing');
+            }
         }
     } catch (err) {
         setStatus('Audition update error: ' + err.message);
@@ -213,6 +242,12 @@ async function flushAuditionUpdate() {
         auditionUpdateInFlight = false;
         if (auditionUpdatePending && state.isConnected() && currentHostAuditionPattern()) {
             flushAuditionUpdate();
+        } else {
+            // Nothing further will reconcile: if the loop drained without
+            // an authoritative acknowledgement the step timer that the
+            // tempo change stopped is still stopped, under audible
+            // playback.
+            transport.resumeHostTempoIfStillPaused();
         }
     }
 }
@@ -288,7 +323,15 @@ async function handleArchetypePlay(clickIdx, key) {
     await stopAllPreviews({ keepMenu: true });
     try {
         if (!state.isLiveUpdate()) {
-            await api.auditionPattern(bl, state.getBpm(), true);
+            await api.auditionPattern(
+                bl,
+                state.getBpm(),
+                true,
+                null,
+                state.getGatePercent(),
+                morphRequestPercent(bl, state.getTripletMorphPercent()),
+                state.getMidiChannel(),
+            );
             activeBassPreviewIdx = clickIdx;
             activeBassPreviewMode = 'audition';
             clearAuditionUpdateQueue();
@@ -328,7 +371,18 @@ async function handlePatternPreview(clickIdx) {
     }
     try {
         if (!state.isLiveUpdate()) {
-            await api.auditionPattern(state.getPattern(clickIdx), state.getBpm(), true);
+            await api.auditionPattern(
+                state.getPattern(clickIdx),
+                state.getBpm(),
+                true,
+                null,
+                state.getGatePercent(),
+                morphRequestPercent(
+                    state.getPattern(clickIdx),
+                    state.getTripletMorphPercent(),
+                ),
+                state.getMidiChannel(),
+            );
             activePatternPreviewIdx = clickIdx;
             activePatternPreviewMode = 'audition';
             clearAuditionUpdateQueue();
@@ -355,11 +409,91 @@ async function handlePatternPreview(clickIdx) {
 
 function updateLiveBtn() {
     btnLive.classList.toggle('is-active', state.isLiveUpdate());
+    gateControl.render();
+    midiChannelControl.render();
+    tripletMorphControl.render();
+    tripletMorphEndpointToggle.render();
 }
 
-btnLive.addEventListener('click', () => {
-    state.setLiveUpdate(!state.isLiveUpdate());
-    setStatus(state.isLiveUpdate() ? 'Live update ON' : 'Live update OFF');
+const gateControl = initGateControl({
+    getValue: () => state.getGatePercent(),
+    setValue: (value) => state.setGatePercent(value),
+    isVisible: () => !state.isLiveUpdate(),
+    onValueChange: () => syncActiveAudition(),
+});
+
+// The device only sounds channel-voice messages on its own channel, and
+// only host audition sends those, so the selector follows the GATE knob
+// in appearing when Live Update is off. A change takes effect on the
+// next audition request; nothing is restarted.
+const midiChannelControl = initMidiChannelControl({
+    getValue: () => state.getMidiChannel(),
+    setValue: (value) => state.setMidiChannel(value),
+    isVisible: () => !state.isLiveUpdate(),
+    onValueChange: () => {
+        transport.syncAuditionPattern();
+    },
+});
+
+
+// Shared by the TRIPLET knob and its endpoint toggle: apply the amount
+// with one refusal message, and resync whatever is auditioning.
+function setTripletMorphAmount(value) {
+    const before = state.getTripletMorphPercent();
+    state.setTripletMorphPercent(value);
+    if (state.getTripletMorphPercent() === before
+        && Number(value) > 0
+        && !state.isTripletMorphSourceEligible()) {
+        setStatus('TRIPLET morph needs 16-step straight patterns');
+    }
+}
+
+function onTripletMorphAmountChange(value) {
+    if (value > 0) {
+        setStatus('Triplet audition is derived. Return TRIPLET to 0 to edit.');
+    } else {
+        setStatus('TRIPLET morph off - canonical view restored');
+    }
+    syncActiveAudition();
+}
+
+const tripletMorphControl = initTripletMorphControl({
+    getValue: () => state.getTripletMorphPercent(),
+    setValue: setTripletMorphAmount,
+    isVisible: () => !state.isLiveUpdate(),
+    onValueChange: onTripletMorphAmountChange,
+});
+
+const tripletMorphEndpointToggle = initTripletMorphEndpointToggle({
+    getValue: () => state.getTripletMorphPercent(),
+    setValue: setTripletMorphAmount,
+    onValueChange: onTripletMorphAmountChange,
+});
+
+// Editing gate across the morph range. At 0 everything is allowed. At
+// the 100 endpoint, per-step edits and randomizers are allowed and
+// restrict themselves to the surviving notes. Between 1 and 99 the
+// positions are mid-transform and nothing may change. Bulk operations
+// that move whole patterns stay blocked at the endpoint.
+function canonicalEditBlocked({ allowedAtEndpoint = false } = {}) {
+    const amount = state.getTripletMorphPercent();
+    if (amount === 0) return false;
+    if (amount >= 100 && allowedAtEndpoint) return false;
+    const notice = morphEditNotice(amount);
+    if (notice) setStatus(notice);
+    return true;
+}
+
+btnLive.addEventListener('click', async () => {
+    const next = !state.isLiveUpdate();
+    if (next && state.isTripletMorphActive()) {
+        // LIVE ON: stop and silence any morph audition, restore the
+        // canonical view, and reset the amount before the mode flips.
+        try { await stopAllPreviews(); } catch { /* already idle */ }
+        state.resetTripletMorphSession();
+    }
+    state.setLiveUpdate(next);
+    setStatus(next ? 'Live update ON' : 'Live update OFF');
 });
 
 // --- BPM knob ---
@@ -394,21 +528,28 @@ if (bpmFineToggle) {
     });
 }
 
-let dragging = false, dragStartY = 0, dragStartBpm = 0;
+let dragging = false, dragStartY = 0, dragStartBpm = 0, dragBpmChanged = false;
 bpmKnob.addEventListener('mousedown', (e) => {
     dragging = true;
     dragStartY = e.clientY;
     dragStartBpm = state.getBpm();
+    dragBpmChanged = false;
     e.preventDefault();
 });
 document.addEventListener('mousemove', (e) => {
     if (!dragging) return;
+    const previousBpm = state.getBpm();
     state.setBpm(dragStartBpm + Math.round((dragStartY - e.clientY) / 3));
+    dragBpmChanged ||= state.getBpm() !== previousBpm;
     updateBpmDisplay();
+});
+document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    if (!dragBpmChanged) return;
     transport.restartTimer();
     syncActiveAudition();
 });
-document.addEventListener('mouseup', () => { dragging = false; });
 
 // --- Play button - wired to progression transport ---
 
@@ -450,6 +591,9 @@ btnPlay.addEventListener('click', async () => {
                 getPattern: (idx) => state.getPattern(idx),
                 scratch,
                 bpm: state.getBpm(),
+                gatePercent: state.getGatePercent(),
+                tripletMorphPercent: state.getTripletMorphPercent(),
+                midiChannel: state.getMidiChannel(),
                 transport,
                 stopAllPreviews,
                 liveUpdate,
@@ -595,11 +739,25 @@ async function pushFullProgressionToBankSnapshot() {
 }
 
 
+// Row actions that leave the canonical patterns untouched stay live
+// while the derived morph view is active; everything else is refused.
+const MORPH_SAFE_ROW_ACTIONS = new Set([
+    'copy', 'bank', 'pattern-preview', 'bass-preview', 'archetype', 'midi-preview',
+]);
+
 document.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
     const idx = parseInt(btn.dataset.patternIdx);
     const action = btn.dataset.action;
+
+    // Randomizers self-restrict to the surviving notes, so they stay
+    // available at the endpoint alongside the non-mutating actions.
+    const randomizes = action?.startsWith('rand-');
+    if (!MORPH_SAFE_ROW_ACTIONS.has(action)
+        && canonicalEditBlocked({ allowedAtEndpoint: randomizes })) {
+        return;
+    }
 
     if (action === 'copy') {
         const kind = btn.dataset.kind;
@@ -1328,6 +1486,7 @@ transport.init(setStatus, scratch);
 packageExport.init({
     setStatus,
     exportFn: (payload) => api.exportProgressionPackage(payload),
+    getBpm: () => state.getBpm(),
 });
 
 // SEND TO PROGRESSION handoff - if the main page wrote a pattern into the
@@ -1369,6 +1528,9 @@ try {
 }
 
 sequencer.render();
+// Subscribes after the sequencer so derived transforms are re-applied
+// over every freshly rendered grid.
+tripletMorphView.init({ documentRef: document });
 updateLiveBtn();
 updateBpmDisplay();
 updatePlayButton();
@@ -1377,12 +1539,34 @@ refreshArchetypeChips();
 refreshBankPushButton();
 initMidiPreviewVol();
 
-// Resume playback animation if device was already playing (page switch)
+// Resume against the running device clock rather than starting an unsynced
+// host-only animation. A same-tempo update returns the latest pulse snapshot.
 if (state.isPlaying()) {
-    transport.start().then(() => {
+    (async () => {
+        const status = await api.status();
+        if (!status.playing) {
+            state.setPlaying(false);
+            playbackMode = null;
+            updatePlayButton();
+            setStatus('Ready');
+            return;
+        }
+        const deviceBpm = Number.isFinite(status.centibpm)
+            ? status.centibpm / 100
+            : state.getBpm();
+        state.setBpm(deviceBpm);
+        updateBpmDisplay();
+        const startSync = await api.transportBpm(deviceBpm);
+        await transport.start(startSync, { resume: true });
+        playbackMode = 'device';
         updatePlayButton();
         setStatus('Resumed playback');
-    }).catch(() => {});
+    })().catch((err) => {
+        state.setPlaying(false);
+        playbackMode = null;
+        updatePlayButton();
+        setStatus('Resume error: ' + err.message);
+    });
 } else {
     setStatus('Ready');
 }

@@ -51,14 +51,26 @@ import * as preview from './multipattern/multipattern-preview.js';
 import { envInt } from './td3-env.js';
 import { stepIntervalMs as timingStepIntervalMs } from './shared/transport-timing.js';
 import {
+    cycleAnchorPulseIndex,
     delayToNextStep,
+    elapsedStepBoundaries,
+    phasePreservingStepDelay,
     preloadStep,
+    pulsesPerStep,
+    stepSyncFromCycle,
+    stepSyncFromPulse,
+    stepSyncFromTransportStart,
 } from './shared/transport-sync-timing.js';
 import {
     adoptQueuedTiming,
     playbackTiming,
     snapshotTiming,
 } from './shared/audible-timing.js';
+import {
+    morphDisplayStepForUniformTick,
+    morphRequestPercent,
+} from './shared/triplet-morph-timing.js';
+import { planForPattern } from './multipattern/triplet-morph-view.js';
 import {
     startSyncFromTargetMicros,
     targetEpochMicrosForPlay,
@@ -72,9 +84,12 @@ import {
     countNonEmpty,
     needsImmediateScratchSave,
     queueSlotAfterTimelineChange,
-    shouldUpdateHostAuditionPattern,
 } from './multipattern/multipattern-transport-helpers.js';
 import { bindPointerPressActivation } from './shared/pointer-activation.js';
+import {
+    clearBackgroundTimeout,
+    setBackgroundTimeout,
+} from './shared/background-timer.js';
 
 const btnPlay = document.getElementById('btn-play');
 const bpmDisplay = document.getElementById('bpm-display');
@@ -93,6 +108,13 @@ const ENV_PRELOAD_SAVE_STEP = envInt('progressionNextPatternSaveStep');
 
 let setStatus = () => {};
 let beatTimer = null;
+let nextBeatEpochMs = 0;
+let scheduledStepIntervalMs = 0;
+let bpmPausePhase = null;
+let pendingDeviceBpmSync = null;
+let deviceBpmSyncInFlight = false;
+let bpmSyncGeneration = 0;
+let latestTempoRevision = -1;
 
 // Beat-loop cursor state.
 let currentStep = -1;
@@ -105,7 +127,63 @@ let nextPatternSent = false;      // guards pre-load from double-firing
 let auditionMode = false;
 let auditionUpdateInFlight = false;
 let auditionUpdatePending = false;
+let auditionUpdateRevision = 0;
+let hostAuditionQueueGeneration = 0;
+let hostAuditionQueuedForWrap = null;
+let latestHostAuditionCycleEpochMicros = -1;
+let hostAuditionScheduleGeneration = null;
+let hostAuditionRetryTimer = null;
+const HOST_AUDITION_MAX_QUEUE_RETRIES = 3;
+const HOST_AUDITION_RETRY_BASE_MS = 100;
+const HOST_AUDITION_GENERATION_WATCHDOG_MS = 1000;
 let scratchSlot = { group: 1, pattern: 1, side: 'A' };
+
+// Acknowledged audible morph amount. The knob shows the requested value
+// immediately, but highlighting follows the server-acknowledged effective
+// timing: a nextCycle deferral keeps the previous audible amount until
+// its fully-applied cycle epoch passes.
+let audibleMorph = { percent: 0, pending: null };
+
+function noteMorphAcknowledgement(response) {
+    if (!response || response.tripletMorphPercent === undefined) return;
+    const percent = Number(response.tripletMorphPercent) || 0;
+    const applyAtMicros = Number(response.tripletMorphFullyAppliedEpochMicros);
+    if (response.tripletMorphApplyMode === 'nextCycle'
+        && Number.isFinite(applyAtMicros)
+        && applyAtMicros > Date.now() * 1000) {
+        audibleMorph.pending = { percent, applyAtMicros };
+        setStatus(`TRIPLET ${percent}% queued for next cycle`);
+        return;
+    }
+    audibleMorph = { percent, pending: null };
+}
+
+function audibleMorphPercentNow() {
+    const pending = audibleMorph.pending;
+    if (pending && Date.now() * 1000 >= pending.applyAtMicros) {
+        audibleMorph = { percent: pending.percent, pending: null };
+    }
+    return audibleMorph.percent;
+}
+
+/**
+ * Step index to paint for one uniform beat boundary. While a morph
+ * audition is audible the highlighter follows the cached plan's warped
+ * onsets; at the endpoint it walks the 12 target cells.
+ */
+function displayStepFor(step) {
+    if (step < 0 || !auditionMode) return step;
+    const percent = audibleMorphPercentNow();
+    if (percent <= 0) return step;
+    const plan = planForPattern(playingPatternIdx());
+    if (!plan?.assignments) return step;
+    return morphDisplayStepForUniformTick(
+        plan.assignments,
+        percent,
+        step,
+        currentPlaybackTiming().activeSteps,
+    );
+}
 
 // Dual-tracker model - see module header.
 let currentDevicePatternIdx = null;   // what device is audibly looping
@@ -125,6 +203,7 @@ let prevCheckedMode = false;
 let lastSeenTl = null;
 let wrapSync = {
     anchorEpochMs: 0,
+    anchorPulseIndex: 0,
     transportId: 0,
     wrapIndex: 0,
 };
@@ -163,17 +242,7 @@ export function init(statusFn, scratch) {
         e.preventDefault();
         const step = bpmFineMode ? 0.01 : 1;
         const delta = e.deltaY < 0 ? step : -step;
-        state.setBpm(state.getBpm() + delta);
-        updateBpmDisplay();
-        if (state.isPlaying()) restartBeatTimer();
-        mirrorRemoteBpm();
-        if (state.isPlaying() && state.isConnected()) {
-            if (auditionMode) {
-                syncAuditionPattern();
-            } else {
-                api.transportBpm(state.getBpm()).catch(err => setStatus('BPM error: ' + err.message));
-            }
-        }
+        applyLiveBpm(state.getBpm() + delta);
     });
 
     // BPM fine-mode toggle. On: display shows two decimals, wheel
@@ -186,16 +255,9 @@ export function init(statusFn, scratch) {
             bpmFineToggle.classList.toggle('sync-pill--active', bpmFineMode);
             bpmFineToggle.setAttribute('aria-pressed', bpmFineMode ? 'true' : 'false');
             if (!bpmFineMode) {
-                state.setBpm(Math.trunc(state.getBpm()));
-            }
-            updateBpmDisplay();
-            mirrorRemoteBpm();
-            if (state.isPlaying() && state.isConnected()) {
-                if (auditionMode) {
-                    syncAuditionPattern();
-                } else {
-                    api.transportBpm(state.getBpm()).catch(err => setStatus('BPM error: ' + err.message));
-                }
+                applyLiveBpm(Math.trunc(state.getBpm()));
+            } else {
+                updateBpmDisplay();
             }
         });
     }
@@ -204,37 +266,43 @@ export function init(statusFn, scratch) {
     let dragging = false;
     let dragStartY = 0;
     let dragStartBpm = 0;
+    let dragBpm = null;
     bpmKnob.addEventListener('mousedown', (e) => {
         dragging = true;
         dragStartY = e.clientY;
         dragStartBpm = state.getBpm();
+        dragBpm = dragStartBpm;
         e.preventDefault();
     });
     document.addEventListener('mousemove', (e) => {
         if (!dragging) return;
         const delta = Math.round((dragStartY - e.clientY) / 3);
-        state.setBpm(dragStartBpm + delta);
-        updateBpmDisplay();
+        dragBpm = normalizedBpm(dragStartBpm + delta);
+        updateBpmDisplay(dragBpm);
     });
     document.addEventListener('mouseup', () => {
         if (!dragging) return;
         dragging = false;
-        if (state.isPlaying()) restartBeatTimer();
-        mirrorRemoteBpm();
-        if (state.isPlaying() && state.isConnected()) {
-            if (auditionMode) {
-                syncAuditionPattern();
-            } else {
-                api.transportBpm(state.getBpm()).catch(err => setStatus('BPM error: ' + err.message));
-            }
-        }
+        const bpm = dragBpm;
+        dragBpm = null;
+        applyLiveBpm(bpm);
     });
+}
+
+/** Apply document tempo to the UI session and any transport already running. */
+export function applyImportedBpm(centibpm) {
+    if (!Number.isInteger(centibpm) || centibpm < 2000 || centibpm > 30000) {
+        return false;
+    }
+    applyLiveBpm(centibpm / 100);
+    return true;
 }
 
 export async function stopPlaybackForModeChange() {
     if (!state.isPlaying()) return;
     stopWrapSync();
     if (auditionMode) {
+        clearHostAuditionQueue();
         await api.auditionStop();
     } else {
         await api.transportStop();
@@ -251,7 +319,13 @@ export async function stopPlaybackForModeChange() {
 }
 
 export function syncAuditionPattern() {
-    if (!state.isPlaying() || !auditionMode || !state.isConnected()) return;
+    if (!state.isPlaying() || !auditionMode || !state.isConnected()) {
+        // No update will be sent, so nothing will arrive to restart a
+        // timer a BPM change paused.
+        resumeBeatTimerIfStillPaused();
+        return;
+    }
+    refreshQueuedHostAudition();
     auditionUpdatePending = true;
     if (auditionUpdateInFlight) return;
     flushAuditionUpdate();
@@ -267,16 +341,58 @@ async function flushAuditionUpdate() {
         while (auditionUpdatePending) {
             auditionUpdatePending = false;
             if (!state.isPlaying() || !auditionMode || !state.isConnected()) break;
-            const pat = state.getPattern(playingPatternIdx());
+            const patIdx = playingPatternIdx();
+            const pat = state.getPattern(patIdx);
             if (!pat) break;
-            await api.auditionUpdate(pat, state.getBpm(), true);
+            const generation = hostAuditionQueueGeneration;
+            const revision = ++auditionUpdateRevision;
+            const expectedScheduleGeneration = hostAuditionScheduleGeneration;
+            const requestedTiming = snapshotTiming(pat, currentPlaybackTiming());
+            let response;
+            try {
+                response = await api.auditionUpdate(
+                    pat,
+                    state.getBpm(),
+                    true,
+                    expectedScheduleGeneration,
+                    state.getGatePercent(),
+                    morphRequestPercent(pat, state.getTripletMorphPercent()),
+                    state.getMidiChannel(),
+                );
+            } catch (err) {
+                if (isRecoverableAuditionConflict(err)) continue;
+                if (isFatalAuditionError(err)) {
+                    stopHostAuditionAfterFatalError(err);
+                    continue;
+                }
+                if (generation === hostAuditionQueueGeneration
+                    && revision === auditionUpdateRevision
+                    && state.isPlaying()
+                    && auditionMode) {
+                    setStatus('Audition update error: ' + err.message);
+                }
+                continue;
+            }
+            if (!auditionUpdatePending
+                && generation === hostAuditionQueueGeneration
+                && revision === auditionUpdateRevision
+                && state.isPlaying()
+                && auditionMode
+                && playingPatternIdx() === patIdx
+                && hostAuditionScheduleGeneration === expectedScheduleGeneration
+                && response.scheduleGeneration === expectedScheduleGeneration) {
+                noteMorphAcknowledgement(response);
+                reconcileAuditionTiming(response, requestedTiming);
+            }
         }
-    } catch (err) {
-        setStatus('Audition update error: ' + err.message);
     } finally {
         auditionUpdateInFlight = false;
         if (auditionUpdatePending && state.isPlaying() && auditionMode && state.isConnected()) {
             flushAuditionUpdate();
+        } else {
+            // Nothing further will reconcile: if the loop drained without
+            // an authoritative acknowledgement the timer is still paused.
+            resumeBeatTimerIfStillPaused();
         }
     }
 }
@@ -300,16 +416,7 @@ async function handleRemoteCommand(command) {
         }
     } else if (command.command === 'bpm') {
         if (!Number.isFinite(command.centibpm)) return;
-        state.setBpm(command.centibpm / 100);
-        updateBpmDisplay();
-        if (state.isPlaying()) restartBeatTimer();
-        if (state.isPlaying() && state.isConnected()) {
-            if (auditionMode) {
-                syncAuditionPattern();
-            } else {
-                api.transportBpm(state.getBpm()).catch(err => setStatus('BPM error: ' + err.message));
-            }
-        }
+        applyLiveBpm(command.centibpm / 100, { relayRemote: false });
     } else if (command.command === 'triplet') {
         if (applyRemoteTripletCommand(command, state)) {
             setStatus(`Remote triplet ${command.triplet ? 'ON' : 'OFF'}`);
@@ -321,6 +428,209 @@ function mirrorRemoteBpm() {
     if (!state.isPlaying() || !remoteSync.isEnabled()) return;
     remoteSync.relayBpm(Math.round(state.getBpm() * 100))
         .catch(err => setStatus('Remote BPM error: ' + err.message));
+}
+
+function normalizedBpm(value) {
+    const numeric = typeof value === 'number' ? value : Number.parseFloat(value);
+    const safe = Number.isFinite(numeric) ? numeric : 120;
+    return Math.round(Math.max(20, Math.min(300, safe)) * 100) / 100;
+}
+
+function applyLiveBpm(value, { relayRemote = true } = {}) {
+    const previousBpm = state.getBpm();
+    const nextBpm = normalizedBpm(value);
+    if (nextBpm === previousBpm) {
+        updateBpmDisplay();
+        return;
+    }
+
+    if (state.isPlaying()) pauseBeatTimerForBpm(previousBpm);
+    state.setBpm(nextBpm);
+    updateBpmDisplay();
+
+    if (state.isPlaying()) {
+        if (auditionMode) {
+            syncAuditionPattern();
+        } else if (state.isConnected()) {
+            queueDeviceBpmSync();
+        } else {
+            resumeBeatTimerPreservingPhase();
+        }
+    } else {
+        preview.syncBpmChange(previousBpm);
+    }
+
+    if (relayRemote) mirrorRemoteBpm();
+}
+
+function pauseBeatTimerForBpm(previousBpm) {
+    if (bpmPausePhase) return;
+    const timing = currentPlaybackTiming();
+    const previousIntervalMs = scheduledStepIntervalMs
+        || timingStepIntervalMs(previousBpm, timing.triplet);
+    bpmPausePhase = {
+        previousIntervalMs,
+        nextBoundaryEpochMs: nextBeatEpochMs || (Date.now() + previousIntervalMs),
+    };
+    if (beatTimer) clearBackgroundTimeout(beatTimer);
+    beatTimer = null;
+    nextBeatEpochMs = 0;
+}
+
+/**
+ * Resume local step timing if a BPM change paused it and no authoritative
+ * cycle ever arrived to re-anchor it.
+ *
+ * A BPM change pauses the beat timer and hands responsibility for
+ * restarting it to the audition acknowledgement, which carries the
+ * server's real cycle epoch. The audition itself keeps sounding whatever
+ * happens to that request, so every path that fails to reconcile - a
+ * rejected or dropped request, a response that is not authoritative, a
+ * superseded generation, a disconnect - used to leave the timer stopped
+ * under audible playback, freezing the highlight until playback was
+ * restarted. Falling back to local phase-preserving scheduling keeps the
+ * highlight advancing at the new tempo. It is not device-anchored, but a
+ * later successful update re-anchors it, and it tracks the audio far
+ * better than a stopped timer.
+ */
+function resumeBeatTimerIfStillPaused() {
+    if (!bpmPausePhase) return;
+    resumeBeatTimerPreservingPhase();
+}
+
+function resumeBeatTimerPreservingPhase() {
+    if (!state.isPlaying()) {
+        bpmPausePhase = null;
+        return;
+    }
+    const nextIntervalMs = stepIntervalMs();
+    const phase = bpmPausePhase;
+    bpmPausePhase = null;
+    const delayMs = phase
+        ? phasePreservingStepDelay(
+            phase.previousIntervalMs,
+            nextIntervalMs,
+            phase.nextBoundaryEpochMs,
+        )
+        : nextIntervalMs;
+    scheduleNextBeat(Math.max(0.01, delayMs));
+}
+
+function queueDeviceBpmSync() {
+    bpmSyncGeneration += 1;
+    pendingDeviceBpmSync = {
+        generation: bpmSyncGeneration,
+        bpm: state.getBpm(),
+    };
+    if (!deviceBpmSyncInFlight) flushDeviceBpmSync();
+}
+
+async function flushDeviceBpmSync() {
+    deviceBpmSyncInFlight = true;
+    try {
+        while (pendingDeviceBpmSync) {
+            const request = pendingDeviceBpmSync;
+            pendingDeviceBpmSync = null;
+            let response;
+            try {
+                response = await api.transportBpm(request.bpm);
+            } catch (err) {
+                if (!pendingDeviceBpmSync && request.generation === bpmSyncGeneration) {
+                    setStatus('BPM error: ' + err.message);
+                }
+                continue;
+            }
+
+            if (pendingDeviceBpmSync || request.generation !== bpmSyncGeneration) continue;
+            if (!state.isPlaying() || auditionMode) {
+                bpmPausePhase = null;
+                continue;
+            }
+            reconcileDeviceBpm(response, request.bpm);
+        }
+    } finally {
+        deviceBpmSyncInFlight = false;
+        if (pendingDeviceBpmSync) flushDeviceBpmSync();
+    }
+}
+
+function reconcileDeviceBpm(response, requestedBpm) {
+    const expectedCentibpm = Math.round(requestedBpm * 100);
+    const authoritative = response
+        && Number.isFinite(response.transportId)
+        && Number.isFinite(response.centibpm)
+        && Number.isFinite(response.tempoRevision)
+        && Number.isFinite(response.effectivePulseIndex)
+        && Number.isFinite(response.effectiveAtEpochMicros)
+        && response.centibpm === expectedCentibpm
+        && (!wrapSync.transportId || response.transportId === wrapSync.transportId)
+        && response.tempoRevision >= latestTempoRevision;
+
+    if (!authoritative) {
+        setStatus('BPM sync error: device timing acknowledgement missing');
+        return;
+    }
+
+    latestTempoRevision = response.tempoRevision;
+    const timing = currentPlaybackTiming();
+    const sync = stepSyncFromPulse({
+        pulseIndex: response.effectivePulseIndex,
+        pulseEpochMicros: response.effectiveAtEpochMicros,
+        anchorPulseIndex: wrapSync.anchorPulseIndex,
+        centibpm: response.centibpm,
+        activeSteps: timing.activeSteps,
+        triplet: timing.triplet,
+    });
+    const activeSteps = timing.activeSteps;
+    const authoritativeStepOffset = Math.floor(
+        Math.max(0, sync.currentPulseIndex - wrapSync.anchorPulseIndex)
+        / pulsesPerStep(timing.triplet),
+    );
+    const isSingleNonWrappingAdvance = currentStep >= 0
+        && currentStep + 1 < activeSteps
+        && authoritativeStepOffset === currentStep + 1;
+    const isSameStep = currentStep >= 0 && authoritativeStepOffset === currentStep;
+
+    if (isSingleNonWrappingAdvance) {
+        advanceBeat();
+    } else if (!isSameStep) {
+        // A delayed acknowledgement can arrive after more than one step. Move
+        // only the visual cursor; replaying missed preload or wrap side effects
+        // here could mutate the device out of order. The pulse wrap waiter
+        // remains authoritative for pattern transitions.
+        currentStep = sync.step;
+        highlightStep(displayStepFor(currentStep), playingPatternIdx());
+    }
+
+    bpmPausePhase = null;
+    scheduleBeatAt(sync.nextStepEpochMicros / 1000);
+}
+
+function reconcileAuditionTiming(response, audibleTiming = null) {
+    const authoritative = response
+        && Number.isFinite(response.centibpm)
+        && response.centibpm === Math.round(state.getBpm() * 100)
+        && Number.isFinite(response.cycleEpochMicros)
+        && Number.isFinite(response.cyclePeriodMicros);
+    if (!authoritative) {
+        if (bpmPausePhase) {
+            setStatus('Audition sync error: applied timing acknowledgement missing');
+        }
+        return false;
+    }
+
+    if (audibleTiming) currentDeviceTiming = audibleTiming;
+    const timing = currentPlaybackTiming();
+    const sync = stepSyncFromCycle({
+        cycleEpochMicros: response.cycleEpochMicros,
+        cyclePeriodMicros: response.cyclePeriodMicros,
+        activeSteps: timing.activeSteps,
+    });
+    currentStep = sync.step;
+    highlightStep(displayStepFor(currentStep), playingPatternIdx());
+    bpmPausePhase = null;
+    scheduleBeatAt(sync.nextStepEpochMicros / 1000, sync.stepPeriodMicros / 1000);
+    return true;
 }
 
 function captureRemoteRelay(promise) {
@@ -355,6 +665,7 @@ async function togglePlay(event, options = {}) {
         if (state.isPlaying()) {
             stopWrapSync();
             if (auditionMode) {
+                clearHostAuditionQueue();
                 await api.auditionStop();
             } else {
                 await api.transportStop();
@@ -397,13 +708,29 @@ async function togglePlay(event, options = {}) {
                     : playingPatternIdx();
                 const pat = state.getPattern(patIdx);
                 if (!pat) { setStatus('No pattern to audition'); return; }
-                await api.auditionPattern(pat, state.getBpm(), true, targetEpochMicros);
+                const auditionStart = await api.auditionPattern(
+                    pat,
+                    state.getBpm(),
+                    true,
+                    targetEpochMicros,
+                    state.getGatePercent(),
+                    morphRequestPercent(pat, state.getTripletMorphPercent()),
+                    state.getMidiChannel(),
+                );
+                noteMorphAcknowledgement(auditionStart);
+                hostAuditionScheduleGeneration = Number.isFinite(
+                    auditionStart.scheduleGeneration,
+                ) ? auditionStart.scheduleGeneration : null;
                 auditionMode = true;
                 auditionUpdatePending = false;
                 auditionUpdateInFlight = false;
                 state.setPlaying(true);
-                primeFirstStepHighlight();
-                startBeatTimer(startSyncFromTargetMicros(targetEpochMicros));
+                if (!reconcileAuditionTiming(auditionStart)) {
+                    const auditionStartSync = Number.isFinite(
+                        auditionStart.effectiveAtEpochMicros,
+                    ) ? auditionStart : startSyncFromTargetMicros(targetEpochMicros);
+                    startBeatTimer(auditionStartSync);
+                }
                 const activeTimelineSlots = countNonEmpty(state.getTimeline());
                 if (currentTlPos >= 0 && activeTimelineSlots > 1) {
                     setStatus(`Host audition P${patIdx + 1} - loop 1/${activeTimelineSlots}`);
@@ -413,7 +740,6 @@ async function togglePlay(event, options = {}) {
             } else {
                 auditionMode = false;
                 await startTimelinePlayback();
-                primeFirstStepHighlight();
                 const startSync = await api.transportStart(state.getBpm(), targetEpochMicros);
                 state.setPlaying(true);
                 startBeatTimer(startSync);
@@ -508,6 +834,7 @@ export function noteLiveScratchPatternQueued(patIdx, pattern = null) {
  * will leave it alone.
  */
 async function startTimelinePlayback() {
+    clearHostAuditionQueue();
     const tl = state.getTimeline();
     const start = firstTimelinePos(tl);
     const activeTimelineSlots = countNonEmpty(tl);
@@ -588,25 +915,85 @@ function stepIntervalMs() {
 }
 
 function startBeatTimer(startSync) {
-    if (beatTimer) clearTimeout(beatTimer);
+    if (beatTimer) clearBackgroundTimeout(beatTimer);
+    bpmPausePhase = null;
+    const timing = currentPlaybackTiming();
+    const projected = stepSyncFromTransportStart({
+        startSync,
+        bpm: state.getBpm(),
+        activeSteps: timing.activeSteps,
+        triplet: timing.triplet,
+    });
+    if (projected) {
+        currentStep = projected.step;
+        if (currentTlPos >= 0) highlightColumn(currentTlPos);
+        highlightStep(displayStepFor(currentStep), playingPatternIdx());
+        scheduleBeatAt(
+            projected.nextStepEpochMicros / 1000,
+            projected.tickPeriodMicros * pulsesPerStep(timing.triplet) / 1000,
+        );
+        return;
+    }
     if (currentStep < 0) advanceBeat();
     scheduleNextBeat(delayToNextStep(startSync, stepIntervalMs()));
 }
 
 function scheduleNextBeat(delayMs) {
     if (!state.isPlaying()) return;
-    const delay = Number.isFinite(delayMs) && delayMs > 0 ? delayMs : stepIntervalMs();
-    beatTimer = setTimeout(runBeatTimer, delay);
+    const interval = stepIntervalMs();
+    const delay = Number.isFinite(delayMs) && delayMs >= 0 ? delayMs : interval;
+    scheduleBeatAt(Date.now() + delay, interval);
+}
+
+function scheduleBeatAt(deadlineEpochMs, intervalMs = stepIntervalMs()) {
+    if (!state.isPlaying()) return;
+    const nowMs = Date.now();
+    const deadline = Number.isFinite(deadlineEpochMs)
+        ? deadlineEpochMs
+        : nowMs + intervalMs;
+    const delay = Math.max(0.01, deadline - nowMs);
+    if (beatTimer) clearBackgroundTimeout(beatTimer);
+    const interval = Number.isFinite(intervalMs) && intervalMs > 0
+        ? intervalMs
+        : stepIntervalMs();
+    scheduledStepIntervalMs = interval;
+    nextBeatEpochMs = deadline;
+    beatTimer = setBackgroundTimeout(runBeatTimer, delay);
 }
 
 function runBeatTimer() {
+    const boundaryEpochMs = nextBeatEpochMs || Date.now();
+    const interval = stepIntervalMs();
+    const nowMs = Date.now();
     beatTimer = null;
-    advanceBeat();
-    scheduleNextBeat();
+    nextBeatEpochMs = 0;
+    const elapsedBoundaries = elapsedStepBoundaries(boundaryEpochMs, interval, nowMs);
+
+    if (!auditionMode && state.isConnected() && elapsedBoundaries > 1) {
+        queueDeviceBpmSync();
+        return;
+    }
+
+    let reanchored = false;
+    for (let i = 0; i < elapsedBoundaries; i += 1) {
+        if (advanceBeat()) {
+            reanchored = true;
+            break;
+        }
+    }
+    if (!reanchored) {
+        scheduleBeatAt(boundaryEpochMs + elapsedBoundaries * interval, interval);
+    }
 }
 
 function stopBeatTimer() {
-    if (beatTimer) { clearTimeout(beatTimer); beatTimer = null; }
+    if (beatTimer) { clearBackgroundTimeout(beatTimer); beatTimer = null; }
+    nextBeatEpochMs = 0;
+    scheduledStepIntervalMs = 0;
+    bpmPausePhase = null;
+    pendingDeviceBpmSync = null;
+    bpmSyncGeneration += 1;
+    latestTempoRevision = -1;
     currentStep = -1;
     localWrapCount = 0;
     currentTlPos = -1;
@@ -615,23 +1002,13 @@ function stopBeatTimer() {
     queuedPatternIdx = null;
     currentDeviceTiming = null;
     queuedDeviceTiming = null;
+    audibleMorph = { percent: 0, pending: null };
+    clearHostAuditionQueue();
     prevCheckedMode = false;
     lastSeenTl = null;
     highlightStep(-1);
     highlightColumn(-1);
     stopWrapSync();
-}
-
-function restartBeatTimer() {
-    if (!state.isPlaying()) return;
-    if (beatTimer) clearTimeout(beatTimer);
-    scheduleNextBeat();
-}
-
-function primeFirstStepHighlight() {
-    currentStep = 0;
-    if (currentTlPos >= 0) highlightColumn(currentTlPos);
-    highlightStep(currentStep, playingPatternIdx());
 }
 
 /**
@@ -646,6 +1023,274 @@ function playingPatternIdx() {
     return state.getFocusedIdx();
 }
 
+function clearHostAuditionQueue() {
+    if (hostAuditionRetryTimer) {
+        clearTimeout(hostAuditionRetryTimer);
+        hostAuditionRetryTimer = null;
+    }
+    hostAuditionQueueGeneration += 1;
+    auditionUpdateRevision += 1;
+    hostAuditionQueuedForWrap = null;
+    latestHostAuditionCycleEpochMicros = -1;
+    hostAuditionScheduleGeneration = null;
+}
+
+function refreshQueuedHostAudition() {
+    const queued = hostAuditionQueuedForWrap;
+    if (!queued
+        || queued.response
+        || !state.isPlaying()
+        || !auditionMode
+        || state.isLiveUpdate()
+        || !state.isConnected()
+        || (currentTlPos < 0 && queued.toPos !== -1)) {
+        return false;
+    }
+    const tl = state.getTimeline();
+    const target = currentTlPos >= 0 ? nextTimelinePos(tl, currentTlPos) : -1;
+    if (target < 0 && queued.toPos !== -1) return false;
+    const patIdx = target >= 0 ? tl[target] - 1 : state.getFocusedIdx();
+    const pattern = state.getPattern(patIdx);
+    if (!pattern) return false;
+    const timing = snapshotTiming(pattern, {
+        activeSteps: state.getActiveSteps(patIdx),
+        triplet: state.getTriplet(patIdx),
+    });
+    return queueHostAuditionForNextCycle(target, patIdx, pattern, timing, true);
+}
+
+function queueHostAuditionForNextCycle(
+    toPos,
+    patIdx,
+    pattern = null,
+    timing = null,
+    replace = false,
+    retryCount = 0,
+    unguarded = false,
+) {
+    if (!state.isPlaying()
+        || !auditionMode
+        || state.isLiveUpdate()
+        || !state.isConnected()
+        || (currentTlPos < 0 && toPos !== -1)) {
+        return false;
+    }
+    const nextPattern = pattern || state.getPattern(patIdx);
+    if (!nextPattern) return false;
+
+    const existing = hostAuditionQueuedForWrap;
+    const sameTarget = existing
+        && existing.generation === hostAuditionQueueGeneration
+        && existing.fromPos === currentTlPos
+        && existing.toPos === toPos
+        && existing.patIdx === patIdx;
+    if (sameTarget && !replace) {
+        nextPatternSent = true;
+        return true;
+    }
+
+    if (hostAuditionRetryTimer) {
+        clearTimeout(hostAuditionRetryTimer);
+        hostAuditionRetryTimer = null;
+    }
+    const queued = {
+        generation: hostAuditionQueueGeneration,
+        revision: (existing?.revision || 0) + 1,
+        fromPos: currentTlPos,
+        toPos,
+        patIdx,
+        timing: timing || snapshotTiming(nextPattern, {
+            activeSteps: state.getActiveSteps(patIdx),
+            triplet: state.getTriplet(patIdx),
+        }),
+        centibpm: Math.round(state.getBpm() * 100),
+        gatePercent: state.getGatePercent(),
+        midiChannel: state.getMidiChannel(),
+        tripletMorphPercent: morphRequestPercent(nextPattern, state.getTripletMorphPercent()),
+        expectedScheduleGeneration: unguarded ? null : hostAuditionScheduleGeneration,
+        inFlight: true,
+        response: null,
+        wrapReached: false,
+        needsRetry: false,
+        retryCount,
+    };
+    hostAuditionQueuedForWrap = queued;
+    nextPatternSent = true;
+
+    api.auditionQueueNextCycle(
+        nextPattern,
+        state.getBpm(),
+        true,
+        queued.expectedScheduleGeneration,
+        queued.gatePercent,
+        queued.tripletMorphPercent,
+        queued.midiChannel,
+    ).then((response) => {
+        if (queued.generation !== hostAuditionQueueGeneration) return;
+        queued.inFlight = false;
+        queued.response = response;
+        completeHostAuditionTransition(queued);
+    }).catch((err) => {
+        if (hostAuditionQueuedForWrap !== queued
+            || queued.generation !== hostAuditionQueueGeneration) {
+            return;
+        }
+        if (isRecoverableAuditionConflict(err)) {
+            queued.inFlight = false;
+            queued.needsRetry = true;
+            if (err.response?.code === 'generation_conflict'
+                && hostAuditionScheduleGeneration !== queued.expectedScheduleGeneration) {
+                retryHostAuditionQueue(queued);
+            } else if (err.response?.code === 'generation_conflict') {
+                scheduleHostAuditionGenerationWatchdog(queued);
+            } else if (err.response?.code === 'superseded') {
+                scheduleHostAuditionQueueRetry(queued, err);
+            }
+            return;
+        }
+        if (isFatalAuditionError(err)) {
+            stopHostAuditionAfterFatalError(err);
+            return;
+        }
+        scheduleHostAuditionQueueRetry(queued, err);
+    });
+    return true;
+}
+
+function scheduleHostAuditionGenerationWatchdog(queued) {
+    if (hostAuditionQueuedForWrap !== queued || hostAuditionRetryTimer) return;
+    nextPatternSent = true;
+    hostAuditionRetryTimer = setTimeout(() => {
+        hostAuditionRetryTimer = null;
+        retryHostAuditionQueue(queued, false, true);
+    }, HOST_AUDITION_GENERATION_WATCHDOG_MS);
+}
+
+function isRecoverableAuditionConflict(err) {
+    return err?.status === 409
+        && (err.response?.code === 'generation_conflict'
+            || err.response?.code === 'superseded');
+}
+
+function isFatalAuditionError(err) {
+    return err?.response?.code === 'audition_stopped'
+        || err?.response?.code === 'playback_failed'
+        || (err?.status === 409 && !isRecoverableAuditionConflict(err));
+}
+
+function stopHostAuditionAfterFatalError(err) {
+    if (!state.isPlaying() && !auditionMode) return;
+    api.auditionStop().catch(() => {});
+    state.setPlaying(false);
+    stopBeatTimer();
+    auditionMode = false;
+    auditionUpdatePending = false;
+    auditionUpdateInFlight = false;
+    updatePlayButton();
+    const code = err?.response?.code;
+    const label = code === 'playback_failed'
+        ? 'Audition playback failed'
+        : 'Audition stopped';
+    setStatus(`${label}: ${err.message}`);
+}
+
+function scheduleHostAuditionQueueRetry(queued, err) {
+    if (hostAuditionQueuedForWrap !== queued) return;
+    queued.inFlight = false;
+    queued.needsRetry = true;
+    nextPatternSent = true;
+    if (queued.retryCount >= HOST_AUDITION_MAX_QUEUE_RETRIES) {
+        hostAuditionQueuedForWrap = null;
+        setStatus(`Audition queue error: ${err.message}; retry limit reached`);
+        return;
+    }
+    if (hostAuditionRetryTimer) return;
+    const delayMs = HOST_AUDITION_RETRY_BASE_MS * (2 ** queued.retryCount);
+    setStatus(`Audition queue error: ${err.message}; retrying`);
+    hostAuditionRetryTimer = setTimeout(() => {
+        hostAuditionRetryTimer = null;
+        retryHostAuditionQueue(queued, true);
+    }, delayMs);
+}
+
+function retryHostAuditionQueue(queued, countFailure = false, unguarded = false) {
+    if (hostAuditionQueuedForWrap !== queued
+        || !queued.needsRetry
+        || !state.isPlaying()
+        || !auditionMode
+        || !state.isConnected()) {
+        return false;
+    }
+    const pattern = state.getPattern(queued.patIdx);
+    if (!pattern) return false;
+    return queueHostAuditionForNextCycle(
+        queued.toPos,
+        queued.patIdx,
+        pattern,
+        snapshotTiming(pattern, queued.timing),
+        true,
+        countFailure ? queued.retryCount + 1 : queued.retryCount,
+        unguarded,
+    );
+}
+
+function completeHostAuditionTransition(queued) {
+    if (!queued
+        || queued.generation !== hostAuditionQueueGeneration
+        || !queued.response
+        || !state.isPlaying()
+        || !auditionMode
+        || state.isLiveUpdate()
+        || !state.isConnected()) {
+        return false;
+    }
+    const tl = state.getTimeline();
+    if (queued.response.centibpm !== queued.centibpm
+        || !Number.isFinite(queued.response.cycleEpochMicros)
+        || !Number.isFinite(queued.response.cyclePeriodMicros)) {
+        if (hostAuditionQueuedForWrap === queued) {
+            hostAuditionQueuedForWrap = null;
+            nextPatternSent = false;
+        }
+        setStatus('Audition sync error: queued timing acknowledgement missing');
+        return false;
+    }
+    const responseGeneration = queued.response.scheduleGeneration;
+    const hasScheduleGeneration = Number.isFinite(responseGeneration);
+    if (hasScheduleGeneration
+        ? (hostAuditionScheduleGeneration !== null
+            && responseGeneration <= hostAuditionScheduleGeneration)
+        : queued.response.cycleEpochMicros <= latestHostAuditionCycleEpochMicros) {
+        return false;
+    }
+
+    latestHostAuditionCycleEpochMicros = queued.response.cycleEpochMicros;
+    if (hasScheduleGeneration) hostAuditionScheduleGeneration = responseGeneration;
+    if (hostAuditionQueuedForWrap === queued) hostAuditionQueuedForWrap = null;
+    queuedPatternIdx = queued.patIdx;
+    queuedDeviceTiming = queued.timing;
+    adoptQueuedDeviceTiming();
+    auditionUpdateRevision += 1;
+    const appliedPos = tl[queued.toPos] === queued.patIdx + 1
+        ? queued.toPos
+        : advanceCursorToDevicePattern(tl, currentTlPos, queued.patIdx);
+    if (appliedPos >= 0) currentTlPos = appliedPos;
+    nextPatternSent = hostAuditionQueuedForWrap !== null;
+    highlightColumn(currentTlPos);
+    const loopNum = countLoopsUpTo(tl, currentTlPos);
+    const total = countNonEmpty(tl);
+    if (total > 0 && currentTlPos >= 0) {
+        setStatus(`Playing P${queued.patIdx + 1} - loop ${loopNum}/${total}`);
+    } else {
+        setStatus(`Host audition: P${queued.patIdx + 1} (no save)`);
+    }
+    noteMorphAcknowledgement(queued.response);
+    const reconciled = reconcileAuditionTiming(queued.response);
+    const pending = hostAuditionQueuedForWrap;
+    if (pending?.needsRetry) retryHostAuditionQueue(pending);
+    return reconciled;
+}
+
 /**
  * Resolve the 0-based step index where the pre-load save fires, clamped
  * to the current pattern's active-step window.
@@ -657,8 +1302,7 @@ function advanceBeat() {
     // --- Pre-load window: queue the next timeline pattern ----------------
     if (currentTlPos >= 0) {
         const preStep = preloadStep(activeSteps, ENV_PRELOAD_SAVE_STEP);
-        if (nextStep === preStep && !nextPatternSent) {
-            nextPatternSent = true;
+        if (nextStep >= preStep && !nextPatternSent) {
             const tl = state.getTimeline();
             const target = nextTimelinePos(tl, currentTlPos);
             if (target >= 0) {
@@ -668,12 +1312,13 @@ function advanceBeat() {
                     const nextPatIdx = nextNum - 1;
                     const pat = state.getPattern(nextPatIdx);
                     if (pat) {
-                        queuedPatternIdx = nextPatIdx;
                         const queuedTiming = snapshotTiming(pat, {
                             activeSteps: state.getActiveSteps(nextPatIdx),
                             triplet: state.getTriplet(nextPatIdx),
                         });
                         if (state.isLiveUpdate() && state.isConnected()) {
+                            nextPatternSent = true;
+                            queuedPatternIdx = nextPatIdx;
                             api.savePattern(
                                 scratchSlot.group, scratchSlot.pattern, scratchSlot.side, pat,
                             ).then(() => {
@@ -681,8 +1326,12 @@ function advanceBeat() {
                                 setStatus(`Pre-loaded P${nextPatIdx + 1}`);
                             })
                              .catch(err => setStatus('Pre-load error: ' + err.message));
+                        } else if (auditionMode && state.isConnected()) {
+                            queueHostAuditionForNextCycle(target, nextPatIdx, pat, queuedTiming);
                         }
                     }
+                } else {
+                    nextPatternSent = true;
                 }
             }
         }
@@ -690,16 +1339,19 @@ function advanceBeat() {
 
     // --- Wrap at active-steps: device swaps buffer; sync trackers --------
     let step = nextStep;
+    let queuedHostTransition = null;
     if (step >= activeSteps) {
         step = 0;
-        handlePatternWrap(null);
+        queuedHostTransition = handlePatternWrap(null);
     } else if (step === 0 && currentTlPos >= 0) {
         // First tick of the very first cycle - paint the column highlight.
         highlightColumn(currentTlPos);
     }
 
     currentStep = step;
-    highlightStep(currentStep, playingPatternIdx());
+    highlightStep(displayStepFor(currentStep), playingPatternIdx());
+    if (queuedHostTransition) return completeHostAuditionTransition(queuedHostTransition);
+    return false;
 }
 
 function handlePatternWrap(rustWrapIndex) {
@@ -708,19 +1360,27 @@ function handlePatternWrap(rustWrapIndex) {
     } else {
         localWrapCount += 1;
     }
-    nextPatternSent = false;
-
     const previousPatIdx = currentDevicePatternIdx;
-    adoptQueuedDeviceTiming();
-    if (shouldUpdateHostAuditionPattern(
-        state.isLiveUpdate(),
-        state.isConnected(),
-        auditionMode,
-        previousPatIdx,
-        currentDevicePatternIdx,
-    )) {
-        syncAuditionPattern();
+    const hostPlayback = auditionMode && !state.isLiveUpdate() && state.isConnected();
+    if (hostPlayback && currentTlPos >= 0) {
+        const tl = state.getTimeline();
+        const target = nextTimelinePos(tl, currentTlPos);
+        const targetPatIdx = target >= 0 ? tl[target] - 1 : -1;
+        const queued = hostAuditionQueuedForWrap;
+        if (queued && queued.generation === hostAuditionQueueGeneration) {
+            queued.wrapReached = true;
+            nextPatternSent = true;
+            return queued.response ? queued : null;
+        }
+        if (targetPatIdx >= 0 && targetPatIdx !== previousPatIdx) {
+            nextPatternSent = false;
+            setStatus(`Audition queue error: P${targetPatIdx + 1} will retry next cycle`);
+            return null;
+        }
     }
+
+    nextPatternSent = false;
+    if (!hostPlayback) adoptQueuedDeviceTiming();
     if (currentTlPos < 0) return;
     const tl = state.getTimeline();
     const next = advanceCursorToDevicePattern(
@@ -733,6 +1393,7 @@ function handlePatternWrap(rustWrapIndex) {
     const loopNum = countLoopsUpTo(tl, next);
     const total = countNonEmpty(tl);
     setStatus(`Playing P${newNum} - loop ${loopNum}/${total}`);
+    return null;
 }
 
 function countLoopsUpTo(tl, pos) {
@@ -749,6 +1410,9 @@ function startWrapSync(startSync) {
     }
     wrapSync = {
         anchorEpochMs: startSync.startedAtEpochMs,
+        anchorPulseIndex: Number.isFinite(startSync.effectivePulseIndex)
+            ? startSync.effectivePulseIndex
+            : 0,
         transportId: startSync.transportId,
         wrapIndex: 0,
     };
@@ -756,7 +1420,7 @@ function startWrapSync(startSync) {
 }
 
 function stopWrapSync() {
-    wrapSync = { anchorEpochMs: 0, transportId: 0, wrapIndex: 0 };
+    wrapSync = { anchorEpochMs: 0, anchorPulseIndex: 0, transportId: 0, wrapIndex: 0 };
 }
 
 async function pollWrapSync() {
@@ -766,14 +1430,31 @@ async function pollWrapSync() {
         const pulse = await api.transportWrapPulse({
             transportId: wrapSync.transportId,
             anchorEpochMs: wrapSync.anchorEpochMs,
+            anchorPulseIndex: wrapSync.anchorPulseIndex,
             wrapIndex: wrapSync.wrapIndex,
             activeSteps: timing.activeSteps,
             triplet: timing.triplet,
         });
         if (!pulse.ok) return;
         if (!state.isPlaying() || pulse.transportId !== wrapSync.transportId) return;
+        if (pulse.exactBoundary === false) {
+            const recoveredAnchor = applyMissedWrapPulse(
+                pulse,
+                wrapSync.anchorPulseIndex,
+                timing,
+            );
+            if (!Number.isFinite(recoveredAnchor)) return;
+            wrapSync.anchorEpochMs = pulse.wrapEpochMs;
+            wrapSync.anchorPulseIndex = recoveredAnchor;
+            wrapSync.wrapIndex = pulse.wrapIndex;
+            pollWrapSync();
+            return;
+        }
         applyWrapPulse(pulse);
         wrapSync.anchorEpochMs = pulse.wrapEpochMs;
+        if (Number.isFinite(pulse.pulseIndex)) {
+            wrapSync.anchorPulseIndex = pulse.pulseIndex;
+        }
         wrapSync.wrapIndex = pulse.wrapIndex;
         pollWrapSync();
     } catch (err) {
@@ -781,14 +1462,73 @@ async function pollWrapSync() {
     }
 }
 
+function applyMissedWrapPulse(pulse, previousAnchorPulseIndex, timing) {
+    if (!Number.isFinite(pulse.pulseIndex)) {
+        setStatus('Wrap sync error: recovery pulse missing');
+        return null;
+    }
+    const pulseEpochMicros = Number.isFinite(pulse.wrapEpochMicros)
+        ? pulse.wrapEpochMicros
+        : pulse.wrapEpochMs * 1000;
+    const requestedBoundaryPulseIndex = previousAnchorPulseIndex
+        + timing.activeSteps * pulsesPerStep(timing.triplet);
+    if (pulse.wrapIndex > localWrapCount) {
+        handlePatternWrap(pulse.wrapIndex);
+    }
+    const recoveredTiming = currentPlaybackTiming();
+    const recoveredAnchor = cycleAnchorPulseIndex(
+        pulse.pulseIndex,
+        recoveredTiming.activeSteps,
+        recoveredTiming.triplet,
+        requestedBoundaryPulseIndex,
+    );
+    const sync = stepSyncFromPulse({
+        pulseIndex: pulse.pulseIndex,
+        pulseEpochMicros,
+        anchorPulseIndex: recoveredAnchor,
+        centibpm: Math.round(state.getBpm() * 100),
+        activeSteps: recoveredTiming.activeSteps,
+        triplet: recoveredTiming.triplet,
+    });
+    currentStep = sync.step;
+    highlightStep(displayStepFor(currentStep), playingPatternIdx());
+    if (beatTimer) clearBackgroundTimeout(beatTimer);
+    beatTimer = null;
+    nextBeatEpochMs = 0;
+    if (!deviceBpmSyncInFlight && !pendingDeviceBpmSync) {
+        bpmPausePhase = null;
+        scheduleBeatAt(sync.nextStepEpochMicros / 1000);
+    }
+    return recoveredAnchor;
+}
+
 function applyWrapPulse(pulse) {
     if (pulse.wrapIndex > localWrapCount) {
         handlePatternWrap(pulse.wrapIndex);
     }
-    currentStep = 0;
-    highlightStep(currentStep, playingPatternIdx());
-    if (beatTimer) clearTimeout(beatTimer);
-    scheduleNextBeat();
+    const timing = currentPlaybackTiming();
+    const pulseIndex = Number.isFinite(pulse.pulseIndex)
+        ? pulse.pulseIndex
+        : wrapSync.anchorPulseIndex;
+    const pulseEpochMicros = Number.isFinite(pulse.wrapEpochMicros)
+        ? pulse.wrapEpochMicros
+        : pulse.wrapEpochMs * 1000;
+    const sync = stepSyncFromPulse({
+        pulseIndex,
+        pulseEpochMicros,
+        anchorPulseIndex: pulseIndex,
+        centibpm: Math.round(state.getBpm() * 100),
+        activeSteps: timing.activeSteps,
+        triplet: timing.triplet,
+    });
+    currentStep = sync.step;
+    highlightStep(displayStepFor(currentStep), playingPatternIdx());
+    if (beatTimer) clearBackgroundTimeout(beatTimer);
+    beatTimer = null;
+    nextBeatEpochMs = 0;
+    if (deviceBpmSyncInFlight || pendingDeviceBpmSync) return;
+    bpmPausePhase = null;
+    scheduleBeatAt(sync.nextStepEpochMicros / 1000);
 }
 
 function timelineSignature(tl) {
@@ -846,13 +1586,34 @@ function onStateChangeDuringPlay(_patternChanged, structuralChange) {
     nextPatternSent = false;
 
     if (activeSlots === 0) {
+        if (auditionMode && currentTlPos >= 0) {
+            const fallbackIdx = state.getFocusedIdx();
+            const fallbackPattern = state.getPattern(fallbackIdx);
+            const needsFallback = hostAuditionQueuedForWrap
+                || fallbackIdx !== currentDevicePatternIdx;
+            if (fallbackPattern && needsFallback) {
+                queueHostAuditionForNextCycle(
+                    -1,
+                    fallbackIdx,
+                    fallbackPattern,
+                    snapshotTiming(fallbackPattern, {
+                        activeSteps: state.getActiveSteps(fallbackIdx),
+                        triplet: state.getTriplet(fallbackIdx),
+                    }),
+                    true,
+                );
+            }
+        }
         // Empty timeline - nothing to play. Fall to single-pattern loop:
-        // step highlighting falls back to the focused card.
+        // keep the audible pattern highlighted until the fallback queue is
+        // acknowledged, while removing only the timeline cursor.
         currentTlPos = -1;
-        currentDevicePatternIdx = null;
-        queuedPatternIdx = null;
-        currentDeviceTiming = null;
-        queuedDeviceTiming = null;
+        if (!auditionMode) {
+            currentDevicePatternIdx = null;
+            queuedPatternIdx = null;
+            currentDeviceTiming = null;
+            queuedDeviceTiming = null;
+        }
         highlightColumn(-1);
         return;
     }
@@ -884,7 +1645,8 @@ function onStateChangeDuringPlay(_patternChanged, structuralChange) {
     const queueSlot = queueSlotAfterTimelineChange(
         tl, cursor, currentDevicePatternIdx,
     );
-    if (needsImmediateScratchSave(tl, queueSlot, queuedPatternIdx)) {
+    if (needsImmediateScratchSave(tl, queueSlot, queuedPatternIdx)
+        || (auditionMode && hostAuditionQueuedForWrap)) {
         immediateScratchSave(tl, queueSlot);
     }
 }
@@ -902,14 +1664,18 @@ function immediateScratchSave(tl, slot) {
     const num = tl[slot];
     if (num < 1 || num > state.getPatternCount()) return;
     const patIdx = num - 1;
-    queuedPatternIdx = patIdx;
-    nextPatternSent = true;
     const pat = state.getPattern(patIdx);
     if (!pat) return;
     const queuedTiming = snapshotTiming(pat, {
         activeSteps: state.getActiveSteps(patIdx),
         triplet: state.getTriplet(patIdx),
     });
+    if (auditionMode && !state.isLiveUpdate() && state.isConnected()) {
+        queueHostAuditionForNextCycle(slot, patIdx, pat, queuedTiming, true);
+        return;
+    }
+    queuedPatternIdx = patIdx;
+    nextPatternSent = true;
     if (!state.isLiveUpdate() || !state.isConnected()) {
         queuedDeviceTiming = queuedTiming;
         return;
@@ -937,7 +1703,7 @@ function immediateScratchSave(tl, slot) {
  * or MIDI is disconnected.
  */
 export function rescratchUpcoming() {
-    if (!state.isPlaying() || !state.isLiveUpdate() || !state.isConnected()) return;
+    if (!state.isPlaying() || !state.isConnected()) return;
     if (currentTlPos < 0) return;
     const tl = state.getTimeline();
     const nextPos = nextTimelinePos(tl, currentTlPos);
@@ -947,11 +1713,16 @@ export function rescratchUpcoming() {
     const nextPatIdx = nextNum - 1;
     const pat = state.getPattern(nextPatIdx);
     if (!pat) return;
-    queuedPatternIdx = nextPatIdx;
     const queuedTiming = snapshotTiming(pat, {
         activeSteps: state.getActiveSteps(nextPatIdx),
         triplet: state.getTriplet(nextPatIdx),
     });
+    if (auditionMode && !state.isLiveUpdate()) {
+        queueHostAuditionForNextCycle(nextPos, nextPatIdx, pat, queuedTiming, true);
+        return;
+    }
+    if (!state.isLiveUpdate()) return;
+    queuedPatternIdx = nextPatIdx;
     api.savePattern(
         scratchSlot.group, scratchSlot.pattern, scratchSlot.side, pat,
     ).then(() => {
@@ -965,8 +1736,8 @@ export function rescratchUpcoming() {
 // Display
 // ---------------------------------------------------------------------------
 
-export function updateBpmDisplay() {
-    const bpm = state.getBpm();
+export function updateBpmDisplay(value = state.getBpm()) {
+    const bpm = normalizedBpm(value);
     bpmDisplay.textContent = bpm.toFixed(bpmFineMode ? 2 : 0);
     const angle = ((bpm - 20) / 280) * 300 - 150;
     knobIndicator.style.transform = `rotate(${angle}deg)`;

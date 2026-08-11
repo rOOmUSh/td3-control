@@ -1,32 +1,39 @@
 use crate::error::Td3Error;
-use crate::formats::mid::{build_timeline, MidiExportOptions, MidiSlideMode};
+use crate::formats::mid::{
+    build_timeline, build_timeline_with_gate, MidiExportOptions, MidiSlideMode, TimedMidiEvent,
+};
 use crate::pattern::Pattern;
 
 /// MIDI ticks per quarter note used when laying out the audition
 /// schedule. 480 is divisible by both 4 (normal steps) and 3 (triplet
 /// steps), so step boundaries land on whole ticks for either timing.
-const AUDITION_PPQN: u16 = 480;
+pub(super) const AUDITION_PPQN: u16 = 480;
 
-/// Channel-voice MIDI channel 1 (status nibble target). `build_timeline`
-/// encodes status as `0x90 | (channel - 1)`, so channel 1 yields the
-/// `0x90`/`0x80` bytes the single-note preview uses.
-const AUDITION_CHANNEL: u8 = 1;
+/// The channel host audition used before it became configurable.
+/// `build_timeline` encodes status as `0x90 | (channel - 1)`, so 1 yields
+/// the `0x90`/`0x80` bytes earlier releases emitted. Tests name it to
+/// assert that the shipped default reproduces that byte stream exactly.
+#[cfg(test)]
+pub(crate) const DEFAULT_AUDITION_CHANNEL: u8 = 1;
 
 /// Accent velocity. Matches `note_preview` and the `.mid` export default
 /// so accented audition notes sound identical to the keyboard preview.
-const ACCENT_VELOCITY: u8 = 110;
+pub(super) const ACCENT_VELOCITY: u8 = 110;
 
 /// Normal (un-accented) velocity. Matches `note_preview` and the `.mid`
 /// export default.
-const NORMAL_VELOCITY: u8 = 78;
+pub(super) const NORMAL_VELOCITY: u8 = 78;
 
 /// One scheduled MIDI message: raw bytes plus the offset, in
 /// microseconds, from the start of the pattern cycle at which they must
-/// be sent.
+/// be sent. `event_id` is optional scheduler metadata carrying a stable
+/// source identity for morph schedules; it is never part of the MIDI
+/// bytes. Legacy non-morph schedules leave it absent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScheduledMidi {
     pub offset_us: u64,
     pub bytes: Vec<u8>,
+    pub event_id: Option<crate::triplet_morph::MorphEventId>,
 }
 
 /// A full pattern cycle expressed as wall-clock-scheduled MIDI messages.
@@ -37,6 +44,11 @@ pub struct ScheduledMidi {
 pub struct AuditionSchedule {
     pub events: Vec<ScheduledMidi>,
     pub cycle_period_us: u64,
+    /// MIDI channel, 1 through 16, that every event in `events` was
+    /// encoded on. The runner silences the audition on this channel, so a
+    /// note sounded by the schedule is always stopped by a Note Off the
+    /// device accepts.
+    pub channel: u8,
 }
 
 /// Microsecond offset of MIDI `tick` at `centibpm` (BPM x 100) and the
@@ -49,35 +61,65 @@ pub struct AuditionSchedule {
 /// Substituting `bpm = centibpm / 100`:
 ///     offset = tick * 60_000_000 * 100 / (centibpm * ppqn)
 ///            = tick * 6_000_000_000 / (centibpm * ppqn).
-fn tick_offset_us(tick: u32, centibpm: u32, ppqn: u16) -> u64 {
+pub(super) fn tick_offset_us(tick: u32, centibpm: u32, ppqn: u16) -> u64 {
     let centibpm = centibpm.max(1) as u64;
     let ppqn = ppqn.max(1) as u64;
     (tick as u64).saturating_mul(6_000_000_000u64) / (centibpm * ppqn)
 }
 
-/// Build the audition schedule for `pattern` at `centibpm`.
+/// Build the audition schedule for `pattern` at `centibpm` on `channel`.
 ///
-/// Reuses the `.mid` export timeline, then keeps only channel-voice
-/// Note On/Off events (status nibble `0x80`/`0x90`), discarding the
-/// track-name, tempo, time-signature, and end-of-track meta events.
-/// Events are converted from MIDI ticks to microsecond offsets and
-/// stably sorted by tick so that at an identical tick a Note Off is
-/// emitted before a Note On (the timeline builds them in that order).
-pub fn prepare_schedule(pattern: &Pattern, centibpm: u32) -> Result<AuditionSchedule, Td3Error> {
-    let options = MidiExportOptions {
+/// Uses the legacy 50 percent ordinary-note gate retained by MIDI export.
+pub fn prepare_schedule(
+    pattern: &Pattern,
+    centibpm: u32,
+    channel: u8,
+) -> Result<AuditionSchedule, Td3Error> {
+    let options = audition_options(centibpm, channel);
+    let timeline = build_timeline(pattern, "audition", &options)?;
+    Ok(prepare_schedule_from_timeline(
+        pattern, centibpm, channel, timeline,
+    ))
+}
+
+/// Build a host-audition schedule with an explicit ordinary-note gate.
+/// The default schedule builder and MIDI export retain the legacy gate.
+pub(crate) fn prepare_schedule_with_gate(
+    pattern: &Pattern,
+    centibpm: u32,
+    gate_percent: u32,
+    channel: u8,
+) -> Result<AuditionSchedule, Td3Error> {
+    if gate_percent == 50 {
+        return prepare_schedule(pattern, centibpm, channel);
+    }
+    let options = audition_options(centibpm, channel);
+    let timeline = build_timeline_with_gate(pattern, "audition", &options, gate_percent)?;
+    Ok(prepare_schedule_from_timeline(
+        pattern, centibpm, channel, timeline,
+    ))
+}
+
+pub(super) fn audition_options(centibpm: u32, channel: u8) -> MidiExportOptions {
+    MidiExportOptions {
         bpm: (centibpm / 100).max(1),
         ppqn: AUDITION_PPQN,
-        channel: AUDITION_CHANNEL,
+        channel,
         octave_offset: 0,
         accent_velocity: ACCENT_VELOCITY,
         normal_velocity: NORMAL_VELOCITY,
         slide_mode: MidiSlideMode::Td3,
         loop_count: 1,
-    };
+    }
+}
 
-    let timeline = build_timeline(pattern, "audition", &options)?;
-
-    let mut events: Vec<(u32, ScheduledMidi)> = timeline
+fn prepare_schedule_from_timeline(
+    pattern: &Pattern,
+    centibpm: u32,
+    channel: u8,
+    timeline: Vec<TimedMidiEvent>,
+) -> AuditionSchedule {
+    let mut events: Vec<(u32, u8, ScheduledMidi)> = timeline
         .into_iter()
         .filter(|ev| {
             // Keep only Note Off (0x80) / Note On (0x90) channel-voice
@@ -87,26 +129,28 @@ pub fn prepare_schedule(pattern: &Pattern, centibpm: u32) -> Result<AuditionSche
         .map(|ev| {
             (
                 ev.tick,
+                ev.order,
                 ScheduledMidi {
                     offset_us: tick_offset_us(ev.tick, centibpm, AUDITION_PPQN),
                     bytes: ev.data,
+                    event_id: None,
                 },
             )
         })
         .collect();
 
-    // Stable sort by tick preserves the timeline's build order at equal
-    // ticks (Note Off pushed before the next step's Note On), so a note
-    // ending exactly when the next begins never cuts the new note.
-    events.sort_by_key(|(tick, _)| *tick);
+    // Timeline order makes a full-step Note Off precede the following
+    // Note On at an identical tick, so the old note cannot cut the new one.
+    events.sort_by_key(|(tick, order, _)| (*tick, *order));
 
     let divisor: u32 = if pattern.triplet { 3 } else { 4 };
     let step_ticks = AUDITION_PPQN as u32 / divisor;
     let pattern_ticks = (pattern.active_steps as u32).max(1) * step_ticks;
     let cycle_period_us = tick_offset_us(pattern_ticks, centibpm, AUDITION_PPQN);
 
-    Ok(AuditionSchedule {
-        events: events.into_iter().map(|(_, ev)| ev).collect(),
+    AuditionSchedule {
+        events: events.into_iter().map(|(_, _, ev)| ev).collect(),
         cycle_period_us,
-    })
+        channel,
+    }
 }

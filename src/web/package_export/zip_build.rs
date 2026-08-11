@@ -26,14 +26,21 @@ pub(super) fn build_zip_bytes(input: &PackageExportInput) -> Result<(Vec<u8>, u3
         for i in 0..4 {
             let pn = format!("P{}", i + 1);
             for fmt_id in input.formats {
-                let (ext, data) = render_format(fmt_id, &input.acid_patterns[i], &pn, midi_opts)?;
+                let (ext, data) = render_format(
+                    fmt_id,
+                    &input.acid_patterns[i],
+                    &pn,
+                    midi_opts,
+                    input.centibpm,
+                )?;
                 let name = format!("{}/{}/{}.{}", ROOT_FOLDER, pn, pn, ext);
                 zip_write(&mut zip, &name, &data, opts)?;
                 file_count += 1;
             }
             let pbn = format!("{}_BASSLINE", pn);
             for fmt_id in input.formats {
-                let (ext, data) = render_format(fmt_id, &input.basslines[i], &pbn, midi_opts)?;
+                let (ext, data) =
+                    render_format(fmt_id, &input.basslines[i], &pbn, midi_opts, input.centibpm)?;
                 let name = format!("{}/{}/{}/{}.{}", ROOT_FOLDER, pn, pbn, pbn, ext);
                 zip_write(&mut zip, &name, &data, opts)?;
                 file_count += 1;

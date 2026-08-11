@@ -12,6 +12,7 @@ pub(crate) mod control_queue;
 pub(crate) mod embedded_ui;
 pub(crate) mod folder_picker;
 pub(crate) mod handlers;
+pub(crate) mod midi_channel;
 pub(crate) mod package_export;
 pub(crate) mod remote_sync;
 pub(crate) mod scan_jobs;
@@ -69,11 +70,14 @@ pub async fn start_server(
     );
 
     let ui_config = state::UiConfigSnapshot {
+        midi_device_channel: env.midi_device_channel,
         ui_auto_connect_to_midi: env.ui_auto_connect_to_midi,
         ui_auto_set_live_update: env.ui_auto_set_live_update,
         ui_default_bpm: env.ui_default_bpm,
         ui_default_triplet: env.ui_default_triplet,
         ui_max_bank_history_size: env.ui_max_bank_history_size,
+        ui_pattern_export_name_prompt: env.ui_pattern_export_name_prompt,
+        ui_pattern_export_batch_delay_ms: env.ui_pattern_export_batch_delay_ms,
         ui_rand_default_root: env.ui_rand_default_root,
         ui_rand_default_scale: env.ui_rand_default_scale.clone(),
         ui_rand_note_percent: env.ui_rand_note_percent,
@@ -145,8 +149,16 @@ pub async fn start_server(
             post(handlers::pattern_audition_update),
         )
         .route(
+            "/pattern/audition/queue-next-cycle",
+            post(handlers::pattern_audition_queue_next_cycle),
+        )
+        .route(
             "/pattern/audition/stop",
             post(handlers::pattern_audition_stop),
+        )
+        .route(
+            "/pattern/triplet-morph/plan",
+            post(handlers::pattern_triplet_morph_plan),
         )
         .route("/pattern/export-pool", post(handlers::export_pool))
         .route("/pattern/export", post(handlers::pattern_export))
@@ -264,6 +276,7 @@ async fn auto_connect(shared_state: &std::sync::Arc<state::AppState>, config: &C
             );
             let mut guard = shared_state.midi.session.lock().await;
             *guard = Some(state::MidiSession {
+                generation: shared_state.midi.next_session_generation(),
                 out_conn: Some(established.out_conn),
                 rx: established.rx,
                 _in_conn: established.in_conn,
@@ -287,5 +300,6 @@ pub(crate) fn midi_runtime_config_from_resolved(
         output_port_name: midi.output_port_name.clone(),
         strict_name_match: midi.strict_name_match,
         timeout: midi.request_timeout,
+        device_channel: midi.device_channel,
     }
 }

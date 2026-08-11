@@ -19,22 +19,31 @@ import { slotFor } from '../shared/slot-targets.js';
 import * as clipboard from '../progression/progression-clipboard.js';
 import * as preview from './multipattern-preview.js';
 import * as randomize from '../randomize.js';
+import * as tripletMorphView from './triplet-morph-view.js';
 import { formatPatternAsStepsTxt } from '../shared/steps-txt-format.js';
-import { parseStepsTxt, looksLikeStepsTxt } from '../shared/steps-txt-parse.js';
+import { parseStepsTxtDocument, looksLikeStepsTxt } from '../shared/steps-txt-parse.js';
 
 let container = null;
 let setStatus = () => {};
 let onBankPattern = null;
+// Wired from main.js; owns TRIPLET press behaviour so the row button and
+// the global button share one morph-send path.
+let onTripletPress = null;
 // Wired from main.js; invoked after movePattern succeeds during playback
 // so the device scratch slot reflects the new next-in-timeline pattern.
 // Kept as an injected callback to avoid a transport <-> list circular import.
 let onStructuralChange = () => {};
+let applyImportedBpm = () => false;
+let highlightedPatternIdx = null;
+let highlightedStepIdx = -1;
 
 /** Wire the list to its DOM container + state. Call once after layout boot. */
 export function init(opts = {}) {
     if (typeof opts.setStatus === 'function') setStatus = opts.setStatus;
     if (typeof opts.onBankPattern === 'function') onBankPattern = opts.onBankPattern;
+    if (typeof opts.onTripletPress === 'function') onTripletPress = opts.onTripletPress;
     if (typeof opts.onStructuralChange === 'function') onStructuralChange = opts.onStructuralChange;
+    if (typeof opts.applyImportedBpm === 'function') applyImportedBpm = opts.applyImportedBpm;
     container = document.getElementById('multipattern-list');
     if (!container) {
         console.warn('[multipattern-list] #multipattern-list not found');
@@ -48,13 +57,51 @@ export function init(opts = {}) {
     container.addEventListener('dragleave', handleDragLeave);
     container.addEventListener('drop',      handleDrop);
     render();
-    state.onChange(() => render());
-    clipboard.subscribe(() => render());
-    preview.subscribe(() => render());
+    state.onChange((_patternChanged, _structuralChange, derivedOnly) => {
+        // A derived-only change moves the triplet geometry, which the
+        // morph renderer applies to the cards that already exist. A
+        // rebuild here would produce identical markup at the cost of
+        // every element on the page.
+        if (derivedOnly) return;
+        scheduleRender();
+    });
+    clipboard.subscribe(() => scheduleRender());
+    preview.subscribe(() => scheduleRender());
+}
+
+/**
+ * Rebuild once for however many changes land in one frame.
+ *
+ * A single user action often notifies more than once - a row button
+ * focuses its card and then acts on it - and each notification used to
+ * rebuild the whole list. `render` reads current state every time, so
+ * collapsing a burst to its last render is not a behaviour change, only
+ * one less pass over the DOM.
+ */
+let renderHandle = null;
+
+function scheduleRender() {
+    if (renderHandle !== null) return;
+    const run = () => {
+        renderHandle = null;
+        render();
+    };
+    renderHandle = typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame(run)
+        : setTimeout(run, 0);
+}
+
+/** Drop a queued rebuild that a direct render has just made redundant. */
+function cancelQueuedRender() {
+    if (renderHandle === null) return;
+    if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(renderHandle);
+    else clearTimeout(renderHandle);
+    renderHandle = null;
 }
 
 /** Rebuild the card list from current state. */
 export function render() {
+    cancelQueuedRender();
     if (!container) return;
     const scrollHost = getScrollHost();
     const scrollTop = scrollHost ? scrollHost.scrollTop : 0;
@@ -73,6 +120,13 @@ export function render() {
         frag.appendChild(card);
     }
     container.replaceChildren(frag);
+    paintStepHighlight();
+    // The cards are new, so the derived triplet geometry that was on the
+    // old ones is gone. Reapplying here rather than leaving it to the
+    // next notification is what makes the rebuild safe to defer, and it
+    // also covers the rebuilds that never came from a notification at
+    // all - a clipboard or preview change used to drop the morph view.
+    tripletMorphView.render();
     restoreScroll(scrollHost, scrollTop);
 }
 
@@ -115,15 +169,33 @@ function matchesViewport(idx, vp, scratch, mode, startSlot) {
  */
 export function highlightStep(stepIndex, patternIdx) {
     if (!container) return;
-    const prev = container.querySelector('.step-active');
-    if (prev) restoreStepHighlight(prev);
-    if (stepIndex < 0) return;
+    if (stepIndex < 0) {
+        highlightedPatternIdx = null;
+        highlightedStepIdx = -1;
+        paintStepHighlight();
+        return;
+    }
     const idx = (patternIdx === null || patternIdx === undefined)
         ? state.getFocusedIdx()
         : patternIdx;
-    if (idx === null) return;
+    highlightedPatternIdx = idx;
+    highlightedStepIdx = stepIndex;
+    paintStepHighlight();
+}
+
+function paintStepHighlight() {
+    if (!container) return;
+    container.querySelectorAll('.step-active').forEach(restoreStepHighlight);
+    if (!Number.isInteger(highlightedPatternIdx)
+        || !Number.isInteger(highlightedStepIdx)
+        || highlightedPatternIdx < 0
+        || highlightedPatternIdx >= state.getPatternCount()
+        || highlightedStepIdx < 0
+        || highlightedStepIdx >= 16) {
+        return;
+    }
     const card = container.querySelector(
-        `.mp-card[data-pattern-idx="${idx}"] .mp-card-grid [data-step="${stepIndex}"]`,
+        `.mp-card[data-pattern-idx="${highlightedPatternIdx}"] .mp-card-grid [data-step="${highlightedStepIdx}"]`,
     );
     if (!card) return;
     applyStepHighlight(card);
@@ -149,6 +221,14 @@ function handleAction(e) {
     // focus handler bails on data-action clicks so we hoist it here.
     if (state.getFocusedIdx() !== idx) state.setFocused(idx);
 
+    // While the derived triplet morph view is active, only non-mutating
+    // actions stay live; canonical edits require TRIPLET back at 0.
+    const mutating = !['preview', 'bank', 'copy'].includes(action);
+    if (mutating && state.isTripletMorphActive()) {
+        setStatus('Triplet audition is derived. Return TRIPLET to 0 to edit.');
+        return;
+    }
+
     switch (action) {
         case 'delete':       return handleDelete(idx);
         case 'bank':         return handleBank(idx);
@@ -167,10 +247,21 @@ function handleAction(e) {
     }
 }
 
-function handleTriplet(idx) {
+// Routed through main.js so the per-pattern button and the global one
+// share one morph-send path. Without a route wired the button keeps its
+// plain flag behaviour.
+async function handleTriplet(idx) {
     const next = !state.getTriplet(idx);
-    state.setTriplet(idx, next);
-    setStatus(`P${idx + 1} triplet ${next ? 'ON' : 'OFF'}`);
+    if (typeof onTripletPress !== 'function') {
+        state.setTriplet(idx, next);
+        setStatus(`P${idx + 1} triplet ${next ? 'ON' : 'OFF'}`);
+        return;
+    }
+    const outcome = await onTripletPress(idx, next, state.isTripletMorphSendFor(idx));
+    let detail = '';
+    if (outcome?.morphed?.length > 0) detail = ', morphed to 12 steps';
+    else if (outcome?.restored?.length > 0) detail = ', restored to 16 steps';
+    setStatus(`P${idx + 1} triplet ${next ? 'ON' : 'OFF'}${detail}`);
 }
 
 function handleBank(idx) {
@@ -239,7 +330,7 @@ async function writeFocusedPatternToSystemClipboard(idx) {
         if (!navigator.clipboard || !navigator.clipboard.writeText) return;
         const pat = state.getPattern(idx);
         if (!pat) return;
-        await navigator.clipboard.writeText(formatPatternAsStepsTxt(pat));
+        await navigator.clipboard.writeText(formatPatternAsStepsTxt(pat, state.getBpm()));
     } catch (_) { /* best-effort */ }
 }
 
@@ -396,8 +487,9 @@ async function tryPasteFullFromSystemClipboard(idx) {
         if (!navigator.clipboard || !navigator.clipboard.readText) return false;
         const text = await navigator.clipboard.readText();
         if (!looksLikeStepsTxt(text)) return false;
-        const pat = parseStepsTxt(text);
-        state.setPattern(idx, pat);
+        const { pattern, centibpm } = parseStepsTxtDocument(text);
+        if (centibpm !== null) applyImportedBpm(centibpm);
+        state.setPattern(idx, pattern);
         setStatus(`FULL → P${idx + 1} (from text)`);
         return true;
     } catch (_) {

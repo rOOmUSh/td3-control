@@ -9,7 +9,7 @@ The main page toolbar is the control strip above the pattern cards.
 It is separate from the left sidebar and the bottom transport bar:
 
 - The sidebar chooses TD-3 slots and generation settings.
-- The bottom toolbar handles MIDI connection, playback, Live Update, and BPM.
+- The bottom toolbar handles MIDI connection, playback, Live Update, BPM, and host-audition gate.
 - The main page toolbar manages files, pattern list structure, batch edits, slot views, bank handoff, progression handoff, and full device push workflows.
 
 On the Control page, the toolbar is split into two rows. The top row covers file, timing, keyboard, progression, device push, and reset actions. The second row covers pattern-list management and batch transformations.
@@ -43,7 +43,13 @@ Import does not require the TD-3 to be connected. It is a file workflow.
 
 `EXPORT` opens a format menu.
 
-Choose a format from the dropdown to download the focused pattern. The filename uses the current sidebar slot address so the exported file is easier to identify later.
+Choose a format from the dropdown to export the checked pattern cards. If no cards are checked, the app exports every pattern card.
+
+By default, a naming dialog opens after you choose the format. Enter a name for the pattern set, then select `EXPORT`. The export button remains unavailable until the name contains usable filename characters. Select `CANCEL`, press Escape, or click outside the dialog to stop without exporting.
+
+Each ordinary pattern file starts with its source index, followed by the set name. For example, a set named `Acid Set` produces filenames such as `P001_Acid Set.steps.txt` and `P002_Acid Set.steps.txt`. Checked cards keep their original indexes, so exporting the first and third cards produces `P001` and `P003` files. Characters that cannot be used safely in a filename are replaced, and overly long names are shortened safely.
+
+You can turn off the naming dialog in Settings. When it is off, the app captures one local timestamp when you choose the format and uses it for the whole export, for example `P001_2026-07-21-08-46-13.steps.txt`. This makes files from the same export easy to group while keeping their pattern indexes distinct.
 
 Available export choices are:
 
@@ -55,7 +61,11 @@ Available export choices are:
 - `mid`: standard MIDI file for DAW use.
 - `rbs`: ReBirth-style pattern export.
 
-Export does not write to the TD-3. It downloads a file from the current UI pattern.
+RBS combines the selected patterns into one file. Its filename is the entered set name, such as `Acid Set.rbs`, or the shared timestamp when the naming dialog is disabled.
+
+For formats that create individual files, the browser starts downloads in groups of 10. When more files remain, it pauses for the delay configured in Settings before starting the next group. The default pause is 2 seconds. This avoids losing files to browser limits on rapid automatic downloads. A combined RBS export is one download and does not use batching.
+
+Export does not write to the TD-3. See [Settings](SETTINGS.md#pattern-export) to change the naming prompt or batch delay.
 
 ## Steps
 

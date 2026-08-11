@@ -58,8 +58,17 @@ fn device_busy_preserves_driver_error() {
         msg.contains("could not be opened"),
         "lost driver text: {msg}"
     );
-    assert!(msg.contains("device busy"));
-    assert!(msg.contains("td3-control"));
+    // Every connect failure arrives here, whatever the driver said, so
+    // the message may not name one cause as though it had been
+    // established. It offers the candidates and hands over the driver
+    // text, which is the only part that identifies the real one.
+    assert!(
+        !msg.contains("Another td3-control instance may be holding the port"),
+        "must not assert an unverified cause: {msg}"
+    );
+    assert!(msg.contains("may be holding it"), "names contention: {msg}");
+    assert!(msg.contains("releasing"), "names a transient open: {msg}");
+    assert!(msg.contains("Original driver error"));
 }
 
 // ── classify_connect_error ──────────────────────────────────────────

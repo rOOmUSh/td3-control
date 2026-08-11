@@ -63,6 +63,9 @@ impl Default for ScanProgress {
 /// "transport is running" error in that window instead of silently
 /// doing nothing or deadlocking.
 pub struct MidiSession {
+    /// Monotonic identity used to reject late connection restores from an
+    /// older session after disconnect and reconnect.
+    pub generation: u64,
     pub out_conn: Option<midir::MidiOutputConnection>,
     pub rx: std::sync::mpsc::Receiver<Vec<u8>>,
     /// Kept alive to hold the input connection open.
@@ -78,6 +81,8 @@ pub struct MidiSession {
 /// cached here purely so the `/api/status` handler can report them
 /// without reaching into the thread.
 pub struct ClockState {
+    /// MIDI session that donated the runner's output connection.
+    pub session_generation: u64,
     /// Current tempo in centi-BPM (BPM x 100). Mirrors what the runner
     /// thread is using; 0.01 BPM resolution.
     pub centibpm: u32,
@@ -91,6 +96,15 @@ pub struct ClockState {
     pub playing: bool,
     /// Handle to the clock thread. Dropping this stops the thread.
     pub runner: Option<ClockRunner>,
+}
+
+/// Host-audition owner paired with the MIDI session that donated its output
+/// connection so a late stop cannot restore into a reconnected session.
+pub struct AuditionState {
+    pub session_generation: u64,
+    pub audition_id: u64,
+    pub looping: bool,
+    pub runner: AuditionRunner,
 }
 
 /// Scratch pattern slot configured at startup.
@@ -119,6 +133,7 @@ pub struct LibraryState {
 #[derive(Clone)]
 pub struct MidiState {
     pub session: Arc<Mutex<Option<MidiSession>>>,
+    pub session_generation: Arc<AtomicU64>,
     pub scratch: ScratchSlot,
     /// Resolved MIDI runtime config - port substring, strict flag, and
     /// timeout. Replaces the per-handler hardcoded `"TD-3"` /
@@ -132,6 +147,13 @@ pub struct MidiState {
     /// Resolved MIDI import options. Reuses MIDI_EXPORT_* keys so the
     /// `.mid` round-trip stays lossless when operators tweak the env file.
     pub import_options: MidiImportOptions,
+}
+
+impl MidiState {
+    pub fn next_session_generation(&self) -> u64 {
+        self.session_generation
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+    }
 }
 
 /// User-facing configuration files and startup UI snapshot.
@@ -153,11 +175,17 @@ pub struct ConfigState {
 /// Transport, audition, and control-page handoff state.
 #[derive(Clone)]
 pub struct PlaybackState {
+    /// Serializes transfer of the single MIDI output connection between the
+    /// session, clock runner, audition runner, and disconnect path.
+    pub midi_owner_lifecycle: Arc<Mutex<()>>,
+    /// Number of detached MIDI cleanup jobs that still own an input or output
+    /// connection. Reconnect stays blocked until every job has completed.
+    pub midi_cleanup_pending: Arc<AtomicUsize>,
     pub clock: Arc<Mutex<Option<ClockState>>>,
     /// Host-sequenced audition runner. `Some` while a non-saving
     /// pattern audition is playing; mutually exclusive with `clock`.
     /// The thread silences sounding notes when stopped or dropped.
-    pub audition: Arc<Mutex<Option<AuditionRunner>>>,
+    pub audition: Arc<Mutex<Option<AuditionState>>>,
     pub transport_generation: Arc<AtomicU64>,
     /// Item ID of the LibraryItem currently being auditioned on the device.
     /// Set when the Bank UI asks to play a pattern; cleared on transport stop
@@ -228,17 +256,27 @@ pub struct MidiRuntimeConfig {
     pub output_port_name: String,
     pub strict_name_match: bool,
     pub timeout: Duration,
+    /// MIDI channel, 1 through 16, the connected device listens on.
+    /// Channel-voice messages the app originates (host audition and note
+    /// preview) carry it; SysEx and MIDI realtime do not.
+    pub device_channel: u8,
 }
 
 /// Subset of `AppEnv` the browser actually needs. Populated once at startup
 /// and served by `GET /api/config/env`.
 #[derive(Clone)]
 pub struct UiConfigSnapshot {
+    /// Startup default for the transport bar's CH selector. The device
+    /// channel can be changed live from the UI without a restart; this is
+    /// only the value the control initialises to.
+    pub midi_device_channel: u8,
     pub ui_auto_connect_to_midi: bool,
     pub ui_auto_set_live_update: bool,
     pub ui_default_bpm: u32,
     pub ui_default_triplet: bool,
     pub ui_max_bank_history_size: u32,
+    pub ui_pattern_export_name_prompt: bool,
+    pub ui_pattern_export_batch_delay_ms: u32,
     pub ui_rand_default_root: u8,
     pub ui_rand_default_scale: String,
     pub ui_rand_note_percent: u8,
@@ -255,11 +293,14 @@ impl UiConfigSnapshot {
     #[cfg(test)]
     pub fn for_tests() -> Self {
         Self {
+            midi_device_channel: 1,
             ui_auto_connect_to_midi: true,
             ui_auto_set_live_update: true,
             ui_default_bpm: 120,
             ui_default_triplet: false,
             ui_max_bank_history_size: 200,
+            ui_pattern_export_name_prompt: true,
+            ui_pattern_export_batch_delay_ms: 2_000,
             ui_rand_default_root: 0,
             ui_rand_default_scale: "minor".into(),
             ui_rand_note_percent: 50,
@@ -313,6 +354,7 @@ impl AppState {
                     output_port_name: "TD-3".into(),
                     strict_name_match: false,
                     timeout: Duration::from_secs(5),
+                    device_channel: 1,
                 },
                 export_options: MidiExportOptions::default(),
                 import_options: MidiImportOptions::default(),
@@ -344,6 +386,7 @@ impl AppState {
             },
             midi: MidiState {
                 session: Arc::new(Mutex::new(None)),
+                session_generation: Arc::new(AtomicU64::new(1)),
                 scratch,
                 runtime: midi_runtime,
                 export_options: midi_export_options,
@@ -355,6 +398,8 @@ impl AppState {
                 user_config_dir,
             },
             playback: PlaybackState {
+                midi_owner_lifecycle: Arc::new(Mutex::new(())),
+                midi_cleanup_pending: Arc::new(AtomicUsize::new(0)),
                 clock: Arc::new(Mutex::new(None)),
                 audition: Arc::new(Mutex::new(None)),
                 transport_generation: Arc::new(AtomicU64::new(1)),

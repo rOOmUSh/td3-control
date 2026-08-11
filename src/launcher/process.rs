@@ -67,7 +67,25 @@ fn configure_platform_child(cmd: &mut Command, exe: &Path) {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+fn configure_platform_child(cmd: &mut Command, _exe: &std::path::Path) {
+    use std::os::windows::process::CommandExt;
+
+    /// `CREATE_NEW_CONSOLE`. The child gets a console of its own rather
+    /// than sharing the launcher's.
+    ///
+    /// Two reasons. The launcher is a windowed process, so a child that
+    /// shares its console has nowhere to print when the launcher was
+    /// started from Explorer, and its startup messages are lost. And a
+    /// shared console means the child inherits the launcher's console
+    /// handles, which is the one thing a child spawned here has that the
+    /// same command run from a shell does not.
+    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+
+    cmd.creation_flags(CREATE_NEW_CONSOLE);
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 fn configure_platform_child(_cmd: &mut Command, _exe: &std::path::Path) {}
 
 #[cfg(target_os = "macos")]

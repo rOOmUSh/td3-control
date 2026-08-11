@@ -47,6 +47,7 @@ pub fn extract_bank(
     force: bool,
     midi_opts: &MidiExportOptions,
 ) -> Result<(), Td3Error> {
+    formats_mod::steps_txt::centibpm_from_integer_bpm(midi_opts.bpm)?;
     let data = fs::read(input)?;
     let bank = parse_bank(&data)?;
 
@@ -125,7 +126,7 @@ fn write_format(
             fs::write(filename, data)?;
         }
         Format::StepsTxt => {
-            let data = formats_mod::steps_txt::export(pattern);
+            let data = formats_mod::steps_txt::export_with_integer_bpm(pattern, midi_opts.bpm)?;
             fs::write(filename, data)?;
         }
         Format::Seq => {

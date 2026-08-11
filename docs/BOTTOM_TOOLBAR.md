@@ -1,17 +1,22 @@
 # Bottom Toolbar
 
-![Main page toolbar - both rows above the pattern cards](images/toolbar.png)
+![The bottom toolbar with Live Update off, showing CH, GATE, and TRIPLET](images/bottom-toolbar.png)
 
 ## What The Bottom Toolbar Is For
 
 The bottom toolbar is the performance and device-control strip on the Control page.
 
-It handles the parts of the workflow that affect playback, MIDI connection, timing, and live communication with the TD-3. Pattern writing, pattern editing, import, export, randomization, and bank work happen elsewhere in the interface. The bottom toolbar is mainly about answering four practical questions:
+It handles the parts of the workflow that affect playback, MIDI connection, timing, and live communication with the TD-3. Pattern writing, pattern editing, import, export, randomization, and bank work happen elsewhere in the interface. The bottom toolbar is mainly about answering these practical questions:
 
 - Is the TD-3 connected?
 - What clock source is the TD-3 using?
 - Is the pattern playing?
 - What tempo is being used?
+- Which MIDI channel does the TD-3 listen on?
+- How long should host-audition notes be held?
+- How straight or triplet should host audition feel?
+
+The `CH`, `GATE`, and `TRIPLET` controls belong to host audition and appear only while `LIVE` is off.
 
 ## MIDI Connection Button
 
@@ -75,6 +80,32 @@ When Live Update is on, edits can be pushed to the TD-3 scratch slot shortly aft
 When Live Update is off, edits stay in the app until you explicitly send, save, preview, or push them through another control. Bottom-toolbar play and row preview use non-saving host audition in this state, so the focused pattern can still be heard on the TD-3 without writing the scratch slot.
 
 Live Update is powerful because it makes the TD-3 feel connected to the editor in real time. It should also be used with awareness: the scratch slot is meant to be overwritten during live work.
+
+## CH: Device MIDI Channel
+
+![The CH selector between the LIVE button and the REMOTE controls](images/midi-channel-selector.png)
+
+The `CH` selector sets which MIDI channel the app addresses the TD-3 on. It must match the channel the device itself is set to.
+
+Two things the app does are channel-addressed, and both are silent when the channel is wrong:
+
+- non-saving host audition, where the app sends timed Note On and Note Off from the host
+- the keyboard note preview
+
+Device playback is not channel-addressed. `LIVE` playback writes the pattern over SysEx and drives the TD-3 sequencer with MIDI realtime Start, Clock, and Stop, none of which carry a channel. A device left on a mismatched channel therefore plays normally in `LIVE` mode and produces nothing in NO-LIVE. That combination is the usual sign that this setting needs changing, not that playback is broken.
+
+The channel is a device setting, not an app setting. It is changed on the TD-3 itself, for example in Behringer's SynthTribe application. The app cannot read it back reliably, so it has to be told which channel to use.
+
+How the value is chosen:
+
+- `MIDI_DEVICE_CHANNEL` in `TD3_CONFIG.env` supplies the value the selector starts on. The default is `1`.
+- The selector overrides it for the current browser session, with no restart and no file editing.
+- The channel travels with each audition and preview request, so a change takes effect on the next request. Playback already running is not restarted.
+- The choice is shared by the Control and Progression pages.
+
+Like `GATE` and `TRIPLET`, the selector is visible only while `LIVE` is off, because it belongs to host audition. Turning `LIVE` on hides it without discarding the value.
+
+Set `MIDI_DEVICE_CHANNEL` for the channel a device normally uses, and use the selector when moving between devices on different channels.
 
 ## Remote Sync
 
@@ -161,6 +192,65 @@ You can adjust it in two ways:
 
 If playback is already running, the app updates the playback timer and sends the new BPM to the TD-3 when possible.
 
+## Gate
+
+The `GATE` control sets how long ordinary notes are held during non-saving host audition. Its value is an integer from `1%` to `100%` of one pattern step:
+
+- `1%` produces the shortest supported note.
+- `50%` is the default and matches the previous host-audition gate.
+- `100%` holds the note for one full step.
+
+Higher values produce longer notes. Gate also controls the final sounding tail of a tied-note group. Rests, accents, terminal slides, connected TD-3 slide overlap, and the overall pattern cycle length keep their existing behavior.
+
+The control is visible only while `LIVE` is off. Its value is shared by the Control and Progression pages for the current browser session. Turning `LIVE` on hides the control without discarding the value, and an explicit row `NO SAVE` preview continues to use that retained value while the control is hidden.
+
+You can adjust gate in these ways:
+
+- Scroll the mouse wheel over the knob to change it by `1%`.
+- Drag vertically. Every 3 pixels changes the value by `1%`.
+- Focus the knob and use an arrow key to change it by `1%`.
+- Press `Home` for `1%` or `End` for `100%`.
+
+Changing gate during host audition does not restart playback or change its cadence. The currently sounding note reaches its already scheduled Note Off, then later notes use the new value. Step highlighting continues from the current playback position.
+
+Gate does not affect device-sequenced `LIVE` playback, keyboard note preview, Remote Sync messages, pattern files, or exported MIDI.
+
+## TRIPLET Morph Control
+
+![The BPM, GATE, and TRIPLET controls](images/gate-triplet-controls.png)
+
+The `TRIPLET` control warps non-saving host audition from a straight
+feel toward a triplet feel. Its value is a whole percentage from `0%`
+to `100%`:
+
+- `0%` plays the ordinary straight pattern.
+- Intermediate values slide the offbeats toward triplet positions.
+- `100%` plays three evenly spaced notes per beat instead of four.
+
+Tempo, bar length, and beat starts do not change at any amount, and
+nothing is written to the TD-3. Returning the knob to `0%` reveals the
+unchanged original pattern.
+
+Like `GATE`, the control is visible only while `LIVE` is off, because
+it belongs to non-saving host audition. Turning `LIVE` on stops the
+audition, restores the straight view, and resets the amount to `0%`.
+
+The small switch beside the knob jumps straight to the opposite
+endpoint: up is `0`, down is `100`.
+
+You can adjust the amount in these ways:
+
+- scroll the mouse wheel over the knob to change by `1`
+- drag the knob vertically
+- focus the knob and use the arrow keys to change by `1`
+- press `PageUp` or `PageDown` to change by `10`
+- press `Home` for `0` or `End` for `100`
+- click the switch to snap to the other endpoint
+
+Full behavior, including which note is removed at the endpoint and what
+can be edited while morphed, is documented in
+[Triplet Morph](TRIPLET_MORPH.md).
+
 ## Status Message
 
 The text area on the right side of the bottom toolbar shows short status messages.
@@ -184,10 +274,13 @@ For the most common workflow:
 2. Set the sync source to `USB`.
 3. Choose a BPM with the knob.
 4. Enable `.00` when you need centi-BPM tempo changes.
-5. Turn `LIVE` on if you want edits to reach the scratch slot automatically.
-6. Leave `LIVE` off when you want non-saving host audition.
-7. Turn `REMOTE` on and enter the other local ports when you want additional local devices to follow this toolbar.
-8. Press `PLAY / STOP` to start and stop playback.
-9. Watch the status message when something does not behave as expected.
+5. Leave `LIVE` off and set `CH` to the channel the TD-3 is on when you want non-saving host audition.
+6. Choose a `GATE` value, and a `TRIPLET` amount if you want a triplet feel.
+7. Turn `LIVE` on if you want edits to reach the scratch slot automatically.
+8. Turn `REMOTE` on and enter the other local ports when you want additional local devices to follow this toolbar.
+9. Press `PLAY / STOP` to start and stop playback.
+10. Watch the status message when something does not behave as expected.
+
+If host audition is silent while `LIVE` playback works, check `CH` first.
 
 The bottom toolbar is designed to keep the hardware side visible while the rest of the page focuses on pattern creation.

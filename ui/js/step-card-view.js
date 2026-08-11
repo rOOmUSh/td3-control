@@ -1,10 +1,24 @@
 import { makeCtrlButton, makeAccentPill, makeSlidePill } from './step-card-styles.js';
 
-export function buildStepCardViewModel({ step, index, activeSteps, selected = false }) {
+/** Steps the device plays per quarter note, by playback mode. */
+const STEPS_PER_BEAT = 4;
+const TRIPLET_STEPS_PER_BEAT = 3;
+
+export function buildStepCardViewModel({
+    step,
+    index,
+    activeSteps,
+    selected = false,
+    triplet = false,
+}) {
     const disabled = index >= activeSteps;
     const isRest = step.time === 'REST' || step.time === 'TIE_REST';
     const isTie = step.time === 'TIE' || step.time === 'TIE_REST';
-    const isDownbeat = index % 4 === 0;
+    // Triplet playback fits three steps into the beat the straight grid
+    // gives four, so the downbeats move with the mode: 1/5/9/13 straight,
+    // 1/4/7/10 triplet.
+    const stepsPerBeat = triplet ? TRIPLET_STEPS_PER_BEAT : STEPS_PER_BEAT;
+    const isDownbeat = index % stepsPerBeat === 0;
     const transposeTone = step.transpose === 'UP' ? 'text-lime-400' : 'text-violet-400';
     const showTranspose = step.transpose !== 'NORMAL' && !isRest && !isTie;
 
@@ -30,7 +44,6 @@ export function buildStepCardViewModel({ step, index, activeSteps, selected = fa
         cardClasses.push(
             isDownbeat ? 'bg-surface-container-highest' : 'bg-surface-container-high',
             'hover:bg-surface-container-highest',
-            'transition-all',
         );
     }
 
@@ -64,7 +77,7 @@ export function buildStepCardViewModel({ step, index, activeSteps, selected = fa
         transposeText: step.transpose === 'UP' ? 'UP' : 'DN',
         noteLabelClassName: noteLabelClass,
         noteLabelText,
-        controlsClassName: `grid grid-cols-2 gap-0.5 p-0.5 bg-surface-container rounded-lg ${isRest || isTie ? 'opacity-40' : ''}`.trim(),
+        controlsClassName: `step-controls grid grid-cols-2 gap-0.5 p-0.5 bg-surface-container rounded-lg ${isRest || isTie ? 'opacity-40' : ''}`.trim(),
     };
 }
 
@@ -73,6 +86,7 @@ export function createStepCard({
     index,
     activeSteps,
     selected = false,
+    triplet = false,
     onWheelNoteChange,
     onCardClick,
     onToggleTransposeUp,
@@ -80,7 +94,7 @@ export function createStepCard({
     onToggleSlide,
     onToggleAccent,
 }) {
-    const view = buildStepCardViewModel({ step, index, activeSteps, selected });
+    const view = buildStepCardViewModel({ step, index, activeSteps, selected, triplet });
 
     const col = document.createElement('div');
     col.className = view.columnClassName;
@@ -128,6 +142,11 @@ export function createStepCard({
 
     const controls = document.createElement('div');
     controls.className = view.controlsClassName;
+    // The morph renderer translates the column, so this block travels
+    // with its note card. It carries its own source-step index under a
+    // distinct attribute that cannot collide with the `data-step`
+    // selectors used to find note cards.
+    controls.dataset.controlsStep = index;
     controls.appendChild(makeCtrlButton('UP', step.transpose === 'UP', onToggleTransposeUp));
     controls.appendChild(makeCtrlButton('DN', step.transpose === 'DOWN', onToggleTransposeDown));
     controls.appendChild(makeCtrlButton('SL', step.slide, onToggleSlide));

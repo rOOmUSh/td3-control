@@ -65,6 +65,31 @@ It is intended for quick inspection, copy/paste, and editing. The CLI format tok
 
 Do not use `txt` as a CLI format token. The file extension is `.steps.txt`, but the token is `steps`.
 
+StepDSL v1.1 is a backward-compatible extension of `td3-stepdsl-v1`. A complete short document looks like this:
+
+```text
+format=td3-stepdsl-v1
+active_steps=3
+triplet_time=off
+bpm=128
+
+01  G:---:N
+02  G:D--:N
+03  G:---:T
+
+# NOTE:TAS:TIME
+# transpose: U|D|-
+# accent: A|-
+# slide: S|-
+# time: N|T|R|TR
+```
+
+New files saved by the CLI or browser include `bpm`. BPM accepts up to two decimal places, such as `128`, `128.3`, or `128.37`, and must be between `20.00` and `300.00`. The value is stored and transferred as integer centi-BPM, so decimal parsing does not depend on floating-point rounding.
+
+Readers also accept legacy documents without `bpm`. Importing one in the browser leaves the current session BPM unchanged. Rows `01` through `active_steps` are required, while later rows are optional. New saves emit only the active rows. Legacy documents that contain all 16 rows remain valid, including documents whose inactive rows contain data.
+
+BPM is document and playback-session metadata. It is not part of the TD-3 hardware `Pattern` or its SysEx payload. Uploading a `.steps.txt` file writes only the pattern data to the device. A device download cannot recover tempo, so CLI saves use `--bpm`, then `UI_DEFAULT_BPM`, then the bundled default of 120.
+
 ## `.mid`
 
 MIDI export is for DAW workflows.

@@ -1,4 +1,3 @@
-use std::sync::mpsc;
 use std::time::Duration;
 
 use crate::config::Config;
@@ -19,17 +18,13 @@ pub(super) struct CliDeviceSession {
 
 impl CliDeviceSession {
     pub(super) fn open(config: &Config) -> Result<Self, Td3Error> {
-        let (output_handle, output_port, input_handle, input_port) = midi_io::open_ports(
+        let (output, inbox, input_guard) = midi_io::open_device_with_retry(
             &config.midi.output_port_name,
             &config.midi.input_port_name,
             config.midi.strict_name_match,
+            "td3-control-cli-input",
+            "td3-control-cli-output",
         )?;
-
-        let (sender, inbox) = mpsc::channel::<Vec<u8>>();
-        let input_guard = connect_cli_input(input_handle, input_port, sender)?;
-        let output = output_handle
-            .connect(&output_port, "td3-control-cli-output")
-            .map_err(|e| midi_io::classify_connect_error("MIDI output", e))?;
 
         let mut session = Self {
             _input_guard: input_guard,
@@ -112,21 +107,4 @@ impl CliDeviceSession {
             timeout: self.timeout,
         }
     }
-}
-
-fn connect_cli_input(
-    input_handle: midir::MidiInput,
-    input_port: midir::MidiInputPort,
-    sender: mpsc::Sender<Vec<u8>>,
-) -> Result<midir::MidiInputConnection<()>, Td3Error> {
-    input_handle
-        .connect(
-            &input_port,
-            "td3-control-cli-input",
-            move |_stamp, msg, _| {
-                let _ignored = sender.send(msg.to_owned());
-            },
-            (),
-        )
-        .map_err(|e| midi_io::classify_connect_error("MIDI input", e))
 }

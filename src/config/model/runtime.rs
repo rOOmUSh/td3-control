@@ -16,6 +16,12 @@ pub struct MidiRuntime {
     pub request_timeout: Duration,
     pub strict_name_match: bool,
     pub retry_count: u32,
+    /// MIDI channel, 1 through 16, that the connected device listens on.
+    /// Applies to every channel-voice message the app addresses to the
+    /// device: host-audition Note On/Off, the audition silence sweep, and
+    /// the keyboard note preview. SysEx transfers and MIDI realtime
+    /// transport carry no channel and are unaffected.
+    pub device_channel: u8,
 }
 
 impl MidiRuntime {
@@ -26,6 +32,7 @@ impl MidiRuntime {
             request_timeout: Duration::from_millis(env.midi_timeout_ms),
             strict_name_match: env.midi_strict_name_match,
             retry_count: env.midi_retries,
+            device_channel: env.midi_device_channel,
         }
     }
 }

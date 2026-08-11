@@ -34,8 +34,9 @@
 //! sends on USB-MIDI are sub-millisecond - the 20 ms tick period at
 //! 120 BPM has ample headroom.
 //!
-//! Shared state (BPM, stop signal) travels as atomics - lock-free
-//! reads on every tick.
+//! The stop signal is atomic. Tempo requests and successful pulse snapshots
+//! share a compact mutex-protected state so API waiters observe one coherent
+//! tempo revision, pulse index, and timestamp.
 //!
 //! ## Windows timing hardening
 //!
@@ -71,10 +72,36 @@ mod timing;
 
 #[allow(unused_imports)]
 pub use runner::tick_interval;
-pub use runner::{pattern_wrap_duration, ClockRunner, PPQN};
-
 #[allow(unused_imports)]
-pub use audition_runner::{prepare_schedule, AuditionRunner, AuditionSchedule, ScheduledMidi};
+pub use runner::{
+    pattern_wrap_duration, pattern_wrap_pulses, ClockPulseMonitor, ClockPulseSnapshot, ClockRunner,
+    ClockStartMonitor, PPQN,
+};
+
+pub(crate) use audition_runner::prepare_morph_schedule;
+pub(crate) use audition_runner::prepare_schedule_with_gate;
+#[allow(unused_imports)]
+pub use audition_runner::{
+    prepare_schedule, AuditionApplyMode, AuditionRunner, AuditionSchedule, AuditionUpdateAck,
+    AuditionUpdateError, AuditionUpdateResult, ScheduledMidi,
+};
+#[cfg(test)]
+pub(crate) use audition_runner::{
+    COLLISION_RETIREMENT_AMOUNT_PERCENT, DEFAULT_AUDITION_CHANNEL, GATE_COMPENSATION_PEAK_DEN,
+    GATE_COMPENSATION_PEAK_NUM, GATE_COMPENSATION_PEAK_PERCENT,
+};
 
 #[cfg(test)]
+pub(crate) use audition_runner::{
+    coalescing_rejects_stale_without_losing_valid, cycle_timing_at_now,
+    deadline_drain_observes_queued_update, reject_closed_command_for_test, remaining_start_delay,
+    scale_cycle_phase, schedule_update_timing, AuditionTransitionTestHarness,
+};
+#[cfg(test)]
 pub(crate) use audition_runner::{send_due_events_until_update_boundary, DueEventsResult};
+
+#[cfg(test)]
+pub(crate) use runner::{
+    next_tick_deadline, queued_send_rejection, wait_for_scheduled_start, ClockPulseTestHarness,
+    ClockStartTestHarness,
+};

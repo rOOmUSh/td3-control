@@ -1,0 +1,14 @@
+format=td3-stepdsl-v1
+active_steps=3
+triplet_time=off
+bpm=128
+
+01  G:---:N
+02  G:D--:N
+03  G:---:T
+
+# NOTE:TAS:TIME
+# transpose: U|D|-
+# accent: A|-
+# slide: S|-
+# time: N|T|R|TR

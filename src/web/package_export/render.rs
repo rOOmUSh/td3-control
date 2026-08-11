@@ -5,12 +5,13 @@ pub(super) fn render_format(
     pattern: &Pattern,
     address: &str,
     midi_opts: &MidiExportOptions,
+    centibpm: u32,
 ) -> Result<(&'static str, Vec<u8>), Td3Error> {
     match fmt_id {
         "mid" => Ok(("mid", formats::mid::export(pattern, address, midi_opts)?)),
         "steps_txt" => Ok((
             "steps.txt",
-            formats::steps_txt::export(pattern).into_bytes(),
+            formats::steps_txt::export_with_bpm(pattern, centibpm)?.into_bytes(),
         )),
         "seq" => Ok(("seq", formats::seq::export(pattern)?)),
         "pat" => Ok(("pat", formats::pat::export(pattern).into_bytes())),

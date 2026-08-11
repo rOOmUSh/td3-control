@@ -103,6 +103,16 @@ function shuffle(arr) {
  * Per-card RAND buttons bypass this helper - they always target the card
  * they live on (see `randomizeCategoryForPattern` usage in multipattern-list.js).
  */
+/**
+ * Narrow an index window to the steps the morph policy allows. Null
+ * from state means every step, so at amount 0 the window is unchanged
+ * and randomizing behaves exactly as before.
+ */
+function morphRestrict(patIdx, indices) {
+    const allowed = state.getTripletMorphEditableSteps(patIdx);
+    return allowed === null ? indices : indices.filter(i => allowed.has(i));
+}
+
 function sidebarTargets() {
     const checked = state.getCheckedArray();
     if (checked && checked.length > 0) return checked;
@@ -226,6 +236,8 @@ export function randomizeCategoryForPattern(patIdx, kind) {
     } else {
         indices = Array.from({ length: 16 }, (_, i) => i);
     }
+    indices = morphRestrict(patIdx, indices);
+    if (indices.length === 0) return;
 
     if (kind === 'rst') {
         // Re-roll REST vs active across the targeted window. Newly-RESTed
@@ -292,23 +304,27 @@ export function randomizeCategoryForPattern(patIdx, kind) {
 }
 
 function fullRandomize(patIdx, pattern, notes, scale, notePercent, slidePercent, accPercent) {
-    const totalSteps = 16;
-    const activeCount = Math.round(totalSteps * notePercent);
-    const positions = shuffle(Array.from({ length: totalSteps }, (_, i) => i));
+    // The rewrite window is every step at amount 0 and only the
+    // surviving notes at the triplet endpoint; steps outside it keep
+    // their current contents.
+    const window = morphRestrict(patIdx, Array.from({ length: 16 }, (_, i) => i));
+    if (window.length === 0) return;
+    const activeCount = Math.round(window.length * notePercent);
+    const positions = shuffle([...window]);
     const activeSet = new Set(positions.slice(0, activeCount));
     const activePositions = positions.slice(0, activeCount);
     const slidePositions = new Set(shuffle([...activePositions]).slice(0, Math.round(activeCount * slidePercent)));
     const accPositions = new Set(shuffle([...activePositions]).slice(0, Math.round(activeCount * accPercent)));
 
-    const steps = [];
+    const steps = pattern.steps.map(s => ({ ...s }));
     let prevNoteIdx = Math.floor(notes.length / 2);
 
-    for (let i = 0; i < totalSteps; i++) {
+    for (const i of window) {
         if (!activeSet.has(i)) {
-            steps.push({
+            steps[i] = {
                 note: state.noteName(notes[prevNoteIdx] || 0),
                 transpose: 'NORMAL', accent: false, slide: false, time: 'REST',
-            });
+            };
             continue;
         }
         const noteIdx = chooseNextNote(notes, prevNoteIdx, i, scale);
@@ -318,13 +334,13 @@ function fullRandomize(patIdx, pattern, notes, scale, notePercent, slidePercent,
         if (r < 0.12) transpose = 'UP';
         else if (r < 0.24) transpose = 'DOWN';
 
-        steps.push({
+        steps[i] = {
             note: state.noteName(notes[noteIdx]),
             transpose,
             accent: accPositions.has(i),
             slide: slidePositions.has(i),
             time: 'NORMAL',
-        });
+        };
     }
 
     const newPattern = { active_steps: pattern.active_steps, triplet: pattern.triplet, steps };
@@ -333,7 +349,7 @@ function fullRandomize(patIdx, pattern, notes, scale, notePercent, slidePercent,
 }
 
 function sliceRandomize(patIdx, pattern, notes, scale, notePercent, slidePercent, accPercent) {
-    const sliceIndices = parseSliceNotation(state.getSliceText());
+    const sliceIndices = morphRestrict(patIdx, parseSliceNotation(state.getSliceText()));
     if (sliceIndices.length === 0) return;
 
     // Deep copy current steps

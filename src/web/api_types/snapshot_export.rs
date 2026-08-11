@@ -24,6 +24,10 @@ pub struct ExportSnapshotPatternsRequest {
     /// Absolute path to the user-chosen destination folder. The backend
     /// creates a sub-folder inside it; the target must already exist.
     pub target_dir: String,
+    /// StepDSL tempo in centi-BPM. Legacy clients may omit this and use the
+    /// server's resolved export BPM.
+    #[serde(default)]
+    pub centibpm: Option<u32>,
 }
 
 #[derive(Serialize)]

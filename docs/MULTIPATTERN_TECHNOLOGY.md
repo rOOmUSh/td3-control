@@ -91,6 +91,8 @@ That includes:
 
 The clipboard is stored separately. There is also migration logic for older single-pattern session data so previous sessions do not become unusable when the internal shape evolves.
 
+Host-audition gate is stored separately under the shared `td3_gate_percent` session key. It is not pattern data, is not included in pattern history or exports, and falls back to `50%` when storage is missing or invalid. The Progression page reads the same key.
+
 ## Undo, Redo, and History Boundaries
 
 Undo/redo is session-level, not step-level in isolation.
@@ -112,6 +114,8 @@ When live update is enabled, edits are debounced and sent to the scratch slot. T
 ### Playback coordination
 
 Multipattern playback and structural changes are integrated so timeline changes can requeue what the scratch slot should receive next.
+
+With live update disabled, the same coordination queues host-audition schedules instead of scratch-slot writes. Each request carries the current BPM and gate pair. Replacing a pending pattern or changing either value replaces the queued schedule through the existing schedule-generation guard. Gate changes leave cycle duration and visual playback position unchanged. BPM changes use the existing phase-reconciliation path without restarting playback.
 
 ## Import and Load Behavior
 

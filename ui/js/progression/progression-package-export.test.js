@@ -403,6 +403,7 @@ await test('setPackage forwards basslinesFull into export payload on save', asyn
     const payloads = [];
     init({
         setStatus: () => {},
+        getBpm: () => 120,
         exportFn: async (payload) => { payloads.push(payload); return { ok: true, zipName: 'x.zip' }; },
     });
     clearPackage();
@@ -428,6 +429,7 @@ await test('setPackage drops malformed basslinesFull (wrong length)', async () =
     const payloads = [];
     init({
         setStatus: () => {},
+        getBpm: () => 120,
         exportFn: async (payload) => { payloads.push(payload); return { ok: true, zipName: 'x.zip' }; },
     });
     clearPackage();
@@ -444,6 +446,42 @@ await test('setPackage drops malformed basslinesFull (wrong length)', async () =
     await Promise.resolve();
     assert(payloads.length === 1, 'export still fired');
     assert(!('basslinesFull' in payloads[0]), 'malformed basslinesFull dropped silently');
+});
+
+await test('save reads BPM at click time and sends exact centibpm', async () => {
+    const ui = installDom();
+    const payloads = [];
+    let bpm = 128.37;
+    let bpmReads = 0;
+    init({
+        setStatus: () => {},
+        getBpm: () => {
+            bpmReads++;
+            return bpm;
+        },
+        exportFn: async (payload) => {
+            payloads.push(payload);
+            return { ok: true, zipName: 'x.zip' };
+        },
+    });
+    clearPackage();
+    setPackage({
+        packageId: 'pkg_bpm',
+        label: 'live tempo',
+        scaleName: 'minor',
+        acidPatterns: four(),
+        basslines: four(),
+    });
+
+    assert(bpmReads === 0, 'BPM is not captured while storing the package');
+    bpm = 142.56;
+    ui.btnSave.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assert(bpmReads === 1, 'BPM provider is read once during save');
+    assert(payloads.length === 1, 'export fired once');
+    assert(payloads[0].centibpm === 14256, 'payload contains click-time centibpm');
 });
 
 await test('buildExportPayload tolerates missing scaleName/label', () => {
@@ -549,6 +587,7 @@ await test('save click disables button in flight and records last-saved name on 
 
     init({
         setStatus: (msg) => { statuses.push(msg); },
+        getBpm: () => 120,
         exportFn: async (payload) => {
             payloads.push(payload);
             await exportPromise;
@@ -573,6 +612,7 @@ await test('save click disables button in flight and records last-saved name on 
     assert(payloads.length === 1, 'export function called once');
     assert(payloads[0].packageId === 'pkg_3', 'payload contains packageId');
     assert(payloads[0].formats.join(',') === 'mid,steps_txt,seq', 'payload uses default formats');
+    assert(payloads[0].centibpm === 12000, 'BPM provider sends centibpm');
 
     release();
     await Promise.resolve();
@@ -591,6 +631,7 @@ await test('save click reports export failures and does not fire while disabled'
 
     init({
         setStatus: (msg) => { statuses.push(msg); },
+        getBpm: () => 120,
         exportFn: async () => {
             calls++;
             throw new Error('disk full');

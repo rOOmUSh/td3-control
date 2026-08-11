@@ -110,6 +110,159 @@ pub fn classify_connect_error<E: std::fmt::Display>(operation: &str, err: E) -> 
     Td3Error::DeviceBusy { driver_error }
 }
 
+/// Attempts to open the device before giving up, and the wait between
+/// them.
+///
+/// A port another process is genuinely holding stays held, so retrying
+/// costs a fraction of a second and changes nothing. What it covers is a
+/// port still being released: the launcher enumerates MIDI devices
+/// through WinRT, then spawns the control process and exits without
+/// unwinding, and the driver can still refuse the child's open
+/// milliseconds later.
+/// Windows serialises MIDI access through a system service, and a
+/// device query or open issued while another process is mid-operation
+/// can be refused outright. A short retry absorbs that. It is
+/// deliberately short: a device a program is actually holding stays
+/// held, and waiting longer only delays a failure the user needs to
+/// see.
+const OPEN_RETRY_WINDOW: Duration = Duration::from_secs(3);
+const OPEN_RETRY_DELAY: Duration = Duration::from_millis(250);
+
+/// Overrides the retry window, in milliseconds. `0` disables retrying,
+/// which is what a diagnostic probe wants: it needs to report the
+/// device's current state, not wait for it to change.
+pub const OPEN_RETRY_ENV: &str = "TD3_MIDI_OPEN_RETRY_MS";
+
+fn open_retry_window() -> Duration {
+    match std::env::var(OPEN_RETRY_ENV) {
+        Ok(raw) => match raw.trim().parse::<u64>() {
+            Ok(ms) => Duration::from_millis(ms),
+            Err(_) => OPEN_RETRY_WINDOW,
+        },
+        Err(_) => OPEN_RETRY_WINDOW,
+    }
+}
+/// Say something once the wait is long enough to look like a hang.
+const OPEN_RETRY_NOTICE_AFTER: Duration = Duration::from_millis(1_500);
+
+/// An open device: the output connection, the receive channel fed by the
+/// input callback, and the input connection that must outlive it.
+pub type ConnectedPorts = (
+    midir::MidiOutputConnection,
+    std::sync::mpsc::Receiver<Vec<u8>>,
+    midir::MidiInputConnection<()>,
+);
+
+/// Find the ports and open both connections, retrying a busy device.
+///
+/// Every path that talks to the device goes through here, so a transient
+/// refusal is absorbed once rather than per caller. Only the open is
+/// retried: once the ports are open the caller's handshake owns the
+/// failure, and a protocol error is not something another attempt at
+/// opening would fix.
+pub fn open_device_with_retry(
+    output_port_name: &str,
+    input_port_name: &str,
+    strict: bool,
+    input_client_name: &str,
+    output_client_name: &str,
+) -> Result<ConnectedPorts, Td3Error> {
+    let started = Instant::now();
+    let window = open_retry_window();
+    let mut attempt = 1u32;
+    let mut notice_deadline: Option<Instant> = None;
+    loop {
+        match open_device(
+            output_port_name,
+            input_port_name,
+            strict,
+            input_client_name,
+            output_client_name,
+        ) {
+            Ok(connected) => {
+                if attempt > 1 {
+                    eprintln!(
+                        "MIDI port opened on attempt {} after {} ms of the device refusing it.",
+                        attempt,
+                        started.elapsed().as_millis()
+                    );
+                }
+                return Ok(connected);
+            }
+            Err(error) => {
+                // A port that is missing or misnamed will still be
+                // missing in 250 ms, so only a device the driver
+                // reported busy is worth another attempt.
+                if !matches!(error, Td3Error::DeviceBusy { .. }) {
+                    return Err(error);
+                }
+                if started.elapsed() >= window {
+                    // How long it stayed refused separates a device
+                    // still being released from one another program is
+                    // holding, which need different answers.
+                    // midir discards the MMSYSERR code, so ask Windows
+                    // directly what it objects to before giving up.
+                    let raw = crate::midi_diagnostics::probe_input_open(input_port_name);
+                    return Err(match error {
+                        Td3Error::DeviceBusy { driver_error } => Td3Error::DeviceBusy {
+                            driver_error: format!(
+                                "{} (still refused after {} attempts over {} ms)
+       {}",
+                                driver_error,
+                                attempt,
+                                started.elapsed().as_millis(),
+                                raw
+                            ),
+                        },
+                        other => other,
+                    });
+                }
+                if attempt == 1 {
+                    notice_deadline = Some(Instant::now() + OPEN_RETRY_NOTICE_AFTER);
+                }
+                if notice_deadline.is_some_and(|at| Instant::now() >= at) {
+                    notice_deadline = None;
+                    eprintln!(
+                        "Waiting for the TD-3 MIDI port to be released (up to {} s)...",
+                        window.as_secs()
+                    );
+                }
+                attempt += 1;
+                std::thread::sleep(OPEN_RETRY_DELAY);
+            }
+        }
+    }
+}
+
+fn open_device(
+    output_port_name: &str,
+    input_port_name: &str,
+    strict: bool,
+    input_client_name: &str,
+    output_client_name: &str,
+) -> Result<ConnectedPorts, Td3Error> {
+    let (out_midi, out_port, in_midi, in_port) =
+        open_ports(output_port_name, input_port_name, strict)?;
+
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    let in_conn = in_midi
+        .connect(
+            &in_port,
+            input_client_name,
+            move |_stamp, msg, _| {
+                let _ = tx.send(msg.to_owned());
+            },
+            (),
+        )
+        .map_err(|e| classify_connect_error("MIDI input", e))?;
+
+    let out_conn = out_midi
+        .connect(&out_port, output_client_name)
+        .map_err(|e| classify_connect_error("MIDI output", e))?;
+
+    Ok((out_conn, rx, in_conn))
+}
+
 /// Open matched MIDI input and output ports for TD-3 communication.
 pub fn open_ports(
     output_query: &str,

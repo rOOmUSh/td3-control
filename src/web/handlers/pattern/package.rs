@@ -7,6 +7,9 @@ pub async fn export_progression_package(
     let req = json_payload(payload, "progression export package")?;
     validate_package_request(&req)?;
 
+    let midi_opts = state.midi.export_options.clone();
+    let centibpm = resolve_package_export_centibpm(req.centibpm, midi_opts.bpm)?;
+
     let acid: [crate::pattern::Pattern; 4] = [
         web_to_pattern(&req.acid_patterns[0])?,
         web_to_pattern(&req.acid_patterns[1])?,
@@ -21,7 +24,6 @@ pub async fn export_progression_package(
     ];
     let bass_full_arr = basslines_full_array(&req)?;
 
-    let midi_opts = state.midi.export_options.clone();
     let input = crate::web::package_export::PackageExportInput {
         formats: &req.formats,
         combined_rbs: req.combined_formats.rbs,
@@ -30,6 +32,7 @@ pub async fn export_progression_package(
         acid_patterns: &acid,
         basslines: &bass,
         basslines_full: bass_full_arr.as_ref(),
+        centibpm,
         midi_opts: &midi_opts,
     };
 
@@ -52,6 +55,28 @@ pub async fn export_progression_package(
         created_at: result.created_at,
         file_count: result.file_count,
     }))
+}
+
+pub(crate) fn resolve_package_export_centibpm(
+    requested: Option<u32>,
+    fallback_bpm: u32,
+) -> Result<u32, AppError> {
+    let centibpm = match requested {
+        Some(value) => value,
+        None => fallback_bpm.checked_mul(100).ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "fallback BPM {} cannot be represented as centibpm",
+                fallback_bpm
+            ))
+        })?,
+    };
+    if !(2_000..=30_000).contains(&centibpm) {
+        return Err(AppError::BadRequest(format!(
+            "centibpm must be 2000-30000, got {}",
+            centibpm
+        )));
+    }
+    Ok(centibpm)
 }
 
 fn validate_package_request(req: &ExportPackageRequest) -> Result<(), AppError> {

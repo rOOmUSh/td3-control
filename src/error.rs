@@ -92,9 +92,12 @@ pub enum Td3Error {
     InstanceRunning { bind: String, port: u16 },
 
     #[error(
-        "could not open TD-3 MIDI port (device busy).\n       Another td3-control instance may be holding the port.\n       Original driver error: {driver_error}"
+        "could not open TD-3 MIDI port.\n       The port was found but the driver refused to open it. Another\n       program may be holding it, or the device may still be releasing\n       it from a previous session. Retrying in a few seconds often\n       clears the second case.\n       Original driver error: {driver_error}"
     )]
     DeviceBusy { driver_error: String },
+
+    #[error("{0}")]
+    TripletMorph(#[from] crate::triplet_morph::MorphPlanError),
 
     #[error("{0}")]
     Other(String),

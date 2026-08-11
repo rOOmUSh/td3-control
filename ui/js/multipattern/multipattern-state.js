@@ -35,6 +35,17 @@
 import { transposeStepsInPlace } from '../shared/transpose-step.js';
 import { defaultPattern, clonePattern, isPatternDefault } from './pattern-default.js';
 import { envInt, envBool } from '../td3-env.js';
+import {
+    readGatePercent,
+    writeGatePercent,
+} from '../shared/gate-control.js';
+import {
+    readMidiChannel,
+    writeMidiChannel,
+} from '../shared/midi-channel-control.js';
+import { createTripletMorphSession } from '../shared/triplet-morph-session.js';
+import { canonicalPatternText } from '../shared/pattern-canonical.js';
+import { editableSteps } from '../shared/triplet-morph-editing.js';
 
 const STORAGE_KEY = 'td3_multipattern';
 const CLIPBOARD_KEY = 'td3_multipattern_clipboard';
@@ -67,10 +78,19 @@ let group = 1;
 let patternNum = 1;
 let side = 'A';
 let bpm = parseFloat(sessionStorage.getItem('td3_bpm')) || ENV_BPM;
+let gatePercent = readGatePercent();
+// `MIDI_DEVICE_CHANNEL` is the startup default; a value chosen from the
+// transport bar overrides it for the session.
+let midiChannel = readMidiChannel(envInt('midiDeviceChannel'));
 let playing = sessionStorage.getItem('td3_playing') === 'true';
 let connected = sessionStorage.getItem('td3_midi_connected') === 'true';
 let liveUpdate = !!ENV_LIVE_UPDATE;
 let sliceEnabled = false;
+// When on, the TRIPLET buttons replace their target with the 12-cell
+// triplet projection of the morph plan instead of only setting the
+// native triplet flag. Transient UI mode, persisted with the rest of the
+// session so a reload keeps it.
+let tripletMorphSend = false;
 let sliceText = '';
 let bankSize = ENV_BANK_SIZE;
 let kbEditEnabled = false;
@@ -81,6 +101,18 @@ let selectedStep = 0;
 // live update is off) PREVIEW auditions the pattern without saving it to the
 // device. Indexed positionally, like the preview controller's active index.
 let noSaveFlags = [];
+// Per-pattern-index morph-send flags for the row TRIPLET buttons, so a
+// single pattern can be projected while its neighbours keep the plain
+// flag. Indexed positionally like noSaveFlags: transient, not persisted,
+// not part of the pattern data model.
+let tripletMorphSendFlags = [];
+
+// Triplet morph audition session. Transient and derived: the amount and
+// session payload never enter the main state blob, pattern history,
+// import/export, packages, snapshots, or bank storage. Persisted only
+// as a versioned payload under its own key so a reload can restore the
+// amount when the exact canonical sources still match.
+const TRIPLET_MORPH_SESSION_KEY = 'td3_triplet_morph_session_v1';
 
 // Scratch slot descriptor fetched from backend (sidebar selector) - drives
 // slot-badge recomputation and PUSH TO TD-3 target resolution. Transient:
@@ -109,14 +141,35 @@ loadBank();
 // --- Listener bus ---
 //
 // Contract: onChange(fn) where
-// fn(patternChanged: boolean, structuralChange: boolean).
+// fn(patternChanged: boolean, structuralChange: boolean,
+//    derivedOnly: boolean).
+//
+// `derivedOnly` marks a change that no card renders from: the pattern
+// data, the flags, the selection and the slot mapping are all
+// untouched, and only the derived triplet geometry moved. The card list
+// rebuilds itself from scratch on every other notification, which at 64
+// patterns is 17,792 elements and a quarter of a second, so the morph
+// knob has to be able to say that a rebuild would produce byte-identical
+// markup.
 
 const listeners = [];
 export function onChange(fn) { listeners.push(fn); }
 
-function notify(patternChanged = false, structuralChange = false) {
+function notify(patternChanged = false, structuralChange = false, derivedOnly = false) {
+    // A source-changing action while morph audition is active resets the
+    // amount before observers run: exact canonical identity is the
+    // session's validity condition, so any pattern edit, add, delete,
+    // reorder, import, undo, or redo discards the derived session first.
+    if (morphSession.isActive() && (patternChanged || morphSession.sourcesChanged())) {
+        // At the 100 endpoint the user may edit surviving notes, so the
+        // session re-baselines onto the edited source instead of being
+        // discarded. Anywhere below 100 nothing can edit through the UI,
+        // so a source change is an outside mutation and resets.
+        if (morphSession.getPercent() >= 100) morphSession.rebaseline();
+        else morphSession.clear();
+    }
     save();
-    listeners.forEach(fn => fn(patternChanged, structuralChange));
+    listeners.forEach(fn => fn(patternChanged, structuralChange, derivedOnly));
 }
 
 // --- Persistence ---
@@ -129,7 +182,11 @@ function save() {
             timelineDefault, timelineChecked,
             abMode, viewport,
             group, patternNum, side, bpm, liveUpdate,
-            sliceEnabled, sliceText, bankSize,
+            sliceEnabled, sliceText, bankSize, tripletMorphSend,
+            // Per-row MORPH travels with the global flag: a row holding a
+            // projection has to come back from the progression page still
+            // knowing it can undo it.
+            tripletMorphSendFlags,
         }));
     } catch (_) { /* quota */ }
 }
@@ -190,6 +247,12 @@ function load() {
             bpm = d.bpm || bpm;
             liveUpdate = !!d.liveUpdate;
             sliceEnabled = !!d.sliceEnabled;
+            tripletMorphSend = !!d.tripletMorphSend;
+            if (Array.isArray(d.tripletMorphSendFlags)) {
+                tripletMorphSendFlags = d.tripletMorphSendFlags
+                    .slice(0, patterns.length)
+                    .map(Boolean);
+            }
             sliceText = d.sliceText || '';
             bankSize = d.bankSize || ENV_BANK_SIZE;
             hydratedFromStorage = true;
@@ -217,6 +280,7 @@ function load() {
                 bpm = d.bpm || bpm;
                 liveUpdate = !!d.liveUpdate;
                 sliceEnabled = !!d.sliceEnabled;
+                tripletMorphSend = !!d.tripletMorphSend;
                 sliceText = d.sliceText || '';
                 bankSize = d.bankSize || ENV_BANK_SIZE;
                 hydratedFromStorage = true;
@@ -342,6 +406,19 @@ export function setNoSave(patIdx, v) {
     notify();
 }
 
+/** Per-row MORPH checkbox state for the row TRIPLET button. */
+export function isTripletMorphSendFor(patIdx) {
+    const i = (patIdx === undefined) ? focusedIdx : patIdx;
+    if (i === null || i === undefined) return false;
+    return !!tripletMorphSendFlags[i];
+}
+
+export function setTripletMorphSendFor(patIdx, v) {
+    if (patIdx === null || patIdx === undefined) return;
+    tripletMorphSendFlags[patIdx] = !!v;
+    notify();
+}
+
 export function getFocusedIdx() { return focusedIdx; }
 export function getCheckedSet() { return new Set(checkedSet); }
 export function getCheckedArray() { return Array.from(checkedSet).sort((a, b) => a - b); }
@@ -383,10 +460,13 @@ export function getSelectedSlot() {
     };
 }
 export function getBpm() { return bpm; }
+export function getGatePercent() { return gatePercent; }
+export function getMidiChannel() { return midiChannel; }
 export function isPlaying() { return playing; }
 export function isConnected() { return connected; }
 export function isLiveUpdate() { return liveUpdate; }
 export function isSliceEnabled() { return sliceEnabled; }
+export function isTripletMorphSend() { return tripletMorphSend; }
 export function getSliceText() { return sliceText; }
 export function getBankSize() { return bankSize; }
 export function getBank() { return bank; }
@@ -492,10 +572,96 @@ export function setBpm(b) {
     sessionStorage.setItem('td3_bpm', String(bpm));
     notify();
 }
+export function setGatePercent(value) {
+    const next = writeGatePercent(value);
+    if (next === gatePercent) return;
+    gatePercent = next;
+    notify();
+}
+export function setMidiChannel(value) {
+    const next = writeMidiChannel(value);
+    if (next === midiChannel) return;
+    midiChannel = next;
+    // No card renders from the channel, so this is a derived-only change.
+    notify(false, false, true);
+}
+
+// --- Triplet morph session (transient, versioned storage) ---
+//
+// Behavior lives in the shared session module; this page owns only the
+// notification that follows a change.
+
+const morphSession = createTripletMorphSession({
+    storageKey: TRIPLET_MORPH_SESSION_KEY,
+    getPatterns: () => patterns,
+});
+
+export function getTripletMorphPercent() { return morphSession.getPercent(); }
+export function isTripletMorphActive() { return morphSession.isActive(); }
+export function getTripletMorphSession() { return morphSession.getSession(); }
+export function isTripletMorphSourceEligible() {
+    return morphSession.isSourceEligible();
+}
+
+export function beginTripletMorphSession(sourceSnapshots, plans) {
+    morphSession.begin(sourceSnapshots, plans);
+}
+
+export function resetTripletMorphSession() {
+    if (!morphSession.isActive() && !morphSession.getSession()) return;
+    morphSession.clear();
+    notify();
+}
+
+/**
+ * Set the morph amount. A positive amount is refused while any pattern
+ * is ineligible; the caller reads the unchanged value back to detect
+ * the refusal. Returning to 0 discards the derived session.
+ */
+export function setTripletMorphPercent(value) {
+    // Derived-only: the amount moves the rendered geometry, not the
+    // patterns or anything a card is built from.
+    if (morphSession.setPercent(value)) notify(false, false, true);
+}
+
+/** Cached Rust plan for one exact canonical source text, if any. */
+export function getTripletMorphPlan(canonicalText) {
+    return morphSession.getPlan(canonicalText);
+}
+
+export function setTripletMorphPlan(canonicalText, plan) {
+    morphSession.setPlan(canonicalText, plan);
+}
+
+/**
+ * Steps the user may edit for one pattern right now. Null means every
+ * step; an empty set means nothing is editable.
+ */
+export function getTripletMorphEditableSteps(patIdx) {
+    const pattern = getPattern(patIdx);
+    const plan = pattern ? morphSession.getPlan(canonicalPatternText(pattern)) : null;
+    return editableSteps(morphSession.getPercent(), plan);
+}
+
+export function isTripletMorphStepEditable(patIdx, step) {
+    const allowed = getTripletMorphEditableSteps(patIdx);
+    return allowed === null || allowed.has(Number(step));
+}
+
 export function setPlaying(v) { playing = v; sessionStorage.setItem('td3_playing', v ? 'true' : 'false'); notify(); }
-export function setConnected(v) { connected = v; sessionStorage.setItem('td3_midi_connected', v ? 'true' : 'false'); notify(); }
+// The MIDI status poll calls this on every tick. Notifying on an
+// unchanged value rebuilds every card in the list, which shows up as the
+// row flickering once per poll, so an unchanged value is dropped here.
+export function setConnected(v) {
+    const next = !!v;
+    if (next === connected) return;
+    connected = next;
+    sessionStorage.setItem('td3_midi_connected', next ? 'true' : 'false');
+    notify();
+}
 export function setLiveUpdate(v) { liveUpdate = v; notify(); }
 export function setSliceEnabled(v) { sliceEnabled = v; notify(); }
+export function setTripletMorphSend(v) { tripletMorphSend = !!v; notify(); }
 export function setSliceText(v) { sliceText = v; save(); }
 export function setBankSize(v) { bankSize = Math.max(1, v); notify(); }
 export function setKbEditEnabled(v) { kbEditEnabled = v; notify(); }
@@ -1199,5 +1365,6 @@ export function restoreSnapshot(snap, skipNotify) {
 // --- Init ---
 
 load();
+morphSession.restore();
 clampFocus();
 pruneChecked();

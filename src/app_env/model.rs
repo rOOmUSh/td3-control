@@ -15,6 +15,7 @@ pub struct AppEnv {
     pub midi_strict_name_match: bool,
     pub midi_timeout_ms: u64,
     pub midi_retries: u32,
+    pub midi_device_channel: u8,
 
     pub web_port: u16,
     pub web_bind: String,
@@ -25,6 +26,8 @@ pub struct AppEnv {
     pub ui_default_bpm: u32,
     pub ui_default_triplet: bool,
     pub ui_max_bank_history_size: u32,
+    pub ui_pattern_export_name_prompt: bool,
+    pub ui_pattern_export_batch_delay_ms: u32,
 
     pub ui_rand_default_root: u8,
     pub ui_rand_default_scale: String,

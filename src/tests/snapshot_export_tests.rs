@@ -9,11 +9,14 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::formats::mid::MidiExportOptions;
+use crate::pattern::{pattern_to_sysex, Pattern};
 use crate::tests::fixtures::simple_sysex;
 use crate::web::snapshot_export::{
-    run, sanitize_component, slot_key_to_filename, validate_formats, ExportRequest, ExportSlot,
-    ALLOWED_FORMATS,
+    resolve_stepdsl_centibpm, run, sanitize_component, slot_key_to_filename, validate_formats,
+    ExportRequest, ExportSlot, ALLOWED_FORMATS,
 };
+
+const TEST_CENTIBPM: u32 = 12_000;
 
 /// Test scaffolding only: tests don't have an `AppEnv` in scope, so they use
 /// `MidiExportOptions::default()`. The runtime `AppState::midi_export_options`
@@ -27,6 +30,12 @@ fn test_midi_opts() -> MidiExportOptions {
 /// the library sidecar stores and what the export helper expects.
 fn simple_payload() -> Vec<u8> {
     simple_sysex()[3..].to_vec()
+}
+
+fn short_payload() -> Vec<u8> {
+    let steps: [crate::step::Step; 16] = Default::default();
+    let pattern = Pattern::new(false, 3, steps).unwrap();
+    pattern_to_sysex(&pattern, 0, 0, 0).unwrap()[3..].to_vec()
 }
 
 /// Create a unique per-test temp dir under the system tempdir, so parallel
@@ -111,6 +120,19 @@ fn validate_rejects_unknown_format() {
     assert!(msg.contains("allowed"), "mentions allowed set: {}", msg);
 }
 
+#[test]
+fn centibpm_resolution_preserves_request_and_uses_server_fallback() {
+    assert_eq!(resolve_stepdsl_centibpm(Some(12_837), 156).unwrap(), 12_837);
+    assert_eq!(resolve_stepdsl_centibpm(None, 156).unwrap(), 15_600);
+}
+
+#[test]
+fn centibpm_resolution_rejects_values_outside_stepdsl_range() {
+    assert!(resolve_stepdsl_centibpm(Some(1_999), 120).is_err());
+    assert!(resolve_stepdsl_centibpm(Some(30_001), 120).is_err());
+    assert!(resolve_stepdsl_centibpm(None, 19).is_err());
+}
+
 // ---------------------------------------------------------------------------
 // run(): happy paths
 // ---------------------------------------------------------------------------
@@ -135,6 +157,7 @@ fn run_writes_files_with_slot_named_prefixes() {
         folder_stem: "idea.rbs",
         slots: &slots,
         formats: &formats,
+        centibpm: TEST_CENTIBPM,
         midi_opts: &midi_opts,
     })
     .unwrap();
@@ -155,6 +178,34 @@ fn run_writes_files_with_slot_named_prefixes() {
         let meta = fs::metadata(&p).unwrap_or_else(|_| panic!("missing {}", p.display()));
         assert!(meta.len() > 0, "{} is non-empty", p.display());
     }
+
+    fs::remove_dir_all(&target).ok();
+}
+
+#[test]
+fn run_writes_exact_bpm_and_only_active_step_rows() {
+    let target = temp_dir_for("steps_bpm_short");
+    let slots = vec![ExportSlot {
+        slot_key: "G1-P1A".to_string(),
+        payload: Some(short_payload()),
+    }];
+    let formats = ["steps_txt".to_string()];
+    let midi_opts = test_midi_opts();
+    let result = run(&ExportRequest {
+        target_dir: &target,
+        folder_stem: "short",
+        slots: &slots,
+        formats: &formats,
+        centibpm: 12_837,
+        midi_opts: &midi_opts,
+    })
+    .unwrap();
+
+    let text = fs::read_to_string(result.folder_path.join("G1P1A.steps.txt")).unwrap();
+    assert!(text.contains("\nbpm=128.37\n"));
+    assert!(text.contains("\n03 "));
+    assert!(!text.contains("\n04 "));
+    assert!(!text.contains("\n16 "));
 
     fs::remove_dir_all(&target).ok();
 }
@@ -183,6 +234,7 @@ fn run_skips_empty_slots_without_erroring() {
         folder_stem: "mixed",
         slots: &slots,
         formats: &formats,
+        centibpm: TEST_CENTIBPM,
         midi_opts: &midi_opts,
     })
     .unwrap();
@@ -214,6 +266,7 @@ fn run_renders_all_allowed_formats_for_one_slot() {
         folder_stem: "all",
         slots: &slots,
         formats: &formats,
+        centibpm: TEST_CENTIBPM,
         midi_opts: &midi_opts,
     })
     .unwrap();
@@ -259,6 +312,7 @@ fn run_creates_nested_target_if_missing_parent_exists() {
         folder_stem: "reuse",
         slots: &slots,
         formats: &["json".to_string()],
+        centibpm: TEST_CENTIBPM,
         midi_opts: &midi_opts,
     })
     .unwrap();
@@ -294,6 +348,7 @@ fn run_rejects_missing_target_dir() {
             payload: Some(simple_payload()),
         }],
         formats: &["toml".to_string()],
+        centibpm: TEST_CENTIBPM,
         midi_opts: &midi_opts,
     })
     .unwrap_err();
@@ -320,6 +375,7 @@ fn run_rejects_target_that_is_a_file() {
             payload: Some(simple_payload()),
         }],
         formats: &["toml".to_string()],
+        centibpm: TEST_CENTIBPM,
         midi_opts: &midi_opts,
     })
     .unwrap_err();
@@ -337,6 +393,7 @@ fn run_rejects_empty_slot_list() {
         folder_stem: "x",
         slots: &[],
         formats: &["toml".to_string()],
+        centibpm: TEST_CENTIBPM,
         midi_opts: &midi_opts,
     })
     .unwrap_err();
@@ -358,6 +415,7 @@ fn run_rejects_bad_payload_length() {
             payload: Some(bogus),
         }],
         formats: &["toml".to_string()],
+        centibpm: TEST_CENTIBPM,
         midi_opts: &midi_opts,
     })
     .unwrap_err();
@@ -381,6 +439,7 @@ fn run_rejects_sqs_and_syx_even_if_list_also_has_valid() {
         folder_stem: "x",
         slots: &slots,
         formats: &["toml".to_string(), "sqs".to_string()],
+        centibpm: TEST_CENTIBPM,
         midi_opts: &midi_opts,
     })
     .unwrap_err();
@@ -391,6 +450,7 @@ fn run_rejects_sqs_and_syx_even_if_list_also_has_valid() {
         folder_stem: "x",
         slots: &slots,
         formats: &["syx".to_string(), "toml".to_string()],
+        centibpm: TEST_CENTIBPM,
         midi_opts: &midi_opts,
     })
     .unwrap_err();

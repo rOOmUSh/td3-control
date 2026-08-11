@@ -45,8 +45,52 @@ test('normal downbeat view model matches progression card sizing and downbeat st
     assert(view.cardClassName.includes('h-16'), 'uses progression card height');
     assert(view.cardClassName.includes('step-downbeat'), 'downbeat class applied');
     assert(view.cardClassName.includes('bg-surface-container-highest'), 'downbeat background uses brighter surface');
+    assert(!view.cardClassName.includes('transition'), 'step card has no visual transition');
     assert(view.numberClassName.includes('text-[0.7rem]'), 'step number uses progression sizing');
     assert(view.controlsClassName.includes('p-0.5'), 'controls padding matches progression');
+});
+
+test('triplet patterns mark every third step as the downbeat', () => {
+    const downbeats = [];
+    for (let index = 0; index < 12; index += 1) {
+        const view = buildStepCardViewModel({
+            step: makeStep(),
+            index,
+            activeSteps: 12,
+            triplet: true,
+        });
+        if (view.cardClassName.includes('step-downbeat')) downbeats.push(index);
+    }
+
+    assert(downbeats.join(',') === '0,3,6,9', `triplet downbeats at 1/4/7/10, got ${downbeats}`);
+});
+
+test('straight patterns keep every fourth step as the downbeat', () => {
+    const downbeats = [];
+    for (let index = 0; index < 16; index += 1) {
+        const view = buildStepCardViewModel({ step: makeStep(), index, activeSteps: 16 });
+        if (view.cardClassName.includes('step-downbeat')) downbeats.push(index);
+    }
+
+    assert(downbeats.join(',') === '0,4,8,12', `straight downbeats at 1/5/9/13, got ${downbeats}`);
+});
+
+test('triplet downbeat carries the brighter surface the straight grid uses', () => {
+    const tripletDownbeat = buildStepCardViewModel({
+        step: makeStep(), index: 3, activeSteps: 12, triplet: true,
+    });
+    const straightOffbeat = buildStepCardViewModel({
+        step: makeStep(), index: 3, activeSteps: 16,
+    });
+
+    assert(tripletDownbeat.cardClassName.includes('bg-surface-container-highest'),
+        'triplet downbeat uses the downbeat background');
+    // Split on whitespace: the plain card also carries
+    // `hover:bg-surface-container-highest`, which a substring test matches.
+    const classes = straightOffbeat.cardClassName.split(/\s+/);
+    assert(classes.includes('bg-surface-container-high')
+        && !classes.includes('bg-surface-container-highest'),
+        'the same index off the beat keeps the plain background');
 });
 
 test('selected main-page card adds keyboard cursor without changing shared card sizing', () => {
@@ -78,6 +122,8 @@ test('rest and tie states use compact progression labels and disable indicators'
     assert(!restView.showIndicators, 'rest hides accent/slide indicators');
     assert(tieView.noteLabelText === 'TIE', 'tie label text preserved');
     assert(tieView.noteLabelClassName.includes('text-xs'), 'tie uses compact progression text size');
+    assert(!restView.cardClassName.includes('transition'), 'rest card has no visual transition');
+    assert(!tieView.cardClassName.includes('transition'), 'tie card has no visual transition');
 });
 
 test('transpose indicator uses progression sizing and correct text', () => {

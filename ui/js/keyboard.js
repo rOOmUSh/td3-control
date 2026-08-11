@@ -215,5 +215,6 @@ function previewCurrentNote(stepIndex) {
     if (!state.isConnected()) return;
     const stepData = state.getStep(stepIndex);
     if (stepData.time === 'REST' || stepData.time === 'TIE_REST') return;
-    api.notePreview(stepData.note, stepData.transpose, stepData.accent).catch(() => {});
+    api.notePreview(stepData.note, stepData.transpose, stepData.accent, state.getMidiChannel())
+        .catch(() => {});
 }

@@ -44,27 +44,76 @@ export function buildRbsExportPayload(patterns, checkedIndexes, mode) {
     };
 }
 
-export function buildSingleFileExportPlan(patterns, checkedIndexes, ext, selectedSlot) {
+export const PATTERN_SET_NAME_INPUT_MAX_LENGTH = 120;
+export const PATTERN_SET_NAME_MAX_BYTES = 120;
+
+function utf8Length(character) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint <= 0x7f) return 1;
+    if (codePoint <= 0x7ff) return 2;
+    if (codePoint <= 0xffff) return 3;
+    return 4;
+}
+
+function truncateUtf8(value, maxBytes) {
+    let bytes = 0;
+    let result = '';
+    for (const character of value) {
+        const characterBytes = utf8Length(character);
+        if (bytes + characterBytes > maxBytes) break;
+        result += character;
+        bytes += characterBytes;
+    }
+    return result;
+}
+
+export function sanitizePatternSetName(value) {
+    let sanitized = String(value ?? '')
+        .trim()
+        .replace(/[\u0000-\u001f\u007f<>:"/\\|?*]/g, '_')
+        .replace(/[ .]+$/g, '');
+
+    if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(sanitized)) {
+        sanitized = `_${sanitized}`;
+    }
+    return truncateUtf8(sanitized, PATTERN_SET_NAME_MAX_BYTES)
+        .replace(/[ .]+$/g, '');
+}
+
+export function formatPatternExportTimestamp(date = new Date()) {
+    const pad = value => String(value).padStart(2, '0');
+    return [
+        date.getFullYear(),
+        pad(date.getMonth() + 1),
+        pad(date.getDate()),
+        pad(date.getHours()),
+        pad(date.getMinutes()),
+        pad(date.getSeconds()),
+    ].join('-');
+}
+
+export function buildRbsExportFilename(patternSetName, ext = 'rbs') {
+    const safeName = sanitizePatternSetName(patternSetName);
+    if (!safeName) return null;
+    return `${safeName}.${ext}`;
+}
+
+export function buildSingleFileExportPlan(patterns, checkedIndexes, ext, patternSetName) {
     const selection = selectPatternExportItems(patterns, checkedIndexes);
     if (selection.error) {
         return { files: null, count: 0, error: selection.error };
     }
 
-    const multi = selection.items.length > 1;
+    const safeName = sanitizePatternSetName(patternSetName);
+    if (!safeName) {
+        return { files: null, count: 0, error: 'empty-name' };
+    }
+
     const files = selection.items.map((item) => ({
         index: item.index,
         pattern: item.pattern,
-        filename: multi
-            ? `pattern_P${String(item.index + 1).padStart(3, '0')}.${ext}`
-            : singlePatternFilename(selectedSlot, ext),
+        filename: `P${String(item.index + 1).padStart(3, '0')}_${safeName}.${ext}`,
     }));
 
     return { files, count: files.length, error: null };
-}
-
-function singlePatternFilename(slot, ext) {
-    const group = slot && Number.isInteger(slot.group) ? slot.group : 1;
-    const pattern = slot && Number.isInteger(slot.pattern) ? slot.pattern : 1;
-    const side = slot && typeof slot.side === 'string' ? slot.side : 'A';
-    return `pattern_G${group}P${pattern}${side}.${ext}`;
 }
