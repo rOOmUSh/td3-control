@@ -26,7 +26,7 @@ Triplet Morph and Custom Note Gate control
 
 See Demo Video
 
-[Watch the demo on YouTube](https://www.youtube.com/watch?v=GfzU9B3xswg)
+[![Triplets Morph and Custom Gate Control Demo](https://img.youtube.com/vi/GfzU9B3xswg/hqdefault.jpg)](https://www.youtube.com/watch?v=GfzU9B3xswg)
 
 
 ## Demo Video
