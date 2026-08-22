@@ -182,6 +182,10 @@ pub struct PlaybackState {
     /// connection. Reconnect stays blocked until every job has completed.
     pub midi_cleanup_pending: Arc<AtomicUsize>,
     pub clock: Arc<Mutex<Option<ClockState>>>,
+    /// Per-step Filter Cutoff lane handed to the clock thread for LIVE
+    /// playback. Survives transport stop so a lane set while stopped
+    /// applies from the first pulse of the next start.
+    pub cutoff_lane: crate::web::clock::cutoff_lane::LaneInbox,
     /// Host-sequenced audition runner. `Some` while a non-saving
     /// pattern audition is playing; mutually exclusive with `clock`.
     /// The thread silences sounding notes when stopped or dropped.
@@ -401,6 +405,7 @@ impl AppState {
                 midi_owner_lifecycle: Arc::new(Mutex::new(())),
                 midi_cleanup_pending: Arc::new(AtomicUsize::new(0)),
                 clock: Arc::new(Mutex::new(None)),
+                cutoff_lane: crate::web::clock::cutoff_lane::new_lane_inbox(),
                 audition: Arc::new(Mutex::new(None)),
                 transport_generation: Arc::new(AtomicU64::new(1)),
                 playing_item_id: Arc::new(Mutex::new(None)),

@@ -230,3 +230,7 @@ saved to a slot.
 
 - [Bottom Toolbar](BOTTOM_TOOLBAR.md) - the rest of the transport strip
 - [Progressions](PROGRESSIONS.md) - the Progression page
+
+## Step Lanes During A Morph
+
+The per-step `CUTOFF` and `GATE` lanes of a pattern card (see [Pattern Row Buttons](PATTERN_ROW_BUTTONS.md#step-lane-drawer)) are independent of the morph amount. The morph decides where each step sounds; the lanes decide what it sounds like. A step's cutoff is sent at the step's warped position, and a losing step that has retired sends nothing. A step's own gate value is what the morph's gate compensation widens, in place of the transport-bar `GATE` value, so the relative lengths you set survive the sweep. At `100` each surviving triplet cell carries the values of the source step it came from. In the drawer the lane cells slide, fade, and retire with the step cards above them, and every knob stays usable while the knob is between `1` and `99`.

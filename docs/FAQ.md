@@ -173,3 +173,11 @@ Read these in order:
 3. [PROGRESSIONS](PROGRESSIONS.md)
 4. [BANK](BANK.md)
 5. [TECHNICAL ARCHITECTURE](TECHNICAL_ARCHITECTURE.md)
+
+### Why do I not see a CUTOFF knob or a CUTOFF lane?
+
+The filter cutoff controls exist only for a TD-3-MO, which accepts Filter Cutoff over USB MIDI as Control Change 74 on firmware `2.0.1`. The app reads the firmware version when it connects and shows the transport-bar `CUTOFF` knob and the per-step `CUTOFF` lane only then. A regular TD-3 does not respond to the message, so nothing is shown that could not work. The per-step `GATE` lane belongs to non-saving host audition and appears on any device while `LIVE` is off; in `LIVE` mode on a regular TD-3 the drawer handle under each pattern card is hidden because no lane applies.
+
+### Why does a pattern card have a thin bar under it?
+
+That bar is the handle of the step lane drawer. Click it to open a row of per-step knobs under the card, and click it again to close. See [Pattern Row Buttons](PATTERN_ROW_BUTTONS.md#step-lane-drawer).

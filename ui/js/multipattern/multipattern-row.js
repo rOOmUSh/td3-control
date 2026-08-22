@@ -28,6 +28,8 @@ import * as preview from './multipattern-preview.js';
 import { slotFor } from '../shared/slot-targets.js';
 import { hslForIndex } from './multipattern-transport-helpers.js';
 import { escapeHtml as esc } from '../shared/escape-html.js';
+import { createStepLaneDrawer } from '../shared/step-lane-drawer.js';
+import { stepLaneToggled, stepLaneValueChanged } from './step-lane-hooks.js';
 import {
     ROW_BTN_NEUTRAL as BTN_NEUTRAL,
     ROW_BTN_SL as BTN_SL,
@@ -80,6 +82,22 @@ export function renderCard(index) {
     `;
     row.appendChild(buildGrid(index));
     root.appendChild(row);
+
+    // Per-step lane drawer below the row. Its open state and values live
+    // on the pattern, so the rebuilt card comes back exactly as it was.
+    createStepLaneDrawer({
+        card: root,
+        patternKey: index,
+        getLanes: () => state.getLanes(index),
+        setLanes: (lanes) => state.setLanes(index, lanes),
+        showCutoffLane: () => state.isDeviceControlsSupported(),
+        showGateLane: () => !state.isLiveUpdate(),
+        onLaneValue: (lane, step, value) => stepLaneValueChanged(index, lane, step, value),
+        onLaneToggle: (lane, on) => stepLaneToggled(index, lane, on),
+        onLaneRandom: (lane) => stepLaneToggled(index, lane, true),
+        onLaneRatio: (lane) => stepLaneToggled(index, lane, true),
+        alignTo: () => root.querySelector('.mp-card-grid'),
+    });
 
     // Clicking anywhere on the card that isn't itself an action button or
     // interactive control focuses this pattern. The delegated handler in

@@ -785,6 +785,191 @@
 .mp-card.drop-above { box-shadow: inset 0 4px 0 0 #eab308; }
 .mp-card.drop-below { box-shadow: inset 0 -4px 0 0 #eab308; }
 
+/* Step-lane drawer: a thin full-width handle under each card that opens a
+   green box of per-step knobs aligned over the sixteen step columns. The
+   card is a flex column, so an open drawer pushes the following cards
+   down. */
+.mp-drawer-handle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 0.9rem;
+    border: 0;
+    border-top: 1px solid rgba(78,140,69,0.25);
+    background-color: rgba(255,255,255,0.02);
+    color: #b8c4b8;
+    cursor: pointer;
+    border-radius: 0 0 0.5rem 0.5rem;
+    overflow: hidden;
+    padding: 0;
+    line-height: 1;
+    transition: background-color 0.1s ease, color 0.1s ease;
+}
+.mp-drawer-handle:hover { background-color: rgba(78,140,69,0.12); color: #e2e2e2; }
+.mp-drawer-handle .mp-drawer-chevron {
+    font-size: 0.9rem;
+    line-height: 1;
+    transition: transform 0.15s ease;
+}
+.mp-drawer-handle.is-open .mp-drawer-chevron { transform: rotate(180deg); }
+.mp-drawer-handle.is-open { border-radius: 0; }
+.mp-drawer-handle[hidden] { display: none; }
+
+.mp-drawer {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    margin: 0.375rem 0.75rem 0.5rem 0.75rem;
+    padding: 0.375rem 0.5rem;
+    border: 1px solid rgba(78,140,69,0.35);
+    border-radius: 0.5rem;
+    background-color: rgba(78,140,69,0.08);
+    overflow: hidden;
+}
+.mp-drawer[hidden] { display: none; }
+@keyframes mp-drawer-slide {
+    from { max-height: 0; opacity: 0; padding-top: 0; padding-bottom: 0; }
+    to { max-height: 12rem; opacity: 1; }
+}
+.mp-drawer--slide { animation: mp-drawer-slide 0.18s ease-out; }
+
+/* One lane: a head occupying the width of the card's left control columns
+   so the sixteen knobs land over the sixteen step columns. Both widths are
+   measured from the live card and written as custom properties. */
+.mp-lane-row {
+    display: flex;
+    align-items: center;
+    gap: 0;
+}
+.mp-lane-row[hidden] { display: none; }
+.mp-lane-head {
+    flex: 0 0 auto;
+    width: var(--mp-lane-head, 16rem);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding-right: 0.75rem;
+    box-sizing: border-box;
+}
+.mp-lane-grid {
+    margin-right: var(--mp-lane-tail, 0px);
+}
+.mp-lane-label {
+    font-size: 0.7rem;
+    font-weight: 900;
+    letter-spacing: 0.1em;
+    color: #b8c4b8;
+}
+.mp-lane-row.is-off .mp-lane-grid { opacity: 0.45; }
+/* The all-steps ratio knob sits in the lane head at the same size as a
+   step knob; its cell is sized by the step grid's column width through
+   the same custom property the head uses. */
+.mp-lane-ratio {
+    width: calc((var(--mp-lane-grid-width, 1100px) - 15 * 0.25rem) / 16);
+    flex: 0 0 auto;
+}
+.mp-lane-random {
+    flex: 0 0 auto;
+    height: 1.15rem;
+    padding: 0 0.4rem;
+    border-radius: 0.25rem;
+    border: 1px solid #383939;
+    background-color: #333535;
+    color: #b8c4b8;
+    font-size: 0.6rem;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+}
+.mp-lane-random:hover { background-color: #3d3f3f; color: #e2e2e2; }
+.mp-lane-random:focus-visible { outline: 2px solid #4e8c45; outline-offset: 1px; }
+
+/* Horizontal two-position switch: the TRIPLET endpoint switch turned on its
+   side. Left is OFF, right is ON. */
+.mp-lane-switch {
+    position: relative;
+    width: 2rem;
+    height: 1.15rem;
+    border-radius: 9999px;
+    background-color: #000;
+    border: 2px solid #333535;
+    cursor: pointer;
+    padding: 0;
+    flex: 0 0 auto;
+}
+.mp-lane-switch:focus-visible { outline: 2px solid #4e8c45; outline-offset: 1px; }
+.mp-lane-switch-thumb {
+    position: absolute;
+    top: 50%;
+    left: 2px;
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 9999px;
+    background-color: #4e8c45;
+    transform: translateY(-50%);
+    transition: left 0.12s ease, background-color 0.12s ease;
+    box-shadow: 0 0 6px rgba(78,140,69,0.9);
+}
+.mp-lane-switch[aria-checked="false"] .mp-lane-switch-thumb {
+    background-color: #555;
+    box-shadow: none;
+}
+.mp-lane-switch[aria-checked="true"] .mp-lane-switch-thumb {
+    left: calc(100% - 0.7rem - 2px);
+}
+
+/* One step cell: knob on the left, digit readout on the right, each the
+   size of one SL/AC button (half a step column, square). */
+.mp-lane-cell {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.125rem;
+    padding: 0.125rem;
+    background-color: #1e2020;
+    border-radius: 0.5rem;
+    min-width: 0;
+}
+.mp-lane-knob {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 9999px;
+    background-color: #333535;
+    border: 2px solid #383939;
+    cursor: pointer;
+    box-sizing: border-box;
+}
+.mp-lane-knob:focus-visible { outline: 2px solid #4e8c45; outline-offset: 1px; }
+.mp-lane-knob-indicator {
+    position: absolute;
+    left: 50%;
+    top: 10%;
+    width: 2px;
+    height: 40%;
+    margin-left: -1px;
+    background-color: #4e8c45;
+    transform-origin: 50% 100%;
+    border-radius: 1px;
+}
+.mp-lane-readout {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 0.25rem;
+    background-color: #000;
+    border: 1px solid #333535;
+    font-family: Digital7, ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 0.85rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: #d8d8d8;
+    box-sizing: border-box;
+}
+
 /* Scale selector dropdown */
 .scale-select {
     background-color: #0d0f0f;

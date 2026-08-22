@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 
 use crate::error::Td3Error;
-use crate::formats::mid::{build_timeline_with_gate, ORDER_SLIDE_NOTE_OFF};
+use crate::formats::mid::{build_timeline_with_lanes, StepLanes, ORDER_SLIDE_NOTE_OFF};
 use crate::pattern::Pattern;
 use crate::triplet_morph::{
     endpoint_as_ephemeral_pattern, normalize_source, plan_triplet_morph, MorphAmount, MorphEventId,
@@ -29,10 +29,34 @@ use super::schedule::{
 /// `triplet = true`. Cycle period is exactly four beats for every
 /// amount. Returns the schedule plus the deterministic plan used to
 /// derive it.
+#[cfg(test)]
 pub(crate) fn prepare_morph_schedule(
     pattern: &Pattern,
     centibpm: u32,
     gate_percent: u32,
+    amount: MorphAmount,
+    channel: u8,
+) -> Result<(AuditionSchedule, TripletMorphPlan), Td3Error> {
+    prepare_morph_schedule_with_lanes(
+        pattern,
+        centibpm,
+        gate_percent,
+        StepLanes::default(),
+        amount,
+        channel,
+    )
+}
+
+/// `prepare_morph_schedule` with per-step lanes, indexed by source step.
+/// At amount 0 every cell is its own source step. Between 1 and 99 the
+/// warped builder moves each lane value with its cell and drops the
+/// values of retired cells. At the endpoint the lanes are remapped onto
+/// the derived cells through the same provenance the note events use.
+pub(crate) fn prepare_morph_schedule_with_lanes(
+    pattern: &Pattern,
+    centibpm: u32,
+    gate_percent: u32,
+    lanes: StepLanes,
     amount: MorphAmount,
     channel: u8,
 ) -> Result<(AuditionSchedule, TripletMorphPlan), Td3Error> {
@@ -44,8 +68,14 @@ pub(crate) fn prepare_morph_schedule(
         for (cell, slot) in provenance.iter_mut().enumerate().take(phrase.active_steps) {
             *slot = Some(cell as u8);
         }
-        let schedule =
-            schedule_with_provenance_ids(pattern, centibpm, gate_percent, channel, &provenance)?;
+        let schedule = schedule_with_provenance_ids(
+            pattern,
+            centibpm,
+            gate_percent,
+            lanes,
+            channel,
+            &provenance,
+        )?;
         return Ok((schedule, plan));
     }
 
@@ -56,14 +86,60 @@ pub(crate) fn prepare_morph_schedule(
         for (slot, cell) in provenance.iter_mut().zip(derived.cells.iter()) {
             *slot = Some(cell.source_step as u8);
         }
-        let schedule =
-            schedule_with_provenance_ids(&ephemeral, centibpm, gate_percent, channel, &provenance)?;
+        let schedule = schedule_with_provenance_ids(
+            &ephemeral,
+            centibpm,
+            gate_percent,
+            remap_lanes_to_cells(lanes, &provenance, gate_percent),
+            channel,
+            &provenance,
+        )?;
         return Ok((schedule, plan));
     }
 
-    let schedule =
-        build_intermediate_schedule(&phrase, &plan, centibpm, gate_percent, amount, channel)?;
+    let schedule = build_intermediate_schedule(
+        &phrase,
+        &plan,
+        centibpm,
+        gate_percent,
+        lanes,
+        amount,
+        channel,
+    )?;
     Ok((schedule, plan))
+}
+
+/// Re-index source-step lanes onto derived cells: cell `i` takes the
+/// value of the source step that `provenance[i]` names. A cell with no
+/// source keeps the pattern gate and the cutoff centre.
+fn remap_lanes_to_cells(
+    lanes: StepLanes,
+    provenance: &[Option<u8>; 16],
+    gate_percent: u32,
+) -> StepLanes {
+    let mut out = StepLanes::default();
+    if let Some(gates) = lanes.gates {
+        let mut cells = [gate_percent; 16];
+        for (cell, source) in provenance.iter().enumerate() {
+            if let Some(step) = source {
+                cells[cell] = gates
+                    .get(usize::from(*step))
+                    .copied()
+                    .unwrap_or(gate_percent);
+            }
+        }
+        out.gates = Some(cells);
+    }
+    if let Some(cutoffs) = lanes.cutoffs {
+        let mut cells = [64u8; 16];
+        for (cell, source) in provenance.iter().enumerate() {
+            if let Some(step) = source {
+                cells[cell] = cutoffs.get(usize::from(*step)).copied().unwrap_or(64);
+            }
+        }
+        out.cutoffs = Some(cells);
+    }
+    out
 }
 
 /// Rebuild the legacy timeline pipeline for `pattern` and attach a
@@ -80,15 +156,21 @@ fn schedule_with_provenance_ids(
     pattern: &Pattern,
     centibpm: u32,
     gate_percent: u32,
+    lanes: StepLanes,
     channel: u8,
     provenance: &[Option<u8>; 16],
 ) -> Result<AuditionSchedule, Td3Error> {
     let options = audition_options(centibpm, channel);
-    let timeline = build_timeline_with_gate(pattern, "audition", &options, gate_percent)?;
+    let timeline = build_timeline_with_lanes(pattern, "audition", &options, gate_percent, lanes)?;
 
     let mut events: Vec<(u32, u8, Vec<u8>)> = timeline
         .into_iter()
-        .filter(|ev| matches!(ev.data.first().map(|b| b & 0xF0), Some(0x80) | Some(0x90)))
+        .filter(|ev| {
+            matches!(
+                ev.data.first().map(|b| b & 0xF0),
+                Some(0x80) | Some(0x90) | Some(0xB0)
+            )
+        })
         .map(|ev| (ev.tick, ev.order, ev.data))
         .collect();
     events.sort_by_key(|(tick, order, _)| (*tick, *order));
@@ -131,6 +213,20 @@ fn event_identity(
     };
     let velocity = bytes.get(2).copied().unwrap_or(0);
     let is_note_on = (status & 0xF0) == 0x90 && velocity > 0;
+
+    if (status & 0xF0) == 0xB0 {
+        let cell = (tick / step_ticks.max(1)) as usize;
+        let source_step = provenance.get(cell).copied().flatten().ok_or_else(|| {
+            Td3Error::Midi(format!(
+                "morph identity: control change in unmapped cell {}",
+                cell
+            ))
+        })?;
+        return Ok(MorphEventId {
+            source_step,
+            role: MorphEventRole::ControlChange,
+        });
+    }
 
     if is_note_on {
         let cell = (tick / step_ticks.max(1)) as usize;

@@ -45,6 +45,7 @@
 
 import * as state from './multipattern/multipattern-state.js';
 import { api } from './api.js';
+import { auditionLaneFields, effectiveLane, laneState } from './shared/step-lanes.js';
 import { highlightStep } from './multipattern/multipattern-list.js';
 import { highlightColumn } from './multipattern/multipattern-timeline.js';
 import * as preview from './multipattern/multipattern-preview.js';
@@ -350,14 +351,16 @@ async function flushAuditionUpdate() {
             const requestedTiming = snapshotTiming(pat, currentPlaybackTiming());
             let response;
             try {
+                const morphPercent = morphRequestPercent(pat, state.getTripletMorphPercent());
                 response = await api.auditionUpdate(
                     pat,
                     state.getBpm(),
                     true,
                     expectedScheduleGeneration,
                     state.getGatePercent(),
-                    morphRequestPercent(pat, state.getTripletMorphPercent()),
+                    morphPercent,
                     state.getMidiChannel(),
+                    auditionLaneFields(pat),
                 );
             } catch (err) {
                 if (isRecoverableAuditionConflict(err)) continue;
@@ -708,14 +711,16 @@ async function togglePlay(event, options = {}) {
                     : playingPatternIdx();
                 const pat = state.getPattern(patIdx);
                 if (!pat) { setStatus('No pattern to audition'); return; }
+                const startMorphPercent = morphRequestPercent(pat, state.getTripletMorphPercent());
                 const auditionStart = await api.auditionPattern(
                     pat,
                     state.getBpm(),
                     true,
                     targetEpochMicros,
                     state.getGatePercent(),
-                    morphRequestPercent(pat, state.getTripletMorphPercent()),
+                    startMorphPercent,
                     state.getMidiChannel(),
+                    auditionLaneFields(pat),
                 );
                 noteMorphAcknowledgement(auditionStart);
                 hostAuditionScheduleGeneration = Number.isFinite(
@@ -824,6 +829,32 @@ export function noteLiveScratchPatternQueued(patIdx, pattern = null) {
     noteQueuedDeviceTiming(patIdx, pattern);
 }
 
+/** Index of the pattern the device is playing, or the focused one. */
+export function playingPatternIndex() {
+    return playingPatternIdx();
+}
+
+/**
+ * Hand the per-step cutoff lane of pattern `patIdx` to the clock thread
+ * for device-sequenced playback. The lane always carries the pattern's
+ * timing; its values go only while the lane is switched on.
+ * `atCycleBoundary` defers the switch to the next wrap, for a pattern
+ * the timeline has pre-loaded into the scratch slot.
+ */
+export function pushStepLane(patIdx, { atCycleBoundary = false } = {}) {
+    if (!state.isConnected()) return Promise.resolve();
+    const pat = state.getPattern(patIdx);
+    if (!pat) return Promise.resolve();
+    const lanes = laneState(pat);
+    return api.transportStepLane({
+        cutoffs: lanes.cutoffOn ? effectiveLane(lanes, 'cutoff') : null,
+        activeSteps: state.getActiveSteps(patIdx),
+        triplet: !!state.getTriplet(patIdx),
+        midiChannel: state.getMidiChannel(),
+        atCycleBoundary,
+    }).catch((err) => setStatus('Step lane error: ' + err.message));
+}
+
 /**
  * Prime the timeline cursor and playback trackers. In LIVE UPDATE ON mode
  * this also sends the first pattern to the scratch slot. In no-save host
@@ -861,6 +892,7 @@ async function startTimelinePlayback() {
                     await api.savePattern(
                         scratchSlot.group, scratchSlot.pattern, scratchSlot.side, pat,
                     );
+                    await pushStepLane(patIdx);
                     setStatus(`Playing P${patIdx + 1}`);
                     return;
                 }
@@ -889,6 +921,7 @@ async function startTimelinePlayback() {
                 await api.savePattern(
                     scratchSlot.group, scratchSlot.pattern, scratchSlot.side, pat,
                 );
+                await pushStepLane(firstPatIdx);
                 setStatus(`Playing P${firstPatIdx + 1} - loop 1/${activeTimelineSlots}`);
                 return;
             }
@@ -1107,6 +1140,7 @@ function queueHostAuditionForNextCycle(
         gatePercent: state.getGatePercent(),
         midiChannel: state.getMidiChannel(),
         tripletMorphPercent: morphRequestPercent(nextPattern, state.getTripletMorphPercent()),
+        stepLanes: auditionLaneFields(nextPattern),
         expectedScheduleGeneration: unguarded ? null : hostAuditionScheduleGeneration,
         inFlight: true,
         response: null,
@@ -1125,6 +1159,7 @@ function queueHostAuditionForNextCycle(
         queued.gatePercent,
         queued.tripletMorphPercent,
         queued.midiChannel,
+        queued.stepLanes,
     ).then((response) => {
         if (queued.generation !== hostAuditionQueueGeneration) return;
         queued.inFlight = false;
@@ -1324,6 +1359,7 @@ function advanceBeat() {
                             ).then(() => {
                                 queuedDeviceTiming = queuedTiming;
                                 setStatus(`Pre-loaded P${nextPatIdx + 1}`);
+                                return pushStepLane(nextPatIdx, { atCycleBoundary: true });
                             })
                              .catch(err => setStatus('Pre-load error: ' + err.message));
                         } else if (auditionMode && state.isConnected()) {
@@ -1685,6 +1721,7 @@ function immediateScratchSave(tl, slot) {
     ).then(() => {
         queuedDeviceTiming = queuedTiming;
         setStatus(`P${patIdx + 1} scratched (timeline sync)`);
+        return pushStepLane(patIdx, { atCycleBoundary: true });
     })
      .catch(err => setStatus('Scratch error: ' + err.message));
 }
@@ -1728,6 +1765,7 @@ export function rescratchUpcoming() {
     ).then(() => {
         queuedDeviceTiming = queuedTiming;
         setStatus(`Re-scratched P${nextPatIdx + 1}`);
+        return pushStepLane(nextPatIdx, { atCycleBoundary: true });
     })
      .catch(err => setStatus('Re-scratch error: ' + err.message));
 }

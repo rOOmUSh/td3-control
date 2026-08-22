@@ -15,10 +15,12 @@ pub use defaults::{
 pub(crate) use defaults::{TD3_MIDI_BASE_PITCH, TD3_MIDI_TOP_PITCH};
 #[allow(unused_imports)]
 pub(crate) use events::{
-    encode_vlq, note_off_event, note_on_event, TimedMidiEvent, ORDER_NOTE_OFF, ORDER_NOTE_ON,
-    ORDER_SLIDE_NOTE_OFF, ORDER_SLIDE_NOTE_ON,
+    control_change_event, encode_vlq, note_off_event, note_on_event, TimedMidiEvent,
+    ORDER_CONTROL_CHANGE, ORDER_NOTE_OFF, ORDER_NOTE_ON, ORDER_SLIDE_NOTE_OFF, ORDER_SLIDE_NOTE_ON,
 };
 pub use options::{MidiExportOptions, MidiSlideMode};
+pub use timeline::StepLanes;
+pub(crate) use timeline::FILTER_CUTOFF_CC;
 #[allow(unused_imports)]
-pub(crate) use timeline::{build_timeline, build_timeline_with_gate};
+pub(crate) use timeline::{build_timeline, build_timeline_with_gate, build_timeline_with_lanes};
 pub use writer::export;

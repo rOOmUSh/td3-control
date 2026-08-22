@@ -1,4 +1,5 @@
 import { morphRequestPercent } from '../shared/triplet-morph-timing.js';
+import { auditionLaneFields } from '../shared/step-lanes.js';
 
 // Shared progression playback helpers.
 //
@@ -37,14 +38,16 @@ export async function startPlayback({
     const firstPatIdx = firstTimelinePatternIndex(timeline);
     if (!liveUpdate) {
         const firstPattern = getPattern(firstPatIdx);
+        const morphPercent = morphRequestPercent(firstPattern, tripletMorphPercent);
         await api.auditionPattern(
             firstPattern,
             bpm,
             true,
             null,
             gatePercent,
-            morphRequestPercent(firstPattern, tripletMorphPercent),
+            morphPercent,
             midiChannel,
+            auditionLaneFields(firstPattern),
         );
         setPlaying(true);
         await transport.start(null);
@@ -56,6 +59,9 @@ export async function startPlayback({
         scratch.group, scratch.pattern, scratch.side,
         getPattern(firstPatIdx)
     );
+    if (typeof transport.pushStepLane === 'function') {
+        await transport.pushStepLane(firstPatIdx);
+    }
     const startSync = await api.transportStart(bpm);
     setPlaying(true);
     await transport.start(startSync);

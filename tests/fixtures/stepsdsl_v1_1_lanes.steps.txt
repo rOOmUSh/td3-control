@@ -1,0 +1,28 @@
+format=td3-stepdsl-v1.1
+active_steps=8
+triplet_time=off
+triplet_morph=on
+triplet_morph_percentage=40
+bpm=124.5
+live_update=off
+pattern_co_lane=on
+pattern_gt_lane=off
+
+01  C:---:N|CO:0|GT:50
+02 C#:U--:N|CO:40|GT:50
+03  D:-A-:N|CO:64|GT:50
+04 D#:--S:N|CO:90|GT:50
+05  E:---:R|CO:127|GT:50
+06  F:D--:T|CO:100|GT:50
+07 F#:-AS:N|CO:12|GT:50
+08  G:---:TR|CO:77|GT:50
+
+# NOTE:TAS:TIME|CO:cutoff|GT:gate
+# transpose: U|D|-
+# accent: A|-
+# slide: S|-
+# time: N|T|R|TR
+# Cutoff Control | CO:0-127
+# Gate Control | GT:1-100
+# Lanes | pattern_co_lane, pattern_gt_lane: on/off
+# Live Update | live_update: on/off

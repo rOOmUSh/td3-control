@@ -5,9 +5,10 @@ use crate::pattern::Pattern;
 use crate::step::{Accent, Slide, Step, Time, Transpose};
 use crate::web::clock::{
     coalescing_rejects_stale_without_losing_valid, cycle_timing_at_now,
-    deadline_drain_observes_queued_update, prepare_schedule, reject_closed_command_for_test,
-    remaining_start_delay, AuditionSchedule, AuditionTransitionTestHarness, AuditionUpdateError,
-    ScheduledMidi, DEFAULT_AUDITION_CHANNEL,
+    deadline_drain_observes_queued_update, flush_raw_sends_for_test, prepare_schedule,
+    reject_closed_command_for_test, reject_closed_raw_send_for_test, remaining_start_delay,
+    AuditionSchedule, AuditionTransitionTestHarness, AuditionUpdateError, ScheduledMidi,
+    DEFAULT_AUDITION_CHANNEL,
 };
 
 const CYCLE_US: u64 = 100;
@@ -585,5 +586,50 @@ fn unguarded_queue_remains_backward_compatible() {
             .unwrap()
             .schedule_generation,
         2
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Raw channel-voice sends through the audition thread
+// ---------------------------------------------------------------------------
+
+#[test]
+fn raw_sends_are_written_in_arrival_order_and_each_requester_is_answered() {
+    let cc_a: &[u8] = &[0xB0, 0x4A, 0x10];
+    let cc_b: &[u8] = &[0xB0, 0x4A, 0x7F];
+    let (written, results) = flush_raw_sends_for_test(&[cc_a, cc_b], rest_schedule(), |_| Ok(()));
+
+    assert_eq!(written, vec![cc_a.to_vec(), cc_b.to_vec()]);
+    assert_eq!(results.len(), 2);
+    assert!(results.iter().all(Result::is_ok), "every requester gets Ok");
+}
+
+#[test]
+fn raw_send_write_failure_is_reported_to_that_requester_only() {
+    let good: &[u8] = &[0xB0, 0x4A, 0x01];
+    let bad: &[u8] = &[0xB0, 0x4A, 0x02];
+    let (written, results) = flush_raw_sends_for_test(&[good, bad], rest_schedule(), |bytes| {
+        if bytes[2] == 0x02 {
+            Err(crate::error::Td3Error::Midi("port gone".to_string()))
+        } else {
+            Ok(())
+        }
+    });
+
+    assert_eq!(written.len(), 2, "a failed write does not stop later ones");
+    assert!(results[0].is_ok());
+    assert!(
+        matches!(&results[1], Err(err) if err.to_string().contains("port gone")),
+        "failure reaches its requester"
+    );
+}
+
+#[test]
+fn raw_send_to_a_stopped_audition_is_rejected_not_hung() {
+    let result = reject_closed_raw_send_for_test();
+    assert!(
+        matches!(&result, Err(err) if err.to_string().contains("stopped")),
+        "got {:?}",
+        result
     );
 }

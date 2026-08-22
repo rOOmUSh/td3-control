@@ -19,6 +19,7 @@ use crate::td3_protocol;
 use super::api_types::*;
 use super::clock;
 use super::config_storage;
+use super::device_capabilities::supports_device_controls;
 use super::midi_channel::channel_status;
 use super::state::{
     AppState, AuditionState, ClockState, ConfigState, MidiSession, MidiState, PlaybackState,
@@ -91,6 +92,7 @@ pub(crate) fn json_payload<T>(
 mod audition;
 mod config;
 mod connect;
+mod device_control;
 mod pattern;
 mod scratch;
 mod transport;
@@ -98,6 +100,7 @@ mod transport;
 pub use audition::*;
 pub use config::*;
 pub use connect::*;
+pub use device_control::*;
 pub use pattern::*;
 pub use scratch::*;
 pub(crate) use transport::*;

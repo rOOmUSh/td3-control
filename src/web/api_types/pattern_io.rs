@@ -25,6 +25,10 @@ pub struct PatternImportResponse {
     pub pattern: WebPattern,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub centibpm: Option<u32>,
+    /// StepDSL v1.1 lanes and page state; absent for every other format
+    /// and for a v1 document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steps_meta: Option<super::WebStepsMeta>,
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +153,17 @@ pub struct PatternAuditionRequest {
     /// written before the transport bar gained the control is unaffected.
     #[serde(default, alias = "midiChannel")]
     pub midi_channel: Option<u32>,
+    /// Per-step ordinary-note gate, exactly 16 values of 1 through 100.
+    /// Present means each note group uses the gate at its first step
+    /// instead of `gate_percent`. Rejected together with a triplet morph
+    /// amount.
+    #[serde(default, alias = "stepGates")]
+    pub step_gates: Option<Vec<u32>>,
+    /// Per-step Filter Cutoff, exactly 16 values of 0 through 127.
+    /// Present means a Control Change 74 is sent at the start of every
+    /// active step. Rejected together with a triplet morph amount.
+    #[serde(default, alias = "stepCutoffs")]
+    pub step_cutoffs: Option<Vec<u32>>,
 }
 
 fn default_audition_looping() -> bool {
@@ -205,6 +220,10 @@ pub struct ExportPoolRequest {
     pub patterns: Vec<WebPattern>,
     #[serde(default)]
     pub centibpm: Option<u32>,
+    /// One entry per pattern, in order; a missing or shorter list means
+    /// defaults for the patterns it does not cover.
+    #[serde(default, alias = "stepsMeta")]
+    pub steps_meta: Vec<super::WebStepsMeta>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -239,6 +258,10 @@ pub struct PatternExportRequest {
     pub patterns: Vec<WebPattern>,
     #[serde(default)]
     pub rbs_mode: Option<String>,
+    /// StepDSL v1.1 lanes and page state for `steps_txt`; ignored by
+    /// every other format. Absent means defaults.
+    #[serde(default, alias = "stepsMeta")]
+    pub steps_meta: Option<super::WebStepsMeta>,
 }
 
 // ---------------------------------------------------------------------------

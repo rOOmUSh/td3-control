@@ -45,6 +45,8 @@ The page can:
 - start and stop the MIDI transport
 - control BPM
 - control `1-100%` gate for non-saving host audition
+- on a TD-3-MO, control the filter cutoff from the transport bar and per step from each pattern card's lane drawer
+- shape each step's note length for non-saving host audition from the same drawer
 - preview notes
 - load from and save to device slots
 - switch the device's MIDI sync source between INT, USB, DIN, and TRIG from a four-pill column in the transport bar

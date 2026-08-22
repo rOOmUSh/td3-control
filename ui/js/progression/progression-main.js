@@ -25,6 +25,7 @@ import * as history from '../history.js';
 import * as deviceBackup from '../device-backup.js';
 import * as clipboard from './progression-clipboard.js';
 import { api } from '../api.js';
+import { auditionLaneFields } from '../shared/step-lanes.js';
 import { loadAppConfig, applyUiDefaults } from '../app-config.js';
 import { renderAllPatternRows } from './progression-row.js';
 import { openPushModal } from './progression-push.js';
@@ -41,6 +42,9 @@ import {
 } from '../magic-randomizer/magic-randomizer.js';
 import { initMidiChannelControl } from '../shared/midi-channel-control.js';
 import { initGateControl } from '../shared/gate-control.js';
+import { initDeviceControls } from '../shared/device-controls.js';
+import { createStepLaneDrawer, alignStepLaneDrawers } from '../shared/step-lane-drawer.js';
+import { createTrailingThrottle } from '../shared/trailing-throttle.js';
 import { initTripletMorphControl } from '../shared/triplet-morph-control.js';
 import { initTripletMorphEndpointToggle } from '../shared/triplet-morph-toggle.js';
 import { morphRequestPercent } from '../shared/triplet-morph-timing.js';
@@ -220,14 +224,16 @@ async function flushAuditionUpdate() {
             if (!state.isConnected()) break;
             const pattern = currentHostAuditionPattern();
             if (!pattern) break;
+            const morphPercent = morphRequestPercent(pattern, state.getTripletMorphPercent());
             const response = await api.auditionUpdate(
                 pattern,
                 state.getBpm(),
                 true,
                 null,
                 state.getGatePercent(),
-                morphRequestPercent(pattern, state.getTripletMorphPercent()),
+                morphPercent,
                 state.getMidiChannel(),
+                auditionLaneFields(pattern),
             );
             if (!auditionUpdatePending
                 && playbackMode === 'audition'
@@ -323,14 +329,16 @@ async function handleArchetypePlay(clickIdx, key) {
     await stopAllPreviews({ keepMenu: true });
     try {
         if (!state.isLiveUpdate()) {
+            const blMorphPercent = morphRequestPercent(bl, state.getTripletMorphPercent());
             await api.auditionPattern(
                 bl,
                 state.getBpm(),
                 true,
                 null,
                 state.getGatePercent(),
-                morphRequestPercent(bl, state.getTripletMorphPercent()),
+                blMorphPercent,
                 state.getMidiChannel(),
+                auditionLaneFields(bl),
             );
             activeBassPreviewIdx = clickIdx;
             activeBassPreviewMode = 'audition';
@@ -371,17 +379,17 @@ async function handlePatternPreview(clickIdx) {
     }
     try {
         if (!state.isLiveUpdate()) {
+            const clicked = state.getPattern(clickIdx);
+            const clickMorphPercent = morphRequestPercent(clicked, state.getTripletMorphPercent());
             await api.auditionPattern(
-                state.getPattern(clickIdx),
+                clicked,
                 state.getBpm(),
                 true,
                 null,
                 state.getGatePercent(),
-                morphRequestPercent(
-                    state.getPattern(clickIdx),
-                    state.getTripletMorphPercent(),
-                ),
+                clickMorphPercent,
                 state.getMidiChannel(),
+                auditionLaneFields(clicked),
             );
             activePatternPreviewIdx = clickIdx;
             activePatternPreviewMode = 'audition';
@@ -413,6 +421,7 @@ function updateLiveBtn() {
     midiChannelControl.render();
     tripletMorphControl.render();
     tripletMorphEndpointToggle.render();
+    deviceControls.render();
 }
 
 const gateControl = initGateControl({
@@ -468,6 +477,57 @@ const tripletMorphEndpointToggle = initTripletMorphEndpointToggle({
     getValue: () => state.getTripletMorphPercent(),
     setValue: setTripletMorphAmount,
     onValueChange: onTripletMorphAmountChange,
+});
+
+// CUTOFF and BEND knobs: present only while the connected device
+// reports support for them (TD-3-MO). Independent of Live Update.
+const deviceControls = initDeviceControls({ state, setStatus });
+
+// Per-step lane drawers under the four pattern rows. The rows are built
+// once, so the drawers are too; `renderStepLaneDrawers()` refreshes them
+// from state on every change. A cutoff knob turn goes to the device at
+// once when it accepts CC 74; the lane then reaches the host audition
+// schedule in NO-LIVE or the clock thread in LIVE.
+const sendLaneCutoffNow = createTrailingThrottle((value) => {
+    api.filterCutoff(value, state.getMidiChannel())
+        .catch((err) => setStatus(`CUTOFF send failed: ${err.message}`));
+}, 30);
+
+function applyLaneChange(patIdx, lane) {
+    if (state.isLiveUpdate()) {
+        if (lane === 'cutoff' && state.isPlaying()) {
+            transport.pushStepLane(patIdx, {
+                atCycleBoundary: patIdx !== state.getActivePatternIndex(),
+            });
+        }
+        return;
+    }
+    syncActiveAudition();
+}
+
+const stepLaneDrawers = [0, 1, 2, 3].map((idx) => createStepLaneDrawer({
+    card: document.getElementById(`row-p${idx + 1}`),
+    patternKey: idx,
+    getLanes: () => state.getLanes(idx),
+    setLanes: (lanes) => state.setLanes(idx, lanes),
+    showCutoffLane: () => state.isDeviceControlsSupported(),
+    showGateLane: () => !state.isLiveUpdate(),
+    onLaneValue: (lane, step, value) => {
+        if (lane === 'cutoff' && state.isDeviceControlsSupported()) sendLaneCutoffNow(value);
+        applyLaneChange(idx, lane);
+    },
+    onLaneToggle: (lane) => applyLaneChange(idx, lane),
+    onLaneRandom: (lane) => applyLaneChange(idx, lane),
+    onLaneRatio: (lane) => applyLaneChange(idx, lane),
+    alignTo: () => document.getElementById(`grid-p${idx + 1}`),
+}));
+
+function renderStepLaneDrawers() {
+    stepLaneDrawers.forEach((drawer) => drawer.render());
+}
+
+window.addEventListener('resize', () => {
+    alignStepLaneDrawers(document.getElementById('prog-rows'), '[id^="grid-p"]');
 });
 
 // Editing gate across the morph range. At 0 everything is allowed. At
@@ -943,6 +1003,7 @@ function sendActivePattern() {
         state.getPattern(idx)
     ).then(() => {
         setStatus(`P${idx + 1} sent → ${scratch.label}`);
+        return transport.pushStepLane(idx);
     }).catch(err => {
         setStatus(`Live send error: ${err.message}`);
     });
@@ -1282,6 +1343,7 @@ clipboard.subscribe(refreshPasteButtons);
 
 state.onChange((patternChanged) => {
     sequencer.render();
+    renderStepLaneDrawers();
     updateLiveBtn();
     updateBpmDisplay();
     updatePlayButton();

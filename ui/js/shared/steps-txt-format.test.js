@@ -52,14 +52,17 @@ console.log('steps-txt-format tests:');
 
 test('default pattern renders factory-default body', () => {
     const out = formatPatternAsStepsTxt(defPattern(), 120);
-    assert(out.startsWith('format=td3-stepdsl-v1\n'), 'format header');
+    assert(out.startsWith('format=td3-stepdsl-v1.1\n'), 'format header');
+    assert(out.includes('pattern_co_lane=off\npattern_gt_lane=off\n'), 'lanes off by default');
+    assert(out.includes('triplet_morph=off\ntriplet_morph_percentage=0\n'), 'morph off by default');
+    assert(out.includes('live_update=off\n'), 'live off by default');
     assert(out.includes('active_steps=16\n'), 'active_steps header');
     assert(out.includes('triplet_time=off\n'), 'triplet_time=off');
     assert(out.includes('bpm=120\n'), 'integer BPM');
     // Step 1 with bare C note pads right to ' C'
-    assert(out.includes('01  C:---:N\n'), 'step 01 default row');
-    assert(out.includes('16  C:---:N\n'), 'step 16 default row');
-    assert(out.endsWith('# time: N|T|R|TR\n'), 'trailing legend');
+    assert(out.includes('01  C:---:N|CO:64|GT:50\n'), 'step 01 default row');
+    assert(out.includes('16  C:---:N|CO:64|GT:50\n'), 'step 16 default row');
+    assert(out.endsWith('# Live Update | live_update: on/off\n'), 'trailing legend');
 });
 
 test('triplet flag renders on', () => {
@@ -75,7 +78,7 @@ test('active_steps non-default renders', () => {
     const out = formatPatternAsStepsTxt(p, 120);
     assert(out.includes('active_steps=3\n'), 'active_steps=3');
     assert(stepRows(out).length === 3, 'only three active rows emitted');
-    assert(!out.includes('04  C:---:N\n'), 'inactive row 4 omitted');
+    assert(!out.includes('04  C:---:N'), 'inactive row 4 omitted');
 });
 
 test('all flag/note combinations render correctly', () => {
@@ -102,33 +105,42 @@ test('all flag/note combinations render correctly', () => {
     const p = { active_steps: 16, triplet: true, steps: rows };
     const out = formatPatternAsStepsTxt(p, 120);
     const expected =
-        'format=td3-stepdsl-v1\n' +
+        'format=td3-stepdsl-v1.1\n' +
         'active_steps=16\n' +
         'triplet_time=on\n' +
+        'triplet_morph=off\n' +
+        'triplet_morph_percentage=0\n' +
         'bpm=120\n' +
+        'live_update=off\n' +
+        'pattern_co_lane=off\n' +
+        'pattern_gt_lane=off\n' +
         '\n' +
-        '01  C:DA-:N\n' +
-        '02 C#:---:T\n' +
-        '03  D:-A-:R\n' +
-        '04 D#:D--:N\n' +
-        '05  E:-A-:T\n' +
-        '06  F:--S:R\n' +
-        '07 F#:DA-:N\n' +
-        '08  G:--S:T\n' +
-        '09 G#:-A-:R\n' +
-        '10  A:D--:N\n' +
-        '11 A#:-A-:T\n' +
-        '12  B:--S:R\n' +
-        '13 C^:---:N\n' +
-        '14  C:D-S:T\n' +
-        '15  D:-A-:R\n' +
-        '16  E:---:N\n' +
+        '01  C:DA-:N|CO:64|GT:50\n' +
+        '02 C#:---:T|CO:64|GT:50\n' +
+        '03  D:-A-:R|CO:64|GT:50\n' +
+        '04 D#:D--:N|CO:64|GT:50\n' +
+        '05  E:-A-:T|CO:64|GT:50\n' +
+        '06  F:--S:R|CO:64|GT:50\n' +
+        '07 F#:DA-:N|CO:64|GT:50\n' +
+        '08  G:--S:T|CO:64|GT:50\n' +
+        '09 G#:-A-:R|CO:64|GT:50\n' +
+        '10  A:D--:N|CO:64|GT:50\n' +
+        '11 A#:-A-:T|CO:64|GT:50\n' +
+        '12  B:--S:R|CO:64|GT:50\n' +
+        '13 C^:---:N|CO:64|GT:50\n' +
+        '14  C:D-S:T|CO:64|GT:50\n' +
+        '15  D:-A-:R|CO:64|GT:50\n' +
+        '16  E:---:N|CO:64|GT:50\n' +
         '\n' +
-        '# NOTE:TAS:TIME\n' +
+        '# NOTE:TAS:TIME|CO:cutoff|GT:gate\n' +
         '# transpose: U|D|-\n' +
         '# accent: A|-\n' +
         '# slide: S|-\n' +
-        '# time: N|T|R|TR\n';
+        '# time: N|T|R|TR\n' +
+        '# Cutoff Control | CO:0-127\n' +
+        '# Gate Control | GT:1-100\n' +
+        '# Lanes | pattern_co_lane, pattern_gt_lane: on/off\n' +
+        '# Live Update | live_update: on/off\n';
     assert(out === expected, `byte-for-byte match\n---got---\n${out}\n---want---\n${expected}\n`);
 });
 
@@ -136,7 +148,7 @@ test('UP transpose and TIE_REST time render', () => {
     const p = defPattern();
     p.steps[0] = { note: 'G', transpose: 'UP', accent: true, slide: true, time: 'TIE_REST' };
     const out = formatPatternAsStepsTxt(p, 120);
-    assert(out.includes('01  G:UAS:TR\n'), 'up/accent/slide/tie-rest row');
+    assert(out.includes('01  G:UAS:TR|CO:64|GT:50\n'), 'up/accent/slide/tie-rest row');
 });
 
 test('throws on missing steps array', () => {
@@ -180,7 +192,37 @@ test('v1.1 fixture parse-format-parse is idempotent', () => {
     assert(second.centibpm === first.centibpm, 'BPM preserved');
     assert(JSON.stringify(second.pattern) === JSON.stringify(first.pattern), 'pattern preserved');
     assert(stepRows(formatted).length === 3, 'short form preserved');
-    assert(formatted === V11_FIXTURE, 'neutral fixture is canonical output');
+    assert(formatted.startsWith('format=td3-stepdsl-v1.1\n'), 'a v1 fixture re-renders as v1.1');
+});
+
+test('meta renders lanes, switches, morph and live; values clamp', () => {
+    const p = defPattern();
+    p.active_steps = 2;
+    const out = formatPatternAsStepsTxt(p, 120, {
+        stepCutoffs: [0, 200],
+        stepGates: [128, 0],
+        cutoffLaneOn: true,
+        gateLaneOn: false,
+        tripletMorphPercent: 69,
+        liveUpdate: true,
+    });
+    assert(out.includes('triplet_morph=on\ntriplet_morph_percentage=69\n'), 'morph on');
+    assert(out.includes('live_update=on\n'), 'live on');
+    assert(out.includes('pattern_co_lane=on\npattern_gt_lane=off\n'), 'switches');
+    assert(out.includes('01  C:---:N|CO:0|GT:100\n'), 'row 1 clamps GT 128 to 100');
+    assert(out.includes('02  C:---:N|CO:127|GT:1\n'), 'row 2 clamps CO 200 and GT 0');
+    const zero = formatPatternAsStepsTxt(p, 120, { tripletMorphPercent: 0 });
+    assert(zero.includes('triplet_morph=off\ntriplet_morph_percentage=0\n'), 'amount 0 is off');
+});
+
+test('v1.1 lanes fixture renders back byte-for-byte from its parsed meta', () => {
+    const fixture = readFileSync(
+        new URL('../../../tests/fixtures/stepsdsl_v1_1_lanes.steps.txt', import.meta.url),
+        'utf8',
+    ).replaceAll(String.fromCharCode(13), '');
+    const doc = parseStepsTxtDocument(fixture);
+    const out = formatPatternAsStepsTxt(doc.pattern, doc.centibpm / 100, doc.meta);
+    assert(out === fixture, `fixture is canonical output\n---got---\n${out}\n---want---\n${fixture}`);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

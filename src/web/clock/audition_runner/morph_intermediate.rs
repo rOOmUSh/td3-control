@@ -26,8 +26,9 @@
 
 use crate::error::Td3Error;
 use crate::formats::mid::{
-    note_off_event, note_on_event, ORDER_NOTE_OFF, ORDER_NOTE_ON, ORDER_SLIDE_NOTE_OFF,
-    ORDER_SLIDE_NOTE_ON, TD3_MIDI_BASE_PITCH,
+    control_change_event, note_off_event, note_on_event, StepLanes, FILTER_CUTOFF_CC,
+    ORDER_CONTROL_CHANGE, ORDER_NOTE_OFF, ORDER_NOTE_ON, ORDER_SLIDE_NOTE_OFF, ORDER_SLIDE_NOTE_ON,
+    TD3_MIDI_BASE_PITCH,
 };
 use crate::triplet_morph::{
     MorphAmount, MorphEventId, MorphEventRole, MorphPlanError, Rat, SourcePhrase, TripletMorphPlan,
@@ -103,16 +104,32 @@ struct PendingEvent {
     id: MorphEventId,
 }
 
+/// Build the warped schedule for amounts 1 through 99.
+///
+/// `lanes` are per-step overrides indexed by source step. A lane gate
+/// replaces `gate_percent` for the attack starting on that step and then
+/// receives the same morph compensation. A lane cutoff is sent at every
+/// source cell's warped position, rests included, except for a cell
+/// whose attack has been retired by a collision: that cell has merged
+/// into its winner and its filter value leaves with its note.
 pub(super) fn build_intermediate_schedule(
     phrase: &SourcePhrase,
     plan: &TripletMorphPlan,
     centibpm: u32,
     gate_percent: u32,
+    lanes: StepLanes,
     amount: MorphAmount,
     channel: u8,
 ) -> Result<AuditionSchedule, Td3Error> {
     let cycle_period_us = pos_to_us(Rat::int(plan.beat_count() as i128), centibpm)?;
-    let gate = compensated_gate(gate_percent, amount).ok_or(MorphPlanError::TimingOverflow)?;
+    let gate_for_step = |step: usize| -> Result<Rat, Td3Error> {
+        let percent = match lanes.gates {
+            Some(gates) => gates.get(step).copied().unwrap_or(gate_percent),
+            None => gate_percent,
+        };
+        compensated_gate(percent, amount)
+            .ok_or_else(|| Td3Error::from(MorphPlanError::TimingOverflow))
+    };
     let slide_overlap =
         Rat::new(SLIDE_OVERLAP_NUM, SLIDE_OVERLAP_DEN).ok_or(MorphPlanError::TimingOverflow)?;
 
@@ -132,6 +149,39 @@ pub(super) fn build_intermediate_schedule(
     // chain is open. The owner stays the chain's first attack so Note
     // Off identity matches the endpoint adapter's attribution.
     let mut sounding: Option<(u8, u8)> = None;
+
+    if let Some(cutoffs) = lanes.cutoffs {
+        let retired_steps: Vec<usize> = phrase
+            .attacks
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| retired[*index])
+            .map(|(_, attack)| attack.step)
+            .collect();
+        for (cell, value) in cutoffs.iter().enumerate().take(phrase.active_steps) {
+            if retired_steps.contains(&cell) {
+                continue;
+            }
+            let onset_us = match adopted_onset(cell) {
+                Some(adopted) => adopted,
+                None => pos_to_us(warp(plan, cell, amount)?, centibpm)?,
+            };
+            if onset_us >= cycle_period_us {
+                continue;
+            }
+            let source_step = cell as u8;
+            events.push(PendingEvent {
+                offset_us: onset_us,
+                order: ORDER_CONTROL_CHANGE,
+                source_step,
+                bytes: control_change_event(channel, FILTER_CUTOFF_CC, *value),
+                id: MorphEventId {
+                    source_step,
+                    role: MorphEventRole::ControlChange,
+                },
+            });
+        }
+    }
 
     for (index, attack) in phrase.attacks.iter().enumerate() {
         if retired[index] {
@@ -242,6 +292,7 @@ pub(super) fn build_intermediate_schedule(
         let off_pos = if attack.slide {
             cell_end
         } else {
+            let gate = gate_for_step(attack.step)?;
             cell_start.add(gate.mul(cell_end.sub(cell_start)))
         };
         let release_us = pos_to_us(off_pos, centibpm)?;

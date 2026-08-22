@@ -205,7 +205,7 @@ fn cli_steps_convert_output_uses_resolved_bpm_and_short_rows() {
 
     let text = fs::read_to_string(output).unwrap();
     assert!(text.contains("\nbpm=156\n"));
-    assert!(text.contains("\n03  G:---:T\n"));
+    assert!(text.contains("\n03  G:---:T|CO:64|GT:50\n"));
     assert!(!text.contains("\n04 "));
     let _ = fs::remove_dir_all(dir);
 }

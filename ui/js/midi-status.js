@@ -80,7 +80,11 @@ async function autoConnect() {
         const conn = await api.connect();
         state.setConnected(true);
         const refreshed = await api.status().catch(() => null);
-        updateUI(refreshed || { connected: true, sync_source: 'usb' });
+        updateUI(refreshed || {
+            connected: true,
+            sync_source: 'usb',
+            device_controls: conn.device_controls,
+        });
         setStatus(`Connected: ${conn.product_name} v${conn.firmware}`);
         deviceBackup.ensureBackup(conn.firmware);
         fireModeSend();
@@ -109,7 +113,11 @@ async function toggleConnection() {
             const res = await api.connect();
             state.setConnected(true);
             const refreshed = await api.status().catch(() => null);
-            updateUI(refreshed || { connected: true, sync_source: 'usb' });
+            updateUI(refreshed || {
+                connected: true,
+                sync_source: 'usb',
+                device_controls: res.device_controls,
+            });
             setStatus(`Connected: ${res.product_name} v${res.firmware}`);
             deviceBackup.ensureBackup(res.firmware);
             fireModeSend();
@@ -135,8 +143,17 @@ function startPolling() {
     }, 3000);
 }
 
+// Device-control support travels with every connect and status reply.
+// A state module without the setter (a page with no knobs) is skipped.
+function applyDeviceControls(res) {
+    if (typeof state.setDeviceControlsSupported !== 'function') return;
+    const supported = !!(res && state.isConnected() && res.device_controls === true);
+    state.setDeviceControlsSupported(supported);
+}
+
 function updateUI(statusRes) {
     const connected = state.isConnected();
+    applyDeviceControls(connected ? statusRes : null);
     const source = statusRes && typeof statusRes.sync_source === 'string' ? statusRes.sync_source : null;
 
     let key;

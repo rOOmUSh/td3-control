@@ -3,9 +3,10 @@ use crate::pattern::Pattern;
 use crate::step;
 
 use super::events::{
-    note_off_event, note_on_event, tempo_meta_event, time_signature_meta_event,
-    track_name_meta_event, TimedMidiEvent, ORDER_END_OF_TRACK, ORDER_META, ORDER_NOTE_OFF,
-    ORDER_NOTE_ON, ORDER_SLIDE_NOTE_OFF, ORDER_SLIDE_NOTE_ON,
+    control_change_event, note_off_event, note_on_event, tempo_meta_event,
+    time_signature_meta_event, track_name_meta_event, TimedMidiEvent, ORDER_CONTROL_CHANGE,
+    ORDER_END_OF_TRACK, ORDER_META, ORDER_NOTE_OFF, ORDER_NOTE_ON, ORDER_SLIDE_NOTE_OFF,
+    ORDER_SLIDE_NOTE_ON,
 };
 use super::note::{midi_note_number, velocity_for_step};
 use super::options::{MidiExportOptions, MidiSlideMode};
@@ -14,6 +15,32 @@ use super::timing::{has_slide_connection, step_ticks};
 #[derive(Debug, Clone, Copy)]
 struct SoundingNote {
     note: u8,
+}
+
+/// Filter Cutoff controller number.
+pub(crate) const FILTER_CUTOFF_CC: u8 = 74;
+
+/// Optional per-step overrides applied on top of a pattern while a
+/// timeline is built. Each array is indexed by step position.
+///
+/// `gates`: ordinary-note gate per step, 1 through 100 percent of one
+/// step, read at the step that starts a note group. `None` keeps the
+/// pattern-wide gate for every step.
+///
+/// `cutoffs`: a Control Change 74 value, 0 through 127, emitted at the
+/// start of every active step, rests and ties included, so the filter
+/// position follows the step grid regardless of note content. `None`
+/// emits no Control Change.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StepLanes {
+    pub gates: Option<[u32; step::Step::COUNT]>,
+    pub cutoffs: Option<[u8; step::Step::COUNT]>,
+}
+
+impl StepLanes {
+    pub fn is_empty(&self) -> bool {
+        self.gates.is_none() && self.cutoffs.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -27,7 +54,13 @@ pub(crate) fn build_timeline(
     address: &str,
     options: &MidiExportOptions,
 ) -> Result<Vec<TimedMidiEvent>, Td3Error> {
-    build_timeline_inner(pattern, address, options, OrdinaryGate::LegacyHalfStep)
+    build_timeline_inner(
+        pattern,
+        address,
+        options,
+        OrdinaryGate::LegacyHalfStep,
+        StepLanes::default(),
+    )
 }
 
 pub(crate) fn build_timeline_with_gate(
@@ -41,6 +74,25 @@ pub(crate) fn build_timeline_with_gate(
         address,
         options,
         OrdinaryGate::GatePercent(gate_percent),
+        StepLanes::default(),
+    )
+}
+
+/// Like `build_timeline_with_gate`, with per-step gate and cutoff lanes.
+/// A step whose lane gate is absent uses `gate_percent`.
+pub(crate) fn build_timeline_with_lanes(
+    pattern: &Pattern,
+    address: &str,
+    options: &MidiExportOptions,
+    gate_percent: u32,
+    lanes: StepLanes,
+) -> Result<Vec<TimedMidiEvent>, Td3Error> {
+    build_timeline_inner(
+        pattern,
+        address,
+        options,
+        OrdinaryGate::GatePercent(gate_percent),
+        lanes,
     )
 }
 
@@ -49,11 +101,16 @@ fn build_timeline_inner(
     address: &str,
     options: &MidiExportOptions,
     ordinary_gate: OrdinaryGate,
+    lanes: StepLanes,
 ) -> Result<Vec<TimedMidiEvent>, Td3Error> {
     let step_ticks = step_ticks(pattern.triplet, options.ppqn)?;
-    let ordinary_gate_ticks = match ordinary_gate {
+    let pattern_gate_ticks = match ordinary_gate {
         OrdinaryGate::LegacyHalfStep => step_ticks / 2,
         OrdinaryGate::GatePercent(gate_percent) => gate_ticks(step_ticks, gate_percent),
+    };
+    let gate_ticks_for_step = |i: usize| match lanes.gates {
+        Some(gates) => gate_ticks(step_ticks, gates[i]),
+        None => pattern_gate_ticks,
     };
     let mut events = vec![
         TimedMidiEvent {
@@ -83,6 +140,14 @@ fn build_timeline_inner(
         for i in 0..total_steps {
             let tick = tick_offset + (i as u32) * step_ticks;
             let s = &pattern.step[i];
+
+            if let Some(cutoffs) = lanes.cutoffs {
+                events.push(TimedMidiEvent {
+                    tick,
+                    order: ORDER_CONTROL_CHANGE,
+                    data: control_change_event(options.channel, FILTER_CUTOFF_CC, cutoffs[i]),
+                });
+            }
 
             match s.time {
                 step::Time::Tie | step::Time::Rest | step::Time::TieRest => {}
@@ -150,7 +215,7 @@ fn build_timeline_inner(
                         let release_tick = if slide_on {
                             group_end_tick + step_ticks
                         } else {
-                            group_end_tick + ordinary_gate_ticks
+                            group_end_tick + gate_ticks_for_step(i)
                         };
                         events.push(TimedMidiEvent {
                             tick: release_tick,

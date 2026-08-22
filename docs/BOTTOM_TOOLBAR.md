@@ -15,8 +15,9 @@ It handles the parts of the workflow that affect playback, MIDI connection, timi
 - Which MIDI channel does the TD-3 listen on?
 - How long should host-audition notes be held?
 - How straight or triplet should host audition feel?
+- On a TD-3-MO, where should the filter cutoff sit?
 
-The `CH`, `GATE`, and `TRIPLET` controls belong to host audition and appear only while `LIVE` is off.
+The `CH`, `GATE`, and `TRIPLET` controls belong to host audition and appear only while `LIVE` is off. The `CUTOFF` knob appears only while a device on firmware `2.0.1` is connected.
 
 ## MIDI Connection Button
 
@@ -214,6 +215,43 @@ You can adjust gate in these ways:
 Changing gate during host audition does not restart playback or change its cadence. The currently sounding note reaches its already scheduled Note Off, then later notes use the new value. Step highlighting continues from the current playback position.
 
 Gate does not affect device-sequenced `LIVE` playback, keyboard note preview, Remote Sync messages, pattern files, or exported MIDI.
+
+## CUTOFF: TD-3-MO Device Control
+
+![The GATE and CUTOFF controls](images/mo-cutoff-bend-controls.png)
+
+The `CUTOFF` knob drives the filter cutoff of a TD-3-MO over USB MIDI. It appears whenever the connected device reports firmware `2.0.1`, the TD-3-MO firmware that accepts the message; the product name is not consulted. On any other firmware, or with no device connected, the knob is hidden. Unlike `CH`, `GATE`, and `TRIPLET`, it does not depend on `LIVE`: it stays visible in both modes.
+
+The message is a channel-voice message and goes out on the channel chosen with `CH` (or `MIDI_DEVICE_CHANNEL` when that selector is hidden). A device set to another channel ignores it.
+
+### CUTOFF
+
+`CUTOFF` sends Filter Cutoff as MIDI Control Change 74. The value is a whole number from `0` to `127`, shown as-is in the readout, and starts at `64`. It is not sent when the device connects: the device keeps whatever its front-panel knob last set until you move `CUTOFF`.
+
+- Scroll the mouse wheel over the knob to change it by `1`.
+- Drag vertically. Every 3 pixels changes the value by `1`.
+- Focus the knob and use an arrow key for `1`, or `PageUp` and `PageDown` for `8`.
+- Press `Home` for `0` or `End` for `127`.
+
+### BEND (currently disabled)
+
+A `BEND` knob for 14-bit Pitch Bend is implemented but commented out of the transport bar, because the device showed no audible response to Pitch Bend when it was tried. The server endpoint `POST /api/device/pitch-bend` and the knob module remain in place; restoring the `#pitch-bend-controls` block in `ui/partials/transport-bar.html` brings the knob back with the behaviour below.
+
+`BEND` sends 14-bit Pitch Bend. The raw value runs from `0` to `16383` with `8192` as the no-offset center, and the readout shows the signed offset from center: `0` at rest, `-8192` fully down, `+8191` fully up. The knob holds its position after you release it; there is no spring return.
+
+- Scroll the mouse wheel, drag, or use the arrow keys to move by `128`; `PageUp` and `PageDown` move by `1024`.
+- Press `Home` for `-8192` or `End` for `+8191`.
+- Double-click the knob, or press `Enter` while it has focus, to return to center. The center value is sent immediately.
+
+When a TD-3-MO connects, the knob is reset to center and center is sent once, so the readout and the device agree before you touch anything.
+
+### Sending
+
+Knob movements are sent at most once every 30 milliseconds while you drag, and the final position is always sent. The server reports `ok` when the bytes were accepted by the MIDI output; the message has no reply from the device, so no stronger confirmation exists.
+
+The knob works in every transport state. While idle the bytes go straight to the port; during `LIVE` playback they travel through the clock thread alongside the MIDI clock; during non-saving host audition (`LIVE` off and playing) they travel through the audition thread, which writes them between its scheduled notes without moving any of them. If a send fails, the status line reports `CUTOFF send failed` with the reason and the knob keeps its new position.
+
+The value is kept for the current browser session and shared by the Control and Progression pages.
 
 ## TRIPLET Morph Control
 

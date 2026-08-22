@@ -9,6 +9,7 @@
 
 import * as state from './multipattern-state.js';
 import { api } from '../api.js';
+import { auditionLaneFields } from '../shared/step-lanes.js';
 import { highlightStep } from './multipattern-list.js';
 import {
     cycleAnchorPulseIndex,
@@ -481,14 +482,16 @@ async function flushAuditionUpdate() {
             if (activeMode !== 'audition' || activeIdx < 0 || !state.isConnected()) break;
             const pattern = state.getPattern(activeIdx);
             if (!pattern) break;
+            const morphPercent = morphRequestPercent(pattern, state.getTripletMorphPercent());
             const response = await api.auditionUpdate(
                 pattern,
                 state.getBpm(),
                 true,
                 null,
                 state.getGatePercent(),
-                morphRequestPercent(pattern, state.getTripletMorphPercent()),
+                morphPercent,
                 state.getMidiChannel(),
+                auditionLaneFields(pattern),
             );
             if (!auditionUpdatePending) reconcileAuditionTiming(response);
         }
@@ -563,14 +566,16 @@ export async function toggle(idx) {
     // the pattern to the device or starting the device sequencer.
     if (state.isNoSave(idx)) {
         try {
+            const morphPercent = morphRequestPercent(pattern, state.getTripletMorphPercent());
             await api.auditionPattern(
                 pattern,
                 state.getBpm(),
                 true,
                 null,
                 state.getGatePercent(),
-                morphRequestPercent(pattern, state.getTripletMorphPercent()),
+                morphPercent,
                 state.getMidiChannel(),
+                auditionLaneFields(pattern),
             );
             activeIdx = idx;
             activeMode = 'audition';

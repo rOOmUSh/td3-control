@@ -27,12 +27,19 @@ pub async fn pattern_audition(
     }
     let gate_percent = validate_gate_percent(req.gate_percent)?;
     let morph_amount = resolve_morph_amount(&req)?;
+    let lanes = validate_step_lanes(&req)?;
 
     let channel = resolve_midi_channel(req.midi_channel, state.midi.runtime.device_channel)?;
 
     let pattern = web_to_pattern(&req.pattern)?;
-    let (schedule, morph_plan) =
-        build_audition_schedule(&pattern, centibpm, gate_percent, morph_amount, channel)?;
+    let (schedule, morph_plan) = build_audition_schedule(
+        &pattern,
+        centibpm,
+        gate_percent,
+        lanes,
+        morph_amount,
+        channel,
+    )?;
     let looping = req.looping;
     let (target_epoch_micros, _) =
         super::super::super::start_schedule::resolve_start_target(req.target_epoch_micros)
@@ -216,12 +223,19 @@ pub async fn pattern_audition_update(
     }
     let gate_percent = validate_gate_percent(req.gate_percent)?;
     let morph_amount = resolve_morph_amount(&req)?;
+    let lanes = validate_step_lanes(&req)?;
 
     let channel = resolve_midi_channel(req.midi_channel, state.midi.runtime.device_channel)?;
 
     let pattern = web_to_pattern(&req.pattern)?;
-    let (schedule, morph_plan) =
-        build_audition_schedule(&pattern, centibpm, gate_percent, morph_amount, channel)?;
+    let (schedule, morph_plan) = build_audition_schedule(
+        &pattern,
+        centibpm,
+        gate_percent,
+        lanes,
+        morph_amount,
+        channel,
+    )?;
 
     let (acknowledgement_rx, looping) = {
         let guard = state.playback.audition.lock().await;
@@ -275,12 +289,19 @@ pub async fn pattern_audition_queue_next_cycle(
     }
     let gate_percent = validate_gate_percent(req.gate_percent)?;
     let morph_amount = resolve_morph_amount(&req)?;
+    let lanes = validate_step_lanes(&req)?;
 
     let channel = resolve_midi_channel(req.midi_channel, state.midi.runtime.device_channel)?;
 
     let pattern = web_to_pattern(&req.pattern)?;
-    let (schedule, morph_plan) =
-        build_audition_schedule(&pattern, centibpm, gate_percent, morph_amount, channel)?;
+    let (schedule, morph_plan) = build_audition_schedule(
+        &pattern,
+        centibpm,
+        gate_percent,
+        lanes,
+        morph_amount,
+        channel,
+    )?;
 
     let (acknowledgement_rx, looping) = {
         let guard = state.playback.audition.lock().await;
@@ -337,6 +358,7 @@ fn build_audition_schedule(
     pattern: &crate::pattern::Pattern,
     centibpm: u32,
     gate_percent: u32,
+    lanes: crate::formats::mid::StepLanes,
     morph_amount: Option<crate::triplet_morph::MorphAmount>,
     channel: u8,
 ) -> Result<
@@ -349,20 +371,23 @@ fn build_audition_schedule(
     match morph_amount {
         None => {
             let schedule =
-                clock::prepare_schedule_with_gate(pattern, centibpm, gate_percent, channel)
+                clock::prepare_schedule_with_lanes(pattern, centibpm, gate_percent, lanes, channel)
                     .map_err(AppError::Midi)?;
             Ok((schedule, None))
         }
-        Some(amount) => {
-            clock::prepare_morph_schedule(pattern, centibpm, gate_percent, amount, channel)
-                .map(|(schedule, plan)| (schedule, Some(plan)))
-                .map_err(|err| match err {
-                    Td3Error::TripletMorph(morph_err) => {
-                        AppError::BadRequest(morph_err.to_string())
-                    }
-                    other => AppError::Midi(other),
-                })
-        }
+        Some(amount) => clock::prepare_morph_schedule_with_lanes(
+            pattern,
+            centibpm,
+            gate_percent,
+            lanes,
+            amount,
+            channel,
+        )
+        .map(|(schedule, plan)| (schedule, Some(plan)))
+        .map_err(|err| match err {
+            Td3Error::TripletMorph(morph_err) => AppError::BadRequest(morph_err.to_string()),
+            other => AppError::Midi(other),
+        }),
     }
 }
 
@@ -416,6 +441,25 @@ fn resolve_midi_channel(requested: Option<u32>, configured: u8) -> Result<u8, Ap
             Ok(value as u8)
         }
     }
+}
+
+/// Validate the optional per-step lanes: exactly 16 entries each, gates
+/// 1 through 100, cutoffs 0 through 127. Lanes are indexed by source
+/// step and are accepted at every triplet morph amount.
+fn validate_step_lanes(
+    req: &PatternAuditionRequest,
+) -> Result<crate::formats::mid::StepLanes, AppError> {
+    use crate::formats::mid::StepLanes;
+    let mut lanes = StepLanes::default();
+    if let Some(gates) = &req.step_gates {
+        let values = lane_values(gates, "stepGates", 1, 100).map_err(AppError::BadRequest)?;
+        lanes.gates = Some(values.map(u32::from));
+    }
+    if let Some(cutoffs) = &req.step_cutoffs {
+        let values = lane_values(cutoffs, "stepCutoffs", 0, 127).map_err(AppError::BadRequest)?;
+        lanes.cutoffs = Some(values);
+    }
+    Ok(lanes)
 }
 
 fn validate_gate_percent(gate_percent: u32) -> Result<u32, AppError> {

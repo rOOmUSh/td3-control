@@ -3,13 +3,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use crate::error::Td3Error;
+use crate::midi_io::SysexSender;
 
 use super::commands::{
     new_terminal_status, terminal_error, AuditionCommand, AuditionScheduleUpdate,
-    AuditionTerminalStatus, AuditionUpdateError, AuditionUpdateResult,
+    AuditionTerminalStatus, AuditionUpdateError, AuditionUpdateResult, RawSend,
 };
+
+/// Upper bound on waiting for the audition thread to write a raw message.
+/// The thread services commands between scheduled events, so a healthy
+/// thread answers within a few milliseconds; the bound only guards a
+/// thread that is wedged inside a MIDI driver call.
+const RAW_SEND_TIMEOUT: Duration = Duration::from_secs(3);
 use super::playback::run_audition;
 use super::schedule::AuditionSchedule;
 
@@ -126,6 +134,30 @@ impl AuditionRunner {
         Ok(acknowledgement_rx)
     }
 
+    /// Write one channel-voice message through the audition thread and
+    /// wait for the write result. Returns an error when the thread has
+    /// stopped, when the driver rejects the write, or when no reply
+    /// arrives within `RAW_SEND_TIMEOUT`.
+    pub fn send_raw(&self, bytes: &[u8]) -> Result<(), Td3Error> {
+        let (done_tx, done_rx) = mpsc::channel();
+        let raw = RawSend {
+            bytes: bytes.to_vec(),
+            done: done_tx,
+        };
+        if let Err(unsent) = self.command_tx.send(AuditionCommand::SendBytes(raw)) {
+            reject_unsent_command(unsent.0, &self.terminal_status);
+        }
+        match done_rx.recv_timeout(RAW_SEND_TIMEOUT) {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Timeout) => Err(Td3Error::Timeout {
+                operation: "audition raw send".to_owned(),
+            }),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(Td3Error::Midi(
+                "audition thread dropped the send before replying".into(),
+            )),
+        }
+    }
+
     pub fn is_finished(&self) -> bool {
         self.thread
             .as_ref()
@@ -183,8 +215,32 @@ fn reject_unsent_command(command: AuditionCommand, status: &AuditionTerminalStat
         AuditionCommand::Update(update) | AuditionCommand::QueueNextCycle(update) => {
             update.reject(error);
         }
+        AuditionCommand::SendBytes(raw) => raw.reject("audition has stopped"),
         AuditionCommand::Stop => {}
     }
+}
+
+impl SysexSender for AuditionRunner {
+    fn send_bytes(&mut self, bytes: &[u8]) -> Result<(), Td3Error> {
+        self.send_raw(bytes)
+    }
+}
+
+/// Exercises the rejection path a raw send takes when the audition
+/// thread has already gone: the requester must receive an error, never
+/// hang on the reply.
+#[cfg(test)]
+pub(crate) fn reject_closed_raw_send_for_test() -> Result<(), Td3Error> {
+    let status = new_terminal_status();
+    let (done_tx, done_rx) = mpsc::channel();
+    let raw = RawSend {
+        bytes: vec![0xB0, 0x4A, 0x40],
+        done: done_tx,
+    };
+    reject_unsent_command(AuditionCommand::SendBytes(raw), &status);
+    done_rx
+        .recv_timeout(Duration::from_millis(100))
+        .unwrap_or(Ok(()))
 }
 
 #[cfg(test)]

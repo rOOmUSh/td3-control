@@ -15,6 +15,7 @@ pub async fn pattern_import(
             AppError::BadRequest(format!("format '{}' requires raw bytes in `bytes`", fmt))
         })
     };
+    let mut steps_meta = None;
     let (pattern, centibpm) = match fmt.as_str() {
         "toml" => (
             formats::toml_fmt::import(need_text()?).map_err(AppError::Midi)?,
@@ -27,6 +28,10 @@ pub async fn pattern_import(
         "steps" => {
             let document = formats::steps_txt::import_document(need_text()?)
                 .map_err(|error| AppError::BadRequest(error.to_string()))?;
+            let meta = WebStepsMeta::from_document(&document.meta);
+            if !meta.is_empty() {
+                steps_meta = Some(meta);
+            }
             (document.pattern, document.centibpm)
         }
         "pat" => (
@@ -57,5 +62,6 @@ pub async fn pattern_import(
     Ok(Json(PatternImportResponse {
         pattern: web,
         centibpm,
+        steps_meta,
     }))
 }

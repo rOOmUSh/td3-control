@@ -200,6 +200,34 @@ export function applyToCells(cells, plan, amountPercent) {
     }
 }
 
+/**
+ * Move a drawer's lane cells with their step columns. Each lane cell
+ * follows the same translation, fade, and retirement as the note card
+ * of its source step, so a value stays under the note it belongs to
+ * through the sweep. Lane cells never stretch: a knob keeps one step's
+ * width so it stays round.
+ */
+export function applyToLaneCells(scope, plan, amountPercent) {
+    if (!scope) return;
+    const cells = scope.querySelectorAll('.mp-drawer .mp-lane-cell[data-knob-step]');
+    for (const cell of cells) {
+        const step = Number(cell.dataset.knobStep);
+        const assignment = plan?.assignments?.[step];
+        if (!assignment || !(amountPercent > 0)) {
+            cell.style.transform = '';
+            cell.style.opacity = '';
+            cell.style.visibility = '';
+            delete cell.dataset.morphRole;
+            continue;
+        }
+        const view = cellPresentation(assignment, amountPercent, null);
+        cell.style.transform = `translateX(${view.translatePercent.toFixed(3)}%)`;
+        cell.style.opacity = view.opacity === 1 ? '' : String(view.opacity);
+        cell.style.visibility = view.hidden ? 'hidden' : '';
+        cell.dataset.morphRole = view.role;
+    }
+}
+
 function cardCells(card) {
     const cells = [];
     for (let step = 0; step < 16; step += 1) {
@@ -258,6 +286,7 @@ export function render() {
         const grid = card.querySelector('.mp-card-grid');
         const plan = amount > 0 ? planForPattern(idx) : null;
         applyToCells(cardCells(card), plan, amount);
+        applyToLaneCells(card, plan, amount);
         markEditableControls(card, plan, amount);
         if (grid) {
             // Mid-transform every position is unsettled, so the grid

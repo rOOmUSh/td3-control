@@ -8,6 +8,12 @@ use crate::formats::Format;
 use super::address::ScratchPattern;
 
 pub const DEFAULT_DEVICE_NAME: &str = "TD-3";
+/// Product name reported by the TD-3-MO variant. The pattern protocol is
+/// shared with the base model, so a session is established with either name.
+pub const TD3_MO_DEVICE_NAME: &str = "TD-3-MO";
+/// Product names for which a protocol session is established. Any other
+/// name is rejected with `Td3Error::DeviceMismatch`.
+pub const ACCEPTED_DEVICE_NAMES: [&str; 2] = [DEFAULT_DEVICE_NAME, TD3_MO_DEVICE_NAME];
 
 #[derive(Debug, Clone)]
 pub struct MidiRuntime {

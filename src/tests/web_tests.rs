@@ -794,6 +794,12 @@ async fn http_status_returns_disconnected() {
     assert!(!status.playing);
     assert_eq!(status.bpm, 120);
     assert_eq!(status.centibpm, 12_000);
+    assert!(status.device_controls.is_none());
+    let raw: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        raw.get("device_controls").is_none(),
+        "device_controls must be absent from the wire when disconnected"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

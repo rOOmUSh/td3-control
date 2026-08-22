@@ -13,6 +13,7 @@ import { highlightStep } from './progression-sequencer.js';
 import { morphRequestPercent } from '../shared/triplet-morph-timing.js';
 import { highlightColumn } from './progression-timeline.js';
 import { api } from '../api.js';
+import { auditionLaneFields, effectiveLane, laneState } from '../shared/step-lanes.js';
 import { envInt } from '../td3-env.js';
 import { stepIntervalMs as timingStepIntervalMs } from '../shared/transport-timing.js';
 import {
@@ -129,6 +130,7 @@ export async function start(startSync, { resume = false } = {}) {
                 scratchSlot.group, scratchSlot.pattern, scratchSlot.side,
                 state.getPattern(patIdx)
             );
+            await pushStepLane(patIdx);
             setStatus(`Loaded P${patIdx + 1} - playing loop 1/${countNonEmpty()}`);
         } catch (err) {
             setStatus('Live send error: ' + err.message);
@@ -160,6 +162,26 @@ export async function start(startSync, { resume = false } = {}) {
 /**
  * Stop progression playback - clears timers and highlights.
  */
+/**
+ * Hand the per-step cutoff lane of pattern `patIdx` to the clock thread
+ * for device-sequenced playback. The lane always carries the pattern's
+ * timing; its values go only while the lane is switched on.
+ * `atCycleBoundary` defers the switch to the next wrap.
+ */
+export function pushStepLane(patIdx, { atCycleBoundary = false } = {}) {
+    if (!state.isConnected()) return Promise.resolve();
+    const pat = state.getPattern(patIdx);
+    if (!pat) return Promise.resolve();
+    const lanes = laneState(pat);
+    return api.transportStepLane({
+        cutoffs: lanes.cutoffOn ? effectiveLane(lanes, 'cutoff') : null,
+        activeSteps: pat.active_steps,
+        triplet: !!pat.triplet,
+        midiChannel: state.getMidiChannel(),
+        atCycleBoundary,
+    }).catch((err) => setStatus('Step lane error: ' + err.message));
+}
+
 export function stop() {
     tempoSyncRequestId += 1;
     pendingDeviceTempoSync = null;
@@ -489,6 +511,7 @@ function advanceBeat() {
                     state.getPattern(nextPatIdx)
                 ).then(() => {
                     setStatus(`Pre-loaded P${nextPatIdx + 1}`);
+                    return pushStepLane(nextPatIdx, { atCycleBoundary: true });
                 }).catch(err => {
                     setStatus('Pre-load error: ' + err.message);
                 });
@@ -572,14 +595,16 @@ async function flushHostAuditionUpdate() {
             if (!state.isPlaying() || devicePlayback || !state.isConnected()) break;
             const pattern = state.getPattern(patIdx);
             if (!pattern) break;
+            const morphPercent = morphRequestPercent(pattern, state.getTripletMorphPercent());
             const response = await api.auditionUpdate(
                 pattern,
                 state.getBpm(),
                 true,
                 null,
                 state.getGatePercent(),
-                morphRequestPercent(pattern, state.getTripletMorphPercent()),
+                morphPercent,
                 state.getMidiChannel(),
+                auditionLaneFields(pattern),
             );
             if (hostAuditionUpdatePendingIdx === null && !applyAuditionTiming(response)) {
                 setStatus('Audition sync error: applied timing acknowledgement missing');

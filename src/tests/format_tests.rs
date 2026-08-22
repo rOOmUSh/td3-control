@@ -324,7 +324,7 @@ fn steps_export_three_active_steps_emits_only_rows_one_to_three() {
     let pattern =
         steps_txt::import(include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt")).unwrap();
     let exported = steps_txt::export_with_bpm(&pattern, 12_800).unwrap();
-    assert!(exported.contains("\n03  G:---:T\n"));
+    assert!(exported.contains("\n03  G:---:T|CO:64|GT:50\n"));
     assert!(!exported.contains("\n04 "));
     assert!(!exported.contains("\n16 "));
 }
@@ -365,7 +365,7 @@ fn steps_v11_roundtrip_preserves_pattern_and_bpm() {
 fn steps_contains_header() {
     let pat = test_pattern();
     let exported = steps_txt::export(&pat);
-    assert!(exported.starts_with("format=td3-stepdsl-v1\n"));
+    assert!(exported.starts_with("format=td3-stepdsl-v1.1\n"));
     assert!(exported.contains("active_steps=16\n"));
     assert!(exported.contains("triplet_time=on\n"));
 }

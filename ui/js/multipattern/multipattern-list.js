@@ -13,6 +13,7 @@
 // light up the focused card's playing step without the old single-grid DOM.
 
 import * as state from './multipattern-state.js';
+import { alignStepLaneDrawers } from '../shared/step-lane-drawer.js';
 import { renderCard } from './multipattern-row.js';
 import { applyStepHighlight, restoreStepHighlight } from '../step-highlight.js';
 import { slotFor } from '../shared/slot-targets.js';
@@ -22,6 +23,7 @@ import * as randomize from '../randomize.js';
 import * as tripletMorphView from './triplet-morph-view.js';
 import { formatPatternAsStepsTxt } from '../shared/steps-txt-format.js';
 import { parseStepsTxtDocument, looksLikeStepsTxt } from '../shared/steps-txt-parse.js';
+import { applyImportedStepsMeta, stepsMetaForExport } from '../shared/steps-txt-meta.js';
 
 let container = null;
 let setStatus = () => {};
@@ -121,6 +123,7 @@ export function render() {
     }
     container.replaceChildren(frag);
     paintStepHighlight();
+    alignStepLaneDrawers(container, '.mp-card-grid');
     // The cards are new, so the derived triplet geometry that was on the
     // old ones is gone. Reapplying here rather than leaving it to the
     // next notification is what makes the rebuild safe to defer, and it
@@ -330,7 +333,13 @@ async function writeFocusedPatternToSystemClipboard(idx) {
         if (!navigator.clipboard || !navigator.clipboard.writeText) return;
         const pat = state.getPattern(idx);
         if (!pat) return;
-        await navigator.clipboard.writeText(formatPatternAsStepsTxt(pat, state.getBpm()));
+        const meta = stepsMetaForExport(pat, {
+            globalCutoff: state.getFilterCutoff(),
+            globalGate: state.getGatePercent(),
+            tripletMorphPercent: state.getTripletMorphPercent(),
+            liveUpdate: state.isLiveUpdate(),
+        });
+        await navigator.clipboard.writeText(formatPatternAsStepsTxt(pat, state.getBpm(), meta));
     } catch (_) { /* best-effort */ }
 }
 
@@ -487,9 +496,17 @@ async function tryPasteFullFromSystemClipboard(idx) {
         if (!navigator.clipboard || !navigator.clipboard.readText) return false;
         const text = await navigator.clipboard.readText();
         if (!looksLikeStepsTxt(text)) return false;
-        const { pattern, centibpm } = parseStepsTxtDocument(text);
+        const { pattern, centibpm, meta } = parseStepsTxtDocument(text);
         if (centibpm !== null) applyImportedBpm(centibpm);
         state.setPattern(idx, pattern);
+        // A card paste restores the lanes; the page-level TRIPLET amount
+        // and LIVE state belong to the file import and Ctrl+V paths.
+        const { lanes } = applyImportedStepsMeta({
+            meta,
+            pattern,
+            deviceControlsSupported: state.isDeviceControlsSupported(),
+        });
+        state.setLanes(idx, lanes);
         setStatus(`FULL → P${idx + 1} (from text)`);
         return true;
     } catch (_) {

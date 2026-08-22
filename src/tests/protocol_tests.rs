@@ -161,6 +161,48 @@ fn establish_session_success_reads_identity_firmware_and_sync_source() {
 }
 
 #[test]
+fn establish_session_accepts_td3_mo_product_name() {
+    let (tx, rx) = mpsc::channel();
+    let mut sender = QueueingSender::new(
+        tx,
+        vec![
+            product_name_response("TD-3-MO"),
+            firmware_response(&[2, 0, 1]),
+            config_response(0x01),
+        ],
+    );
+
+    let session = td3_protocol::establish_session(
+        &mut sender,
+        &rx,
+        Duration::from_millis(100),
+        td3_protocol::SyncSourceFailurePolicy::ReturnError,
+    )
+    .expect("TD-3-MO must establish a session");
+
+    assert_eq!(session.product_name, "TD-3-MO");
+    assert_eq!(session.firmware_version, "2.0.1");
+}
+
+#[test]
+fn establish_session_rejects_tb03_product_name() {
+    let (tx, rx) = mpsc::channel();
+    let mut sender = QueueingSender::new(tx, vec![product_name_response("TB-03")]);
+
+    let result = td3_protocol::establish_session(
+        &mut sender,
+        &rx,
+        Duration::from_millis(100),
+        td3_protocol::SyncSourceFailurePolicy::ReturnError,
+    );
+
+    match result {
+        Err(Td3Error::DeviceMismatch { actual, .. }) => assert_eq!(actual, "TB-03"),
+        other => panic!("expected DeviceMismatch, got {:?}", other.err()),
+    }
+}
+
+#[test]
 fn establish_session_wrong_device_returns_typed_error() {
     let (tx, rx) = mpsc::channel();
     let mut sender = QueueingSender::new(tx, vec![product_name_response("TD-3 MO")]);

@@ -273,6 +273,47 @@ The step card display also shows:
 
 Steps beyond the pattern's active step count are visually dimmed.
 
+## Step Lane Drawer
+
+The row screenshot at the top of this page predates the drawer; the thin handle described here sits directly under the row it belongs to, as shown below.
+
+![A pattern card with its step lane drawer open, showing the CUTOFF and GATE lanes](images/step-lane-drawer.png)
+
+Every pattern card, on the Control page and on the Progression page, ends in a thin full-width handle whenever at least one lane applies to the connected device and mode. Clicking the handle slides a drawer open directly under the card; clicking it again closes the drawer. The cards below move down while a drawer is open and back up when it closes. The drawer is a green box in the style of the focused-card outline and holds one row of sixteen small knobs per lane, each knob sitting under its step column with a digit readout beside it.
+
+Which lanes appear follows the device and the mode: a TD-3-MO shows `CUTOFF` in both modes and `GATE` in `NO-LIVE`; a regular TD-3 shows `GATE` in `NO-LIVE` and, having nothing to control in `LIVE` mode, no handle at all.
+
+Two lanes exist:
+
+- `CUTOFF` sends Filter Cutoff (MIDI Control Change 74) at the start of every step, rests and ties included. Each step has a value from `0` to `127`; the default is `64`. The lane is present in both `LIVE` and `NO-LIVE` modes, but only while the connected device reports firmware `2.0.1`, the TD-3-MO firmware that accepts the message. On a regular TD-3 the row does not exist.
+- `GATE` sets the length of the ordinary note that starts on each step, from `1%` to `100%` of one step; the default is `50`. It applies to non-saving host audition only, so the row is present while `LIVE` is off and hidden while `LIVE` is on. A step whose note group starts elsewhere (a tied continuation) takes the gate of the step that started the group.
+
+Each row begins with an all-steps ratio knob, a horizontal switch, and a `RAND` button.
+
+The ratio knob scales every step of its lane at once, relative to each step's own value, and its readout uses the same colour scale. At its centre (`64` for cutoff, `50` for gate) it changes nothing. Turning it above centre moves every step the same fraction of the way from its own value toward the top: with steps at `0`, `127`, `50`, `100` a cutoff ratio of `96`, half way up, gives `64`, `127`, `89`, `114`, and the top gives `127` everywhere. Turning it below centre moves every step toward the bottom: `32`, half way down, gives `0`, `64`, `25`, `50`, and the bottom gives `0` everywhere. The per-step values you set are kept underneath, so turning the knob back to centre (or double-clicking it, or pressing `Enter`) restores them exactly. The step readouts and everything sent to the device show the scaled values; turning a single step knob while the ratio is off centre moves that step's stored value by the same amount.
+
+ The switch is the lane's ON/OFF: while it is off the knobs keep their values, shown dimmed, and nothing is sent; while it is on the lane is part of every audition request and of LIVE playback. Both lanes start off. `RAND` gives every step of that lane a fresh random value over the lane's full range and switches the lane on, so the result is heard at once; press it again for another draw, or turn single knobs afterwards.
+
+The readout digits are coloured by value so the spread is visible at a glance: the minimum (`0` for cutoff, `1` for gate) is red, the centre (`64` for cutoff, `50` for gate) is a slightly dimmed white, the maximum (`127` or `100`) is a bright green, and values between blend from one anchor to the next. For cutoff this reads as red for steps filtering low and green for steps opened up.
+
+Knob handling:
+
+- Scroll the mouse wheel over a knob to change it by `1`.
+- Drag vertically. Every 3 pixels changes the value by `1`.
+- Focus a knob and use an arrow key for `1`, or `PageUp` and `PageDown` for `8` (cutoff) or `10` (gate).
+- Press `Home` for the minimum, `End` for the maximum, or `Enter` for the centre.
+- Double-click a knob to return it to the centre.
+
+While a TD-3-MO on firmware `2.0.1` is connected, turning a cutoff knob also sends that value to the device at once, so the change is audible under the hand even when nothing is playing.
+
+How the lanes reach the device:
+
+- In `NO-LIVE` mode (host audition) the lanes travel with every audition request as `stepCutoffs` and `stepGates`, and the running audition picks up a change on its next schedule update without restarting.
+- During a `TRIPLET` morph the lanes keep working at every amount. The morph moves the timing only; each step's cutoff and gate value travels with its step. In the drawer the lane cells slide, fade, and retire exactly like the step cards above them, and the knobs stay editable mid-sweep. The cutoff of a step is sent at the step's warped position, and a step that has collided and retired sends nothing. The per-step gate feeds the morph's own gate compensation: the compensation widens each step's own gate by the same curve it applies to the `GATE` knob, so a short step stays short relative to a long one through the sweep. At `100` the lanes land on the surviving triplet cells.
+- In `LIVE` mode the clock thread emits the cutoff lane itself, one Control Change on the MIDI Clock pulse that starts each step, so the filter is in place when the device sounds the step. The lane follows the pattern the device is playing: an edit to the playing pattern applies at once, a pattern the timeline pre-loads switches at the next wrap together with the pattern. The gate lane has no effect in `LIVE` mode because the device sequencer owns the note lengths.
+
+Lane values are performance data. They are kept with the pattern for the browser session, shared between the Control and Progression pages through the session handoff, copied with `DUPLICATE`, and follow the card when it is reordered. They are not written to the device pattern memory or the bank. A `.steps.txt` export (the EXPORT menu, the per-card `COPY FULL`, and Ctrl+C) writes them as StepDSL v1.1 together with the lane switches, the TRIPLET amount, and the LIVE state, and importing or pasting such a file brings them back; see [Formats](FORMATS.md#v11-fields). Every other format, and a pattern loaded from the device, starts with both lanes at their defaults and off.
+
 ## Practical Workflow
 
 A common row-level workflow is:

@@ -1,5 +1,9 @@
 pub(crate) const ORDER_META: u8 = 0;
 pub(crate) const ORDER_NOTE_OFF: u8 = 20;
+/// Per-step Control Change lands after any Note Off and before the Note
+/// On at the same tick, so the new filter setting is in place when the
+/// note starts.
+pub(crate) const ORDER_CONTROL_CHANGE: u8 = 25;
 pub(crate) const ORDER_NOTE_ON: u8 = 30;
 pub(crate) const ORDER_SLIDE_NOTE_ON: u8 = 40;
 pub(crate) const ORDER_SLIDE_NOTE_OFF: u8 = 41;
@@ -53,6 +57,15 @@ pub(crate) fn time_signature_meta_event() -> Vec<u8> {
 
 pub(crate) fn note_on_event(channel: u8, note: u8, velocity: u8) -> Vec<u8> {
     vec![0x90 | ((channel - 1) & 0x0F), note, velocity]
+}
+
+/// Control Change `controller` = `value` on `channel` (1 through 16).
+pub(crate) fn control_change_event(channel: u8, controller: u8, value: u8) -> Vec<u8> {
+    vec![
+        0xB0 | ((channel - 1) & 0x0F),
+        controller & 0x7F,
+        value & 0x7F,
+    ]
 }
 
 pub(crate) fn note_off_event(channel: u8, note: u8) -> Vec<u8> {

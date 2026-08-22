@@ -72,6 +72,42 @@
         </div>
       </div>
     </div>
+    <div id="filter-cutoff-controls" class="hidden flex items-center gap-3">
+      <div class="w-px h-14 bg-surface-container-highest"></div>
+      <div class="flex items-center gap-3 bg-surface-container-lowest p-1 rounded-xl border border-surface-container-highest shadow-inner">
+        <div class="w-[4.5rem] bg-black px-2 py-2 rounded-lg border-2 border-surface-container-highest bpm-display flex items-center justify-center">
+          <span id="filter-cutoff-display" class="text-3xl font-digital text-on-secondary-fixed-variant leading-none text-center tabular-nums" style="text-shadow: 0 0 10px #8b0000;">64</span>
+        </div>
+        <div class="flex flex-col items-center gap-1">
+          <div id="filter-cutoff-knob" tabindex="0" role="slider" aria-label="Filter cutoff" aria-valuemin="0" aria-valuemax="127" aria-valuenow="64"
+               class="w-10 h-10 rounded-full bg-surface-container-highest border-2 border-surface-bright knob-shadow flex items-center justify-center relative cursor-pointer tactile-button focus:outline-none focus:ring-2 focus:ring-primary-fixed">
+            <div id="filter-cutoff-indicator" class="w-0.5 h-4 bg-primary-fixed absolute top-1 left-1/2 -translate-x-1/2 origin-bottom knob-indicator"></div>
+            <div class="w-full h-full rounded-full milled-texture opacity-30"></div>
+          </div>
+          <span class="text-[1rem] font-bold text-on-surface-variant">CUTOFF</span>
+        </div>
+      </div>
+    </div>
+    <!-- BEND (pitch bend) knob. Disabled in the markup: the device showed no
+         audible change in response to Pitch Bend, so the control is kept out of
+         the bar while that is investigated. The JS and server paths remain in
+         place; restoring the block re-enables the knob.
+    <div id="pitch-bend-controls" class="hidden flex items-center gap-3">
+      <div class="flex items-center gap-3 bg-surface-container-lowest p-1 rounded-xl border border-surface-container-highest shadow-inner">
+        <div class="w-[5.5rem] bg-black px-2 py-2 rounded-lg border-2 border-surface-container-highest bpm-display flex items-center justify-center">
+          <span id="pitch-bend-display" class="text-3xl font-digital text-on-secondary-fixed-variant leading-none text-center tabular-nums" style="text-shadow: 0 0 10px #8b0000;">0</span>
+        </div>
+        <div class="flex flex-col items-center gap-1">
+          <div id="pitch-bend-knob" tabindex="0" role="slider" aria-label="Pitch bend" aria-valuemin="0" aria-valuemax="16383" aria-valuenow="8192" title="Double-click to center"
+               class="w-10 h-10 rounded-full bg-surface-container-highest border-2 border-surface-bright knob-shadow flex items-center justify-center relative cursor-pointer tactile-button focus:outline-none focus:ring-2 focus:ring-primary-fixed">
+            <div id="pitch-bend-indicator" class="w-0.5 h-4 bg-primary-fixed absolute top-1 left-1/2 -translate-x-1/2 origin-bottom knob-indicator"></div>
+            <div class="w-full h-full rounded-full milled-texture opacity-30"></div>
+          </div>
+          <span class="text-[1rem] font-bold text-on-surface-variant">BEND</span>
+        </div>
+      </div>
+    </div>
+    -->
     <div id="triplet-morph-controls" class="hidden flex items-center gap-3">
       <div class="w-px h-14 bg-surface-container-highest"></div>
       <div class="flex items-center gap-3 bg-surface-container-lowest p-1 rounded-xl border border-surface-container-highest shadow-inner">

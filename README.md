@@ -18,16 +18,9 @@ It combines:
 
 The app runs locally. There is no cloud account, no remote service, and no browser extension.
 
+## New in v1.3.0: CUTOFF and GATE Step Lanes
 
-
-## !!!! NEW FEATURE IN v1.2.0 !!!!
-
-Triplet Morph and Custom Note Gate control
-
-See Demo Video
-
-[![Triplets Morph and Custom Gate Control Demo](https://img.youtube.com/vi/GfzU9B3xswg/hqdefault.jpg)](https://www.youtube.com/watch?v=GfzU9B3xswg)
-
+Version 1.3.0 adds per-step `CUTOFF` automation for the TD-3-MO and per-step `GATE` control for non-saving host audition. Open the lane drawer below a pattern to edit all sixteen step values.
 
 ## Demo Video
 
@@ -36,6 +29,10 @@ The demonstration video includes subtitles explaining the actions shown.
 [![TD-3 Control demonstration video with subtitles](https://img.youtube.com/vi/gVzc7TDkym4/hqdefault.jpg)](https://www.youtube.com/watch?v=gVzc7TDkym4)
 
 [Watch the demo on YouTube](https://www.youtube.com/watch?v=gVzc7TDkym4)
+
+Triplet Morph and Custom Note Gate control
+
+[![Triplets Morph and Custom Gate Control Demo](https://img.youtube.com/vi/GfzU9B3xswg/hqdefault.jpg)](https://www.youtube.com/watch?v=GfzU9B3xswg)
 
 GitHub README pages do not allow inline YouTube players, so the thumbnail opens the playable video on YouTube.
 
@@ -159,13 +156,13 @@ After downloading and extracting the macOS zip, open Terminal and go into the ex
 For Apple Silicon Macs, use the `aarch64` build:
 
 ```bash
-cd ~/Downloads/td3-control-v1.2.0-macos-aarch64
+cd ~/Downloads/td3-control-v1.3.0-macos-aarch64
 ```
 
 For Intel Macs, use the `x86_64` build:
 
 ```bash
-cd ~/Downloads/td3-control-v1.2.0-macos-x86_64
+cd ~/Downloads/td3-control-v1.3.0-macos-x86_64
 ```
 
 ### 1. Allow macOS to run the binary
@@ -351,6 +348,8 @@ It supports:
 - adjustable `1-100%` gate for non-saving audition
 - `0-100%` `TRIPLET` morph that warps non-saving audition from a straight feel to a triplet feel without changing tempo, bar length, or the stored pattern
 - `CH` selector for the MIDI channel the TD-3 listens on, used by non-saving audition and note preview
+- `CUTOFF` knob in the transport bar on a TD-3-MO (firmware 2.0.1), sending Filter Cutoff as MIDI CC 74 while idle, during device playback, and during non-saving audition
+- per-pattern step lane drawer under every pattern card: a `CUTOFF` lane on a TD-3-MO that sends a filter value at the start of every step, and a `GATE` lane for non-saving audition that sets each step's note length, each with an ON/OFF switch, a `RAND` button, and an all-steps ratio knob; readouts are colour coded from red through white to green
 - pattern load and save
 - live update through the scratch slot
 - import and export
@@ -411,6 +410,7 @@ It can:
 - preview basslines in the browser
 - preview TD-3 patterns through the device
 - use the same session gate for non-saving pattern, bassline, and progression playback
+- use the same per-pattern step lane drawer as the Control page under each of its four rows
 - export a complete package
 - push the result to the TD-3 or into a Bank snapshot
 
@@ -445,14 +445,14 @@ Supported formats depend on the workflow, but the project works with:
 | `.syx`       | TD-3 SysEx single-pattern payload   |
 | `.toml`      | structured editable pattern file    |
 | `.json`      | structured interchange format       |
-| `.steps.txt` | compact step format with session BPM |
+| `.steps.txt` | compact step format with session BPM, per-step cutoff and gate lanes, morph and LIVE state (StepDSL v1.1) |
 | `.mid`       | DAW import/export                   |
 | `.seq`       | SynthTribe-style sequence exchange  |
 | `.pat`       | ABL3 pattern text                   |
 | `.rbs`       | ReBirth-style song/pattern exchange |
 | `.sqs`       | TD-3/SynthTribe full-bank exchange  |
 
-New `.steps.txt` copies and exports include the current session BPM and only the rows through `active_steps`. Legacy 16-row files and files without BPM still import; a file without BPM leaves the current browser tempo unchanged.
+New `.steps.txt` copies and exports are StepDSL v1.1: they include the current session BPM, only the rows through `active_steps`, each step's `CUTOFF` and `GATE` lane value, the lane switches, the TRIPLET morph amount, and the LIVE state. Importing one restores the lanes on the new card and applies the morph amount and LIVE state where the session allows (cutoff only on a TD-3-MO, morph only for a multiple of four straight steps). Legacy `td3-stepdsl-v1` files, 16-row files, and files without BPM still import; a file without BPM leaves the current browser tempo unchanged. See [FORMATS](docs/FORMATS.md#v11-fields).
 
 ---
 

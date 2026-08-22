@@ -12,15 +12,17 @@ pub async fn status(
     let session_guard = midi.session.lock().await;
     let clock_guard = playback.clock.lock().await;
 
-    let (connected, product_name, firmware, sync_source) = match session_guard.as_ref() {
-        Some(s) => (
-            true,
-            Some(s.product_name.clone()),
-            Some(s.firmware_version.clone()),
-            Some(s.sync_source.as_str().to_string()),
-        ),
-        None => (false, None, None, None),
-    };
+    let (connected, product_name, firmware, sync_source, device_controls) =
+        match session_guard.as_ref() {
+            Some(s) => (
+                true,
+                Some(s.product_name.clone()),
+                Some(s.firmware_version.clone()),
+                Some(s.sync_source.as_str().to_string()),
+                Some(supports_device_controls(&s.firmware_version)),
+            ),
+            None => (false, None, None, None, None),
+        };
     let (playing, centibpm) = match clock_guard.as_ref() {
         Some(c) => (c.playing, c.centibpm),
         None => (false, config.ui_config.ui_default_bpm.saturating_mul(100)),
@@ -35,6 +37,7 @@ pub async fn status(
         bpm,
         centibpm,
         sync_source,
+        device_controls,
     })
 }
 
@@ -73,6 +76,7 @@ pub async fn connect(
         return Ok(Json(ConnectResponse {
             product_name: session.product_name.clone(),
             firmware: session.firmware_version.clone(),
+            device_controls: supports_device_controls(&session.firmware_version),
         }));
     }
 
@@ -104,6 +108,7 @@ pub async fn connect(
     let response = ConnectResponse {
         product_name: established.info.product_name.clone(),
         firmware: established.info.firmware_version.clone(),
+        device_controls: supports_device_controls(&established.info.firmware_version),
     };
     if let Some(err) = &established.info.sync_source_error {
         log::warn!("read sync source failed, defaulting to USB: {}", err);

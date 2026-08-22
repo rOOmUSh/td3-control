@@ -52,12 +52,15 @@ pub enum MorphEventRole {
     NoteOn,
     NoteOff,
     SlideTailNoteOff,
+    /// Per-step Control Change owned by the step that starts at its tick.
+    ControlChange,
 }
 
 /// Stable scheduler identity of one scheduled MIDI event: the owning
 /// source attack plus the event role. Scheduler metadata only, never a
 /// MIDI byte and never part of device output. Unique within one cycle
-/// because each attack emits at most one Note On and one release.
+/// because each attack emits at most one Note On and one release, and
+/// each step at most one Control Change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MorphEventId {
     pub source_step: u8,

@@ -148,7 +148,9 @@ it was started on. Editing a pattern row is refused while the knob is
 between `1%` and `99%`, and limited to the surviving notes at `100%`.
 See [Triplet Morph](TRIPLET_MORPH.md).
 
-WebAudio MIDI preview is unchanged and does not use the host-audition gate setting. Device-sequenced preview while `LIVE` is on is also unchanged.
+Each of the four pattern rows also carries the step lane drawer described in [Pattern Row Buttons](PATTERN_ROW_BUTTONS.md#step-lane-drawer): a per-step `CUTOFF` lane on a TD-3-MO and a per-step `GATE` lane while `LIVE` is off. The lanes apply to the row's own preview and to full progression playback in both modes, exactly as on the Control page.
+
+WebAudio MIDI preview is unchanged and does not use the host-audition gate setting or the step lanes. Device-sequenced preview while `LIVE` is on is also unchanged.
 
 ## Export and Packaging
 

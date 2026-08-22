@@ -13,6 +13,15 @@ import {
     readMidiChannel,
     writeMidiChannel,
 } from '../shared/midi-channel-control.js';
+import {
+    readFilterCutoff,
+    writeFilterCutoff,
+} from '../shared/filter-cutoff-control.js';
+import {
+    readPitchBend,
+    writePitchBend,
+} from '../shared/pitch-bend-control.js';
+import { laneState, writeLaneState } from '../shared/step-lanes.js';
 import { createTripletMorphSession } from '../shared/triplet-morph-session.js';
 import { canonicalPatternText } from '../shared/pattern-canonical.js';
 import { editableSteps } from '../shared/triplet-morph-editing.js';
@@ -55,6 +64,11 @@ let gatePercent = readGatePercent();
 // transport bar overrides it for the session. Shared with the Control
 // page through the same session storage key.
 let midiChannel = readMidiChannel(envInt('midiDeviceChannel'));
+// TD-3-MO device controls. Support is reported by the server per
+// session and is never persisted; the knob values are session-scoped.
+let deviceControlsSupported = false;
+let filterCutoff = readFilterCutoff();
+let pitchBend = readPitchBend();
 let playing = sessionStorage.getItem('td3_playing') === 'true';
 let connected = sessionStorage.getItem('td3_midi_connected') === 'true';
 let liveUpdate = !!ENV_LIVE_UPDATE;
@@ -235,6 +249,11 @@ export function getSide() { return side; }
 export function getBpm() { return bpm; }
 export function getGatePercent() { return gatePercent; }
 export function getMidiChannel() { return midiChannel; }
+export function isDeviceControlsSupported() { return deviceControlsSupported; }
+/** Per-step lanes of pattern `i`, always fully populated. */
+export function getLanes(i) { return laneState(patterns[i]); }
+export function getFilterCutoff() { return filterCutoff; }
+export function getPitchBend() { return pitchBend; }
 export function isPlaying() { return playing; }
 export function isConnected() { return connected; }
 export function isLiveUpdate() { return liveUpdate; }
@@ -324,6 +343,33 @@ export function setMidiChannel(value) {
     const next = writeMidiChannel(value);
     if (next === midiChannel) return;
     midiChannel = next;
+    notify();
+}
+// The status poll calls this every tick; an unchanged value is dropped
+// so the poll never triggers a re-render on its own.
+export function setDeviceControlsSupported(value) {
+    const next = !!value;
+    if (next === deviceControlsSupported) return;
+    deviceControlsSupported = next;
+    notify();
+}
+export function setFilterCutoff(value) {
+    const next = writeFilterCutoff(value);
+    if (next === filterCutoff) return;
+    filterCutoff = next;
+    notify();
+}
+export function setPitchBend(value) {
+    const next = writePitchBend(value);
+    if (next === pitchBend) return;
+    pitchBend = next;
+    notify();
+}
+/** Replace the lanes of pattern `i` and persist. */
+export function setLanes(i, lanes) {
+    const pattern = patterns[i];
+    if (!pattern) return;
+    writeLaneState(pattern, lanes);
     notify();
 }
 export function setPlaying(v) { playing = v; sessionStorage.setItem('td3_playing', v ? 'true' : 'false'); notify(); }

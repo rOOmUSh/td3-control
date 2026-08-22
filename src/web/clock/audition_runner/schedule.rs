@@ -1,6 +1,7 @@
 use crate::error::Td3Error;
 use crate::formats::mid::{
-    build_timeline, build_timeline_with_gate, MidiExportOptions, MidiSlideMode, TimedMidiEvent,
+    build_timeline, build_timeline_with_gate, build_timeline_with_lanes, MidiExportOptions,
+    MidiSlideMode, StepLanes, TimedMidiEvent,
 };
 use crate::pattern::Pattern;
 
@@ -100,6 +101,25 @@ pub(crate) fn prepare_schedule_with_gate(
     ))
 }
 
+/// Build a host-audition schedule with per-step gate and cutoff lanes.
+/// With both lanes absent this is `prepare_schedule_with_gate`.
+pub(crate) fn prepare_schedule_with_lanes(
+    pattern: &Pattern,
+    centibpm: u32,
+    gate_percent: u32,
+    lanes: StepLanes,
+    channel: u8,
+) -> Result<AuditionSchedule, Td3Error> {
+    if lanes.is_empty() {
+        return prepare_schedule_with_gate(pattern, centibpm, gate_percent, channel);
+    }
+    let options = audition_options(centibpm, channel);
+    let timeline = build_timeline_with_lanes(pattern, "audition", &options, gate_percent, lanes)?;
+    Ok(prepare_schedule_from_timeline(
+        pattern, centibpm, channel, timeline,
+    ))
+}
+
 pub(super) fn audition_options(centibpm: u32, channel: u8) -> MidiExportOptions {
     MidiExportOptions {
         bpm: (centibpm / 100).max(1),
@@ -122,9 +142,13 @@ fn prepare_schedule_from_timeline(
     let mut events: Vec<(u32, u8, ScheduledMidi)> = timeline
         .into_iter()
         .filter(|ev| {
-            // Keep only Note Off (0x80) / Note On (0x90) channel-voice
-            // messages; every meta event begins with 0xFF.
-            matches!(ev.data.first().map(|b| b & 0xF0), Some(0x80) | Some(0x90))
+            // Keep Note Off (0x80), Note On (0x90) and Control Change
+            // (0xB0) channel-voice messages; every meta event begins
+            // with 0xFF.
+            matches!(
+                ev.data.first().map(|b| b & 0xF0),
+                Some(0x80) | Some(0x90) | Some(0xB0)
+            )
         })
         .map(|ev| {
             (

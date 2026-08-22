@@ -55,7 +55,7 @@ Available export choices are:
 
 - `toml`: editable and re-importable project text.
 - `json`: structured re-importable pattern data.
-- `steps_txt`: human-readable step text.
+- `steps_txt`: human-readable step text (StepDSL v1.1), carrying the per-step `CUTOFF` and `GATE` lanes, their switches, the TRIPLET amount, and the LIVE state alongside the pattern and BPM; importing it brings them back.
 - `pat`: ABL3 pattern format.
 - `seq`: Behringer SynthTribe pattern format.
 - `mid`: standard MIDI file for DAW use.

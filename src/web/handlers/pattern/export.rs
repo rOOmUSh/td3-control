@@ -16,7 +16,8 @@ pub async fn export_pool(
         let pattern = web_to_pattern(web)?;
         let toml_str = formats::toml_fmt::export(&pattern).map_err(AppError::Midi)?;
         let json_str = formats::json::export(&pattern).map_err(AppError::Midi)?;
-        let steps_str = export_steps_with_resolved_bpm(&pattern, req.centibpm, &state)?;
+        let steps_str =
+            export_steps_with_resolved_bpm(&pattern, req.centibpm, req.steps_meta.get(i), &state)?;
         files.push(ExportedFile {
             name: format!("pattern_{:03}", i + 1),
             toml: toml_str,
@@ -47,7 +48,13 @@ pub async fn pattern_export(
             "application/json; charset=utf-8",
         ),
         "steps_txt" | "steps" => (
-            export_steps_with_resolved_bpm(&pattern, req.centibpm, &state)?.into_bytes(),
+            export_steps_with_resolved_bpm(
+                &pattern,
+                req.centibpm,
+                req.steps_meta.as_ref(),
+                &state,
+            )?
+            .into_bytes(),
             "text/plain; charset=utf-8",
         ),
         "pat" => (
@@ -89,6 +96,7 @@ pub async fn pattern_export(
 fn export_steps_with_resolved_bpm(
     pattern: &crate::pattern::Pattern,
     requested_centibpm: Option<u32>,
+    steps_meta: Option<&WebStepsMeta>,
     state: &AppState,
 ) -> Result<String, AppError> {
     let centibpm = match requested_centibpm {
@@ -100,7 +108,11 @@ fn export_steps_with_resolved_bpm(
             .checked_mul(100)
             .ok_or_else(|| AppError::BadRequest("configured BPM is too large".to_string()))?,
     };
-    formats::steps_txt::export_with_bpm(pattern, centibpm)
+    let meta = match steps_meta {
+        Some(meta) => meta.to_export_meta().map_err(AppError::BadRequest)?,
+        None => formats::steps_txt::StepsTxtExportMeta::default(),
+    };
+    formats::steps_txt::export_with_meta(pattern, centibpm, &meta)
         .map_err(|error| AppError::BadRequest(error.to_string()))
 }
 

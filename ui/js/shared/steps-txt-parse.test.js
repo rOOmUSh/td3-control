@@ -316,5 +316,72 @@ test('rejects non-string input', () => {
     assert(threw, 'null rejected');
 });
 
+const V11_HEADER = 'format=td3-stepdsl-v1.1\nactive_steps=4\ntriplet_time=off\nbpm=120\n\n';
+
+test('v1 documents parse with empty meta', () => {
+    const doc = parseStepsTxtDocument(V11_FIXTURE);
+    assert(JSON.stringify(doc.meta) === '{}', `empty meta, got ${JSON.stringify(doc.meta)}`);
+});
+
+test('v1.1 lanes fixture reads every field', () => {
+    const fixture = readFileSync(
+        new URL('../../../tests/fixtures/stepsdsl_v1_1_lanes.steps.txt', import.meta.url),
+        'utf8',
+    );
+    assert(looksLikeStepsTxt(fixture), 'v1.1 tag is detected');
+    const doc = parseStepsTxtDocument(fixture);
+    assert(doc.pattern.active_steps === 8, 'active steps');
+    assert(doc.centibpm === 12450, 'bpm');
+    assert(doc.meta.stepCutoffs.slice(0, 8).join(',') === '0,40,64,90,127,100,12,77', 'cutoff values');
+    assert(doc.meta.stepCutoffs.slice(8).every((v) => v === 64), 'rows beyond active keep the default');
+    assert(doc.meta.stepGates.every((v) => v === 50), 'gate values');
+    assert(doc.meta.cutoffLaneOn === true && doc.meta.gateLaneOn === false, 'switches');
+    assert(doc.meta.tripletMorphPercent === 40, 'morph');
+    assert(doc.meta.liveUpdate === false, 'live');
+});
+
+test('v1.1 unknown header keys are ignored, v1 ones are still rejected', () => {
+    const ok = parseStepsTxtDocument('format=td3-stepdsl-v1.1\nactive_steps=1\nmystery=1\n\n01  C:---:N\n');
+    assert(ok.pattern.active_steps === 1, 'v1.1 ignores mystery key');
+    let threw = false;
+    try { parseStepsTxtDocument('format=td3-stepdsl-v1\nactive_steps=1\nmystery=1\n\n01  C:---:N\n'); }
+    catch (_) { threw = true; }
+    assert(threw, 'v1 rejects mystery key');
+});
+
+test('out-of-range lane values clamp, non-numeric or missing drop the lane', () => {
+    const doc = parseStepsTxtDocument(V11_HEADER
+        + '01  C:---:N|CO:200|GT:128\n02  C:---:N|CO:-5|GT:0\n03  C:---:N|CO:64|GT:50\n04  C:---:N|CO:64|GT:50\n');
+    assert(doc.meta.stepCutoffs[0] === 127 && doc.meta.stepCutoffs[1] === 0, 'cutoff clamps');
+    assert(doc.meta.stepGates[0] === 100 && doc.meta.stepGates[1] === 1, 'gate clamps');
+
+    const bad = parseStepsTxtDocument(V11_HEADER
+        + '01  C:---:N|CO:10|GT:x\n02  C:---:N|GT:50\n03  C:---:N|CO:30|GT:50\n04  C:---:N|CO:40|GT:50\n');
+    assert(bad.meta.stepCutoffs === undefined, 'missing CO drops the cutoff lane');
+    assert(bad.meta.stepGates === undefined, 'invalid GT drops the gate lane');
+});
+
+test('lane switch comes from the header key or the all-equal heuristic', () => {
+    const heur = parseStepsTxtDocument(V11_HEADER
+        + '01  C:---:N|CO:10|GT:30\n02  C:---:N|CO:10|GT:50\n03  C:---:N|CO:10|GT:50\n04  C:---:N|CO:10|GT:50\n');
+    assert(heur.meta.cutoffLaneOn === false, 'all equal means off');
+    assert(heur.meta.gateLaneOn === true, 'one differs means on');
+    const explicit = parseStepsTxtDocument(
+        'format=td3-stepdsl-v1.1\nactive_steps=2\npattern_co_lane=on\npattern_gt_lane=off\n\n'
+        + '01  C:---:N|CO:10|GT:30\n02  C:---:N|CO:10|GT:60\n');
+    assert(explicit.meta.cutoffLaneOn === true && explicit.meta.gateLaneOn === false, 'header keys win');
+});
+
+test('morph needs on plus a percentage; junk on/off values are absent', () => {
+    const noPercent = parseStepsTxtDocument('format=td3-stepdsl-v1.1\nactive_steps=1\ntriplet_morph=on\n\n01  C:---:N\n');
+    assert(noPercent.meta.tripletMorphPercent === undefined, 'on without percentage is absent');
+    const off = parseStepsTxtDocument('format=td3-stepdsl-v1.1\nactive_steps=1\ntriplet_morph=off\ntriplet_morph_percentage=50\n\n01  C:---:N\n');
+    assert(off.meta.tripletMorphPercent === undefined, 'off with percentage is absent');
+    const junk = parseStepsTxtDocument('format=td3-stepdsl-v1.1\nactive_steps=1\ntriplet_morph=maybe\nlive_update=yes\n\n01  C:---:N\n');
+    assert(junk.meta.liveUpdate === undefined, 'unusable live value is absent');
+    const clamped = parseStepsTxtDocument('format=td3-stepdsl-v1.1\nactive_steps=1\ntriplet_morph=on\ntriplet_morph_percentage=250\n\n01  C:---:N\n');
+    assert(clamped.meta.tripletMorphPercent === 100, 'percentage clamps to 100');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

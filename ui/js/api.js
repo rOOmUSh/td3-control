@@ -17,6 +17,14 @@ async function request(method, path, body, signal) {
     return json;
 }
 
+// Per-step lanes travel as top-level audition fields, never inside the
+// pattern: `{ stepCutoffs?: number[16], stepGates?: number[16] }`.
+function applyStepLanes(body, stepLanes) {
+    if (!stepLanes) return;
+    if (Array.isArray(stepLanes.stepCutoffs)) body.stepCutoffs = stepLanes.stepCutoffs;
+    if (Array.isArray(stepLanes.stepGates)) body.stepGates = stepLanes.stepGates;
+}
+
 export const api = {
     status:     ()      => request('GET', '/status'),
     ports:      ()      => request('GET', '/ports'),
@@ -56,6 +64,7 @@ export const api = {
         gatePercent = null,
         tripletMorphPercent = null,
         midiChannel = null,
+        stepLanes = null,
     ) => {
         const body = bpm != null
             ? { pattern, centibpm: Math.round(bpm * 100), looping }
@@ -64,6 +73,7 @@ export const api = {
         if (gatePercent != null) body.gatePercent = gatePercent;
         if (tripletMorphPercent != null) body.tripletMorphPercent = tripletMorphPercent;
         if (midiChannel != null) body.midiChannel = midiChannel;
+        applyStepLanes(body, stepLanes);
         return request('POST', '/pattern/audition', body);
     },
     auditionUpdate:(
@@ -74,6 +84,7 @@ export const api = {
         gatePercent = null,
         tripletMorphPercent = null,
         midiChannel = null,
+        stepLanes = null,
     ) => {
         const body = bpm != null
             ? { pattern, centibpm: Math.round(bpm * 100), looping }
@@ -84,6 +95,7 @@ export const api = {
         if (gatePercent != null) body.gatePercent = gatePercent;
         if (tripletMorphPercent != null) body.tripletMorphPercent = tripletMorphPercent;
         if (midiChannel != null) body.midiChannel = midiChannel;
+        applyStepLanes(body, stepLanes);
         return request('POST', '/pattern/audition/update', body);
     },
     auditionQueueNextCycle:(
@@ -94,6 +106,7 @@ export const api = {
         gatePercent = null,
         tripletMorphPercent = null,
         midiChannel = null,
+        stepLanes = null,
     ) => {
         const body = bpm != null
             ? { pattern, centibpm: Math.round(bpm * 100), looping }
@@ -104,6 +117,7 @@ export const api = {
         if (gatePercent != null) body.gatePercent = gatePercent;
         if (tripletMorphPercent != null) body.tripletMorphPercent = tripletMorphPercent;
         if (midiChannel != null) body.midiChannel = midiChannel;
+        applyStepLanes(body, stepLanes);
         return request('POST', '/pattern/audition/queue-next-cycle', body);
     },
     auditionStop: () => request('POST', '/pattern/audition/stop', {}),
@@ -137,6 +151,27 @@ export const api = {
         const body = { note, transpose, accent };
         if (midiChannel != null) body.midiChannel = midiChannel;
         return request('POST', '/note/preview', body);
+    },
+    // TD-3-MO device controls: CC 74 (0-127) and 14-bit Pitch Bend
+    // (0-16383, center 8192). The server rejects both for any other
+    // device. An omitted channel means the configured device channel.
+    filterCutoff: (value, midiChannel = null) => {
+        const body = { value };
+        if (midiChannel != null) body.midiChannel = midiChannel;
+        return request('POST', '/device/filter-cutoff', body);
+    },
+    pitchBend: (value, midiChannel = null) => {
+        const body = { value };
+        if (midiChannel != null) body.midiChannel = midiChannel;
+        return request('POST', '/device/pitch-bend', body);
+    },
+    // LIVE per-step cutoff lane for the clock thread. `cutoffs` is 16
+    // values or null (timing only); `atCycleBoundary` defers the switch
+    // to the next pattern wrap.
+    transportStepLane: ({ cutoffs, activeSteps, triplet, midiChannel = null, atCycleBoundary = false }) => {
+        const body = { cutoffs, activeSteps, triplet, atCycleBoundary };
+        if (midiChannel != null) body.midiChannel = midiChannel;
+        return request('POST', '/transport/step-lane', body);
     },
     getKeyboardConfig: () => request('GET', '/config/keyboard'),
     saveKeyboardConfig: (config) => request('POST', '/config/keyboard', config),

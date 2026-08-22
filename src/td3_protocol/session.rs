@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::config::DEFAULT_DEVICE_NAME;
+use crate::config::{ACCEPTED_DEVICE_NAMES, DEFAULT_DEVICE_NAME};
 use crate::error::Td3Error;
 use crate::midi_io::{exchange_sysex, SysexSender};
 
@@ -65,7 +65,7 @@ pub fn probe_device<S: SysexSender + ?Sized>(
         ));
     }
 
-    if product_name != DEFAULT_DEVICE_NAME {
+    if !ACCEPTED_DEVICE_NAMES.contains(&product_name.as_str()) {
         return Err(Td3Error::DeviceMismatch {
             expected: DEFAULT_DEVICE_NAME.to_owned(),
             actual: product_name.clone(),

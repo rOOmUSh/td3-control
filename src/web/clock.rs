@@ -67,6 +67,7 @@
 //!    modern Windows 10/11 this path is never taken.
 
 mod audition_runner;
+pub(crate) mod cutoff_lane;
 mod runner;
 mod timing;
 
@@ -78,8 +79,12 @@ pub use runner::{
     ClockStartMonitor, PPQN,
 };
 
+#[cfg(test)]
 pub(crate) use audition_runner::prepare_morph_schedule;
+pub(crate) use audition_runner::prepare_morph_schedule_with_lanes;
+#[cfg(test)]
 pub(crate) use audition_runner::prepare_schedule_with_gate;
+pub(crate) use audition_runner::prepare_schedule_with_lanes;
 #[allow(unused_imports)]
 pub use audition_runner::{
     prepare_schedule, AuditionApplyMode, AuditionRunner, AuditionSchedule, AuditionUpdateAck,
@@ -94,7 +99,8 @@ pub(crate) use audition_runner::{
 #[cfg(test)]
 pub(crate) use audition_runner::{
     coalescing_rejects_stale_without_losing_valid, cycle_timing_at_now,
-    deadline_drain_observes_queued_update, reject_closed_command_for_test, remaining_start_delay,
+    deadline_drain_observes_queued_update, flush_raw_sends_for_test,
+    reject_closed_command_for_test, reject_closed_raw_send_for_test, remaining_start_delay,
     scale_cycle_phase, schedule_update_timing, AuditionTransitionTestHarness,
 };
 #[cfg(test)]

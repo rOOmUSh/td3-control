@@ -40,8 +40,13 @@ import { rankScales, applyRankedOrder, resetToDefaultOrder } from './scale-ranki
 import { getAllScales, getTagGroups } from './scales.js';
 import { formatPatternAsStepsTxt } from './shared/steps-txt-format.js';
 import { parseStepsTxtDocument, looksLikeStepsTxt } from './shared/steps-txt-parse.js';
+import { applyImportedStepsMeta, stepsMetaForExport } from './shared/steps-txt-meta.js';
 import { initMidiChannelControl } from './shared/midi-channel-control.js';
 import { initGateControl } from './shared/gate-control.js';
+import { initDeviceControls } from './shared/device-controls.js';
+import { setStepLaneHooks } from './multipattern/step-lane-hooks.js';
+import { createTrailingThrottle } from './shared/trailing-throttle.js';
+import { alignStepLaneDrawers, renderAllStepLaneDrawers } from './shared/step-lane-drawer.js';
 import { initTripletMorphControl } from './shared/triplet-morph-control.js';
 import { initTripletMorphEndpointToggle } from './shared/triplet-morph-toggle.js';
 import * as tripletMorphView from './multipattern/triplet-morph-view.js';
@@ -59,7 +64,9 @@ async function copyFocusedPatternToSystemClipboard() {
         if (focused === null) return false;
         const pat = state.getPattern(focused);
         if (!pat) return false;
-        await navigator.clipboard.writeText(formatPatternAsStepsTxt(pat, state.getBpm()));
+        await navigator.clipboard.writeText(
+            formatPatternAsStepsTxt(pat, state.getBpm(), exportStepsMeta(pat)),
+        );
         return true;
     } catch (_) {
         return false;
@@ -75,12 +82,42 @@ async function tryPasteFromSystemClipboard(focusedIdx) {
         if (!navigator.clipboard || !navigator.clipboard.readText) return false;
         const text = await navigator.clipboard.readText();
         if (!looksLikeStepsTxt(text)) return false;
-        const { pattern, centibpm } = parseStepsTxtDocument(text);
+        const { pattern, centibpm, meta } = parseStepsTxtDocument(text);
         if (centibpm !== null) transport.applyImportedBpm(centibpm);
         state.setPattern(focusedIdx, pattern);
+        applyStepsMetaToPattern(focusedIdx, pattern, meta);
         return true;
     } catch (_) {
         return false;
+    }
+}
+
+/** StepDSL v1.1 metadata for `pat` from the page state. */
+function exportStepsMeta(pat) {
+    return stepsMetaForExport(pat, {
+        globalCutoff: state.getFilterCutoff(),
+        globalGate: state.getGatePercent(),
+        tripletMorphPercent: state.getTripletMorphPercent(),
+        liveUpdate: state.isLiveUpdate(),
+    });
+}
+
+/**
+ * Apply imported StepDSL v1.1 metadata to pattern `idx`: lanes on the
+ * pattern, the TRIPLET amount when the document carried one the pattern
+ * can use, and the LIVE button when the document's state differs.
+ */
+function applyStepsMetaToPattern(idx, pattern, meta) {
+    if (idx == null || idx < 0) return;
+    const { lanes, morphPercent, liveUpdate } = applyImportedStepsMeta({
+        meta,
+        pattern,
+        deviceControlsSupported: state.isDeviceControlsSupported(),
+    });
+    state.setLanes(idx, lanes);
+    if (morphPercent !== null) setTripletMorphAmount(morphPercent);
+    if (liveUpdate !== null && liveUpdate !== state.isLiveUpdate()) {
+        toggleLiveUpdate().catch((err) => setStatus('Live update error: ' + err.message));
     }
 }
 
@@ -167,6 +204,12 @@ async function saveLivePatternNow(statusPrefix = 'Live sent') {
         pat,
     );
     transport.noteLiveScratchPatternQueued(patIdx, sentTiming);
+    // The same pattern keeps its phase, so its lane switches at once; a
+    // different pattern reaches the device at its next wrap, and so does
+    // its lane.
+    await transport.pushStepLane(patIdx, {
+        atCycleBoundary: patIdx !== transport.playingPatternIndex(),
+    });
     setStatus(`${statusPrefix} P${patIdx + 1} to ${scratch.label}`);
     return true;
 }
@@ -231,6 +274,10 @@ function updateLiveBtn() {
     midiChannelControl.render();
     tripletMorphControl.render();
     tripletMorphEndpointToggle.render();
+    deviceControls.render();
+    // Lane visibility follows LIVE and device support, both of which
+    // change without a card rebuild.
+    renderAllStepLaneDrawers();
 }
 
 const gateControl = initGateControl({
@@ -291,6 +338,47 @@ const tripletMorphEndpointToggle = initTripletMorphEndpointToggle({
     getValue: () => state.getTripletMorphPercent(),
     setValue: setTripletMorphAmount,
     onValueChange: onTripletMorphAmountChange,
+});
+
+// CUTOFF and BEND knobs: present only while the connected device
+// reports support for them (TD-3-MO). Independent of Live Update.
+const deviceControls = initDeviceControls({ state, setStatus });
+
+// Per-step lane edits from the card drawers. A cutoff knob turn goes to
+// the device at once when it accepts CC 74, so the change is audible
+// while the knob moves; the lane itself then reaches whichever engine is
+// playing: the host audition schedule in NO-LIVE, the clock thread in
+// LIVE.
+const sendLaneCutoffNow = createTrailingThrottle((value) => {
+    api.filterCutoff(value, state.getMidiChannel())
+        .catch((err) => setStatus(`CUTOFF send failed: ${err.message}`));
+}, 30);
+
+function applyLaneChange(patIdx, lane) {
+    if (state.isLiveUpdate()) {
+        if (lane === 'cutoff') {
+            transport.pushStepLane(patIdx, {
+                atCycleBoundary: patIdx !== transport.playingPatternIndex(),
+            });
+        }
+        return;
+    }
+    transport.syncAuditionPattern();
+    multipatternPreview.syncActiveAudition();
+}
+
+setStepLaneHooks({
+    onValue(patIdx, lane, step, value) {
+        if (lane === 'cutoff' && state.isDeviceControlsSupported()) sendLaneCutoffNow(value);
+        applyLaneChange(patIdx, lane);
+    },
+    onToggle(patIdx, lane) {
+        applyLaneChange(patIdx, lane);
+    },
+});
+
+window.addEventListener('resize', () => {
+    alignStepLaneDrawers(document.getElementById('multipattern-list'), '.mp-card-grid');
 });
 
 // Editing gate across the morph range. At 0 everything is allowed. At
@@ -813,6 +901,7 @@ fileImport.addEventListener('change', async () => {
                     capHit = true;
                     break;
                 } else {
+                    if (res.stepsMeta) applyStepsMetaToPattern(idx, res.pattern, res.stepsMeta);
                     if (!firstPattern) firstPattern = res.pattern;
                     imported++;
                     setStatus(`Imported ${file.name}`);
@@ -907,9 +996,9 @@ if (exportPanel) {
                     throw new Error(`Export failed: ${exportPlan.error}`);
                 }
                 await runDownloadBatches(exportPlan.files, async (file) => {
-                    const blob = await api.exportPattern(file.pattern, format, {
-                        centibpm: Math.round(state.getBpm() * 100),
-                    });
+                    const extra = { centibpm: Math.round(state.getBpm() * 100) };
+                    if (format === 'steps_txt') extra.stepsMeta = exportStepsMeta(file.pattern);
+                    const blob = await api.exportPattern(file.pattern, format, extra);
                     downloadBlob(blob, file.filename);
                 }, patternExportBatchDelayMs());
                 setStatus(exportPlan.count === 1

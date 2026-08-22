@@ -480,6 +480,7 @@ impl ClockRunner {
         out_conn: midir::MidiOutputConnection,
         initial_centibpm: u32,
         start_delay: Duration,
+        lane_inbox: super::cutoff_lane::LaneInbox,
     ) -> Result<Self, Td3Error> {
         let start_sync = Arc::new(StartSync::new());
         let start_wait_timeout = start_delay.saturating_add(START_ACK_GRACE);
@@ -508,6 +509,7 @@ impl ClockRunner {
                         },
                         send_rx,
                         start_delay,
+                        lane_inbox,
                     );
                     out
                 })
@@ -660,7 +662,9 @@ fn run_clock(
     signals: ClockSignals,
     send_rx: Receiver<SendRequest>,
     start_delay: Duration,
+    lane_inbox: super::cutoff_lane::LaneInbox,
 ) {
+    let mut lane_tracker = super::cutoff_lane::LaneTracker::new();
     let ClockSignals {
         start_sync,
         pulse_sync,
@@ -747,6 +751,17 @@ fn run_clock(
         // emit a ghost tick after shutdown was requested.
         if stop.load(Ordering::Acquire) {
             break;
+        }
+
+        // A step-start pulse carries its lane Control Change first, so the
+        // filter is in position when the device sounds the step on the
+        // clock byte that follows. A failed write is logged and playback
+        // carries on; the clock byte below decides whether the port is gone.
+        lane_tracker.poll_inbox(&lane_inbox);
+        if let Some(cc) = lane_tracker.on_pulse(pulse_index) {
+            if let Err(e) = out.send(&cc) {
+                log::warn!("clock: cutoff lane send failed: {}", e);
+            }
         }
 
         if let Err(e) = out.send(&[MIDI_CLOCK]) {

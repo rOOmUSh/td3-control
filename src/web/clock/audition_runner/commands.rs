@@ -3,6 +3,8 @@ use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::error::Td3Error;
+
 use super::schedule::AuditionSchedule;
 
 const AUDITION_SPIN_THRESHOLD: Duration = Duration::from_micros(1500);
@@ -184,15 +186,33 @@ impl AuditionScheduleUpdate {
     }
 }
 
+/// One channel-voice message to write to the audition output as soon as
+/// the thread observes it. `done` carries the write result back to the
+/// requesting handler; a dropped or stopped thread answers with an error.
+pub(super) struct RawSend {
+    pub bytes: Vec<u8>,
+    pub done: Sender<Result<(), Td3Error>>,
+}
+
+impl RawSend {
+    pub(super) fn reject(self, message: &str) {
+        let _ = self.done.send(Err(Td3Error::Midi(message.to_string())));
+    }
+}
+
 pub(super) enum AuditionCommand {
     Update(AuditionScheduleUpdate),
     QueueNextCycle(AuditionScheduleUpdate),
+    SendBytes(RawSend),
     Stop,
 }
 
 pub(super) struct AuditionCommandBatch {
     pub immediate_update: Option<AuditionScheduleUpdate>,
     pub next_cycle_update: Option<AuditionScheduleUpdate>,
+    /// Raw messages in arrival order. Never coalesced: every message is
+    /// written and every requester receives its own result.
+    pub raw_sends: Vec<RawSend>,
 }
 
 impl AuditionCommandBatch {
@@ -200,11 +220,16 @@ impl AuditionCommandBatch {
         Self {
             immediate_update: None,
             next_cycle_update: None,
+            raw_sends: Vec::new(),
         }
     }
 
     fn push(&mut self, command: AuditionCommand, schedule_generation: u64) -> bool {
         match command {
+            AuditionCommand::SendBytes(raw) => {
+                self.raw_sends.push(raw);
+                true
+            }
             AuditionCommand::Update(update) => {
                 if !update.matches_generation(schedule_generation) {
                     update.reject(AuditionUpdateError::GenerationConflict);

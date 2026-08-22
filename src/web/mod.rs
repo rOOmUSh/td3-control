@@ -9,6 +9,7 @@ pub(crate) mod bank_handlers;
 pub(crate) mod clock;
 pub(crate) mod config_storage;
 pub(crate) mod control_queue;
+pub(crate) mod device_capabilities;
 pub(crate) mod embedded_ui;
 pub(crate) mod folder_picker;
 pub(crate) mod handlers;
@@ -170,6 +171,12 @@ pub async fn start_server(
             post(handlers::transport_wrap_pulse),
         )
         .route("/note/preview", post(handlers::note_preview))
+        .route(
+            "/device/filter-cutoff",
+            post(handlers::device_filter_cutoff),
+        )
+        .route("/device/pitch-bend", post(handlers::device_pitch_bend))
+        .route("/transport/step-lane", post(handlers::transport_step_lane))
         .route("/config/keyboard", get(handlers::get_keyboard_config))
         .route("/config/keyboard", post(handlers::save_keyboard_config))
         .route("/config/scales", get(handlers::get_scales_config))

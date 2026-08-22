@@ -16,6 +16,7 @@ import { canonicalPatternText } from '../shared/pattern-canonical.js';
 // UP/DN/SL/AC control block together.
 import {
     applyToCells,
+    applyToLaneCells,
     markEditableControls,
 } from '../multipattern/triplet-morph-view.js';
 import { isFullyLocked } from '../shared/triplet-morph-editing.js';
@@ -78,6 +79,7 @@ export function render() {
         }
         const plan = amount > 0 ? planForPattern(idx) : null;
         applyToCells(cells, plan, amount);
+        applyToLaneCells(doc.getElementById(`row-p${idx + 1}`), plan, amount);
         markEditableControls(grid, plan, amount);
         // Mid-transform every position is unsettled, so the grid stops
         // taking pointer input entirely. At the endpoint the surviving

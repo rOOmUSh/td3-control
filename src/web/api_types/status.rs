@@ -22,6 +22,10 @@ pub struct StatusResponse {
     /// `None` when no MIDI session is open.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sync_source: Option<String>,
+    /// True when the connected device accepts Filter Cutoff and Pitch
+    /// Bend through `/api/device/*`. Absent when no session is open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_controls: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -58,6 +62,9 @@ pub struct ConnectRequest {
 pub struct ConnectResponse {
     pub product_name: String,
     pub firmware: String,
+    /// True when the connected device accepts Filter Cutoff and Pitch
+    /// Bend through `/api/device/*`.
+    pub device_controls: bool,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -65,24 +65,56 @@ It is intended for quick inspection, copy/paste, and editing. The CLI format tok
 
 Do not use `txt` as a CLI format token. The file extension is `.steps.txt`, but the token is `steps`.
 
-StepDSL v1.1 is a backward-compatible extension of `td3-stepdsl-v1`. A complete short document looks like this:
+Two document tags are read: `td3-stepdsl-v1` and `td3-stepdsl-v1.1`. Every new file is written as v1.1. A v1 document is everything tagged `td3-stepdsl-v1`, with or without a `bpm` line and with either all sixteen rows or only the active rows. (Earlier documentation called the `bpm` and short-row extension "v1.1" while the tag stayed `td3-stepdsl-v1`; from this release the v1.1 name belongs to the tag below.)
+
+A complete v1.1 document looks like this:
 
 ```text
-format=td3-stepdsl-v1
+format=td3-stepdsl-v1.1
 active_steps=3
 triplet_time=off
+triplet_morph=off
+triplet_morph_percentage=0
 bpm=128
+live_update=off
+pattern_co_lane=on
+pattern_gt_lane=off
 
-01  G:---:N
-02  G:D--:N
-03  G:---:T
+01  G:---:N|CO:40|GT:50
+02  G:D--:N|CO:90|GT:50
+03  G:---:T|CO:127|GT:50
 
-# NOTE:TAS:TIME
+# NOTE:TAS:TIME|CO:cutoff|GT:gate
 # transpose: U|D|-
 # accent: A|-
 # slide: S|-
 # time: N|T|R|TR
+# Cutoff Control | CO:0-127
+# Gate Control | GT:1-100
+# Lanes | pattern_co_lane, pattern_gt_lane: on/off
+# Live Update | live_update: on/off
 ```
+
+### v1.1 fields
+
+A row is `NN NOTE:TAS:TIME` followed by zero or more `|KEY:VALUE` fields in any order. `CO` is the Filter Cutoff (MIDI CC 74) for the step, `0` through `127`; `GT` is the ordinary-note gate for the step, `1` through `100` percent. Writers emit both on every active row. The header keys are:
+
+- `pattern_co_lane`, `pattern_gt_lane`: `on` or `off`, the lane switches of the step lane drawer.
+- `triplet_morph`: `on` or `off`, and `triplet_morph_percentage`: `0` through `100`, the page's TRIPLET morph amount at export time.
+- `live_update`: `on` or `off`, the LIVE button at export time.
+
+Export values: a lane that is on writes its stored per-step values; a lane that is off and never edited writes the transport-bar `CUTOFF` or `GATE` value on every step; a lane that is off but edited writes its stored values with the switch off. The all-steps ratio knob is not written. Files written by the CLI, bank extract and backup, snapshot export, and package export carry `CO:64`, `GT:50`, both lanes `off`, morph `off`, and `live_update=off`.
+
+### v1.1 import rules
+
+The browser import and paste paths, and the CLI, read both tags. Everything the spec below leaves out behaves as v1, so an old reader's expectations hold:
+
+- Any tag other than the two above is an error.
+- Under v1.1 an unrecognised `key=value` header line is ignored. Under v1 it is rejected as before.
+- A `CO` or `GT` value out of range is clamped to the nearest valid value (`GT:128` reads as `100`, `GT:0` as `1`, `CO:200` as `127`). A non-numeric value, or an active row that lacks the field while another has it, makes that lane absent for the whole document. Rows beyond `active_steps` never decide this; their values are kept when present.
+- The lane switch is the header key when present. Without it, all active rows equal means off and any difference means on.
+- `triplet_morph` counts only as `on` with a usable percentage; an unusable `on`/`off` value leaves the key absent.
+- In the browser: the cutoff lane is dropped (defaults, switch off) unless the connected device accepts Filter Cutoff (a TD-3-MO on firmware `2.0.1`); the morph keys set the page's TRIPLET amount only for a straight pattern whose `active_steps` is a multiple of four; `live_update` switches the LIVE button through its normal path. The ratio knobs come back at centre. A card's PASTE FULL restores the lanes only. The CLI and the library import read the pattern and ignore the rest, as they ignore `bpm`.
 
 New files saved by the CLI or browser include `bpm`. BPM accepts up to two decimal places, such as `128`, `128.3`, or `128.37`, and must be between `20.00` and `300.00`. The value is stored and transferred as integer centi-BPM, so decimal parsing does not depend on floating-point rounding.
 

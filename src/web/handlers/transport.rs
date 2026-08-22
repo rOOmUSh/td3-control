@@ -650,16 +650,18 @@ async fn spawn_clock_runner(
         (out_conn, generation)
     };
 
-    let runner = match clock::ClockRunner::spawn_scheduled(out_conn, centibpm, start_delay) {
-        Ok(runner) => runner,
-        Err(err) => {
-            invalidate_midi_session_generation(state, session_generation).await;
-            return Err(AppError::Midi(Td3Error::Midi(format!(
-                "{}; MIDI connection closed, reconnect before retrying",
-                err
-            ))));
-        }
-    };
+    let lane_inbox = Arc::clone(&state.playback.cutoff_lane);
+    let runner =
+        match clock::ClockRunner::spawn_scheduled(out_conn, centibpm, start_delay, lane_inbox) {
+            Ok(runner) => runner,
+            Err(err) => {
+                invalidate_midi_session_generation(state, session_generation).await;
+                return Err(AppError::Midi(Td3Error::Midi(format!(
+                    "{}; MIDI connection closed, reconnect before retrying",
+                    err
+                ))));
+            }
+        };
     Ok((runner, session_generation))
 }
 

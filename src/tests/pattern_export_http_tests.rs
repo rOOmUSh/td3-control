@@ -223,8 +223,12 @@ async fn http_pattern_export_steps_uses_requested_bpm_and_active_rows() {
         })
         .count();
     assert_eq!(step_rows, 3, "steps body: {}", text);
-    assert!(text.contains("03  G:---:N\n"), "steps body: {}", text);
-    assert!(!text.contains("04  G:---:N\n"), "steps body: {}", text);
+    assert!(
+        text.contains("03  G:---:N|CO:64|GT:50\n"),
+        "steps body: {}",
+        text
+    );
+    assert!(!text.contains("04  G:---:N"), "steps body: {}", text);
 }
 
 #[tokio::test]
@@ -637,4 +641,104 @@ async fn http_pattern_parse_bank_missing_bytes_is_rejected() {
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+// ---------------------------------------------------------------------------
+// StepDSL v1.1 metadata on the wire
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn http_pattern_export_steps_writes_steps_meta_and_import_returns_it() {
+    let app = test_router();
+    let cutoffs: Vec<u32> = (0..16).map(|i| i * 8).collect();
+    let gates: Vec<u32> = (0..16).map(|i| i * 6 + 1).collect();
+    let body = format!(
+        r#"{{"pattern":{},"format":"steps_txt","centibpm":12000,"stepsMeta":{{"stepCutoffs":{},"stepGates":{},"cutoffLaneOn":true,"gateLaneOn":false,"tripletMorphPercent":40,"liveUpdate":true}}}}"#,
+        web_pattern_json_with_note_and_active_steps("G", 16),
+        serde_json::to_string(&cutoffs).unwrap(),
+        serde_json::to_string(&gates).unwrap(),
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/export")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let text = std::str::from_utf8(&bytes).unwrap().to_string();
+    assert!(
+        text.contains("pattern_co_lane=on\npattern_gt_lane=off\n"),
+        "{}",
+        text
+    );
+    assert!(
+        text.contains("triplet_morph=on\ntriplet_morph_percentage=40\n"),
+        "{}",
+        text
+    );
+    assert!(text.contains("live_update=on\n"), "{}", text);
+    assert!(text.contains("\n03  G:---:N|CO:16|GT:13\n"), "{}", text);
+
+    let app = test_router();
+    let body = serde_json::json!({ "content": text, "format": "steps" }).to_string();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/import")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let parsed: crate::web::api_types::PatternImportResponse =
+        serde_json::from_slice(&bytes).unwrap();
+    let meta = parsed.steps_meta.expect("steps meta returned");
+    assert_eq!(meta.step_cutoffs, Some(cutoffs));
+    assert_eq!(meta.step_gates, Some(gates));
+    assert_eq!(meta.cutoff_lane_on, Some(true));
+    assert_eq!(meta.gate_lane_on, Some(false));
+    assert_eq!(meta.triplet_morph_percent, Some(40));
+    assert_eq!(meta.live_update, Some(true));
+    assert_eq!(parsed.centibpm, Some(12_000));
+}
+
+#[tokio::test]
+async fn http_pattern_import_v1_steps_omits_steps_meta() {
+    let app = test_router();
+    let content = include_str!("../../tests/fixtures/stepsdslv1_1.steps.txt");
+    let body = serde_json::json!({ "content": content, "format": "steps" }).to_string();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/import")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let raw: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(
+        raw.get("stepsMeta").is_none() && raw.get("steps_meta").is_none(),
+        "{}",
+        raw
+    );
+}
+
+#[tokio::test]
+async fn http_pattern_export_steps_rejects_bad_steps_meta() {
+    let app = test_router();
+    let body = format!(
+        r#"{{"pattern":{},"format":"steps_txt","centibpm":12000,"stepsMeta":{{"stepGates":[0,1,2]}}}}"#,
+        web_pattern_json_with_note_and_active_steps("G", 16),
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/pattern/export")
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }

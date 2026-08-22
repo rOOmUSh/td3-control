@@ -169,7 +169,11 @@ pub(super) fn run_audition(
 
         match wait_until_or_command(deadline, &stop, &command_rx, schedule_generation) {
             WaitOutcome::Stop => break 'cycles,
-            WaitOutcome::Commands(commands) => {
+            WaitOutcome::Commands(mut commands) => {
+                flush_raw_sends(&mut commands, &mut |bytes| {
+                    out.send(bytes)
+                        .map_err(|e| Td3Error::Midi(format!("raw send: {}", e)))
+                });
                 absorb_command_batch(
                     commands,
                     schedule_generation,
@@ -260,7 +264,80 @@ fn reject_command(command: AuditionCommand, error: AuditionUpdateError) {
         AuditionCommand::Update(update) | AuditionCommand::QueueNextCycle(update) => {
             update.reject(error);
         }
+        AuditionCommand::SendBytes(raw) => raw.reject("audition has stopped"),
         AuditionCommand::Stop => {}
+    }
+}
+
+/// Drives the raw-send path without a MIDI port: queues `messages` plus
+/// a schedule update in one batch, drains it the way the playback loop
+/// does, and writes the raw messages through `port`. Returns the bytes
+/// `port` received, in order, and each requester's result.
+#[cfg(test)]
+pub(crate) fn flush_raw_sends_for_test<F>(
+    messages: &[&[u8]],
+    schedule: AuditionSchedule,
+    mut port: F,
+) -> (Vec<Vec<u8>>, Vec<Result<(), Td3Error>>)
+where
+    F: FnMut(&[u8]) -> Result<(), Td3Error>,
+{
+    use super::commands::RawSend;
+    use std::sync::mpsc;
+
+    let stop = AtomicBool::new(false);
+    let terminal_status = super::commands::new_terminal_status();
+    let (command_tx, command_rx) = mpsc::channel();
+    let mut replies = Vec::new();
+    for bytes in messages {
+        let (done_tx, done_rx) = mpsc::channel();
+        let raw = RawSend {
+            bytes: bytes.to_vec(),
+            done: done_tx,
+        };
+        let _ = command_tx.send(AuditionCommand::SendBytes(raw));
+        replies.push(done_rx);
+    }
+    let (acknowledgement_tx, _acknowledgement_rx) = mpsc::channel();
+    let _ = command_tx.send(AuditionCommand::Update(AuditionScheduleUpdate::new(
+        schedule,
+        12_000,
+        Some(0),
+        acknowledgement_tx,
+        terminal_status,
+    )));
+
+    let mut written = Vec::new();
+    let mut pending_update = None;
+    let mut queued_next_cycle = None;
+    if let WaitOutcome::Commands(mut commands) = drain_commands_now(&stop, &command_rx, 0) {
+        flush_raw_sends(&mut commands, &mut |bytes| {
+            written.push(bytes.to_vec());
+            port(bytes)
+        });
+        absorb_command_batch(commands, 0, &mut pending_update, &mut queued_next_cycle);
+    }
+    let results = replies
+        .into_iter()
+        .map(|rx| {
+            rx.try_recv()
+                .unwrap_or(Err(Td3Error::Midi("no reply".to_string())))
+        })
+        .collect();
+    (written, results)
+}
+
+/// Write every raw message in the batch, in arrival order, and answer
+/// each requester with its own write result. A failed write is reported
+/// to that requester only; scheduled playback carries on and surfaces
+/// a dead port through its own send path.
+fn flush_raw_sends<F>(batch: &mut AuditionCommandBatch, send: &mut F)
+where
+    F: FnMut(&[u8]) -> Result<(), Td3Error>,
+{
+    for raw in batch.raw_sends.drain(..) {
+        let result = send(&raw.bytes);
+        let _ = raw.done.send(result);
     }
 }
 
@@ -517,12 +594,15 @@ where
     if let Some(command_rx) = command_rx {
         match drain_commands_now(stop, command_rx, *schedule_generation) {
             WaitOutcome::Stop => return Ok(false),
-            WaitOutcome::Commands(commands) => absorb_command_batch(
-                commands,
-                *schedule_generation,
-                pending_update,
-                queued_next_cycle,
-            ),
+            WaitOutcome::Commands(mut commands) => {
+                flush_raw_sends(&mut commands, send);
+                absorb_command_batch(
+                    commands,
+                    *schedule_generation,
+                    pending_update,
+                    queued_next_cycle,
+                )
+            }
             WaitOutcome::Deadline => {}
         }
     }
