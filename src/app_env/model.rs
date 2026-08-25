@@ -28,6 +28,13 @@ pub struct AppEnv {
     pub ui_max_bank_history_size: u32,
     pub ui_pattern_export_name_prompt: bool,
     pub ui_pattern_export_batch_delay_ms: u32,
+    /// How the shared start instant is chosen with REMOTE sync on:
+    /// `musical` for a note value at the current tempo, `ms` for a flat lead.
+    pub remote_sync_start_delay_mode: String,
+    /// Note value used in `musical` mode: 1/8, 1/4, 1/2, 1bar, 2bars, 4bars.
+    pub remote_sync_start_delay_division: String,
+    /// Flat lead in milliseconds used in `ms` mode.
+    pub remote_sync_start_delay_ms: u32,
 
     pub ui_rand_default_root: u8,
     pub ui_rand_default_scale: String,

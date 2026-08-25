@@ -73,6 +73,9 @@ function consumeHandoff(deps) {
     });
 
     state.setPatterns(patterns);
+    if (blob.p1 && typeof blob.p1.lanes === 'object' && blob.p1.lanes) {
+        state.setLanes(0, { ...blob.p1.lanes, open: state.getLanes(0).open });
+    }
     state.setProgressionRoot(blob.root);
     state.setProgressionScaleId(blob.scale);
     state.setProgressionDegrees(degrees);
@@ -188,11 +191,13 @@ test('missing sentAt → null', () => {
 
 console.log('\nconsumeHandoff end-to-end:');
 
-function makeStateStub() {
-    const rec = { patterns: null, root: null, scaleId: null, degrees: null, label: null };
+function makeStateStub(lanes = { open: false }) {
+    const rec = { patterns: null, root: null, scaleId: null, degrees: null, label: null, lanes: null };
     return {
         rec,
         setPatterns:          (p) => { rec.patterns = p; },
+        getLanes:             () => lanes,
+        setLanes:             (i, v) => { rec.lanes = { index: i, value: v }; },
         setProgressionRoot:   (v) => { rec.root = v; },
         setProgressionScaleId:(v) => { rec.scaleId = v; },
         setProgressionDegrees:(v) => { rec.degrees = v; },
@@ -269,6 +274,27 @@ test('p1 passed to deriveSiblings matches handoff blob', () => {
 });
 
 // --- Summary ----------------------------------------------------------------
+
+test('P1 step lanes cross the handoff and land over the row drawer state', () => {
+    const p1 = defaultPattern();
+    p1.lanes = { open: false, cutoffOn: true, cutoff: Array.from({ length: 16 }, () => 100) };
+    installStorage({ [HANDOFF_KEY]: JSON.stringify(validBlob({ p1 })) });
+    const deps = makeDeps({ state: makeStateStub({ open: true }) });
+    consumeHandoff(deps);
+    const written = deps.state.rec.lanes;
+    assert(written !== null, 'lanes were written');
+    eq(written.index, 0, 'written onto P1');
+    assert(written.value.cutoffOn === true, 'the switch crossed');
+    eq(written.value.cutoff[0], 100, 'the values crossed');
+    assert(written.value.open === true, 'the row own open state is kept');
+});
+
+test('a handoff without lanes leaves the row lanes alone', () => {
+    installStorage({ [HANDOFF_KEY]: JSON.stringify(validBlob()) });
+    const deps = makeDeps();
+    consumeHandoff(deps);
+    assert(deps.state.rec.lanes === null, 'no lane write');
+});
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

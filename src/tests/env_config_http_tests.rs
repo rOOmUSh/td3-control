@@ -122,12 +122,12 @@ async fn full_returns_sections_fields_and_values() {
     let values = json["values"].as_object().expect("values object");
 
     // All sections declared in env_metadata.
-    assert_eq!(sections.len(), 8, "sections: {:#?}", sections);
+    assert_eq!(sections.len(), 9, "sections: {:#?}", sections);
     assert!(sections.iter().any(|section| {
         section["id"] == "pattern_export" && section["title"] == "PATTERN EXPORT"
     }));
-    // 32 editable keys = all template keys
-    assert_eq!(fields.len(), 32, "fields: {}", fields.len());
+    // 35 editable keys = all template keys
+    assert_eq!(fields.len(), 35, "fields: {}", fields.len());
     assert!(
         fields.iter().any(|field| {
             field["key"] == "MIDI_DEVICE_CHANNEL" && field["section_id"] == "midi_device"

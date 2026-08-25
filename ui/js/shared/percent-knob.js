@@ -3,6 +3,8 @@
 // each concrete control module. The readout defaults to a percent, and
 // a control over another range supplies `formatValue`.
 
+import { mountKnob3d } from './knob-3d.js';
+
 const DRAG_PIXELS_PER_UNIT = 3;
 
 function percentText(value) {
@@ -22,6 +24,11 @@ export function normalizePercentValue(value, { min, max, fallback }) {
 // and drag unit; `dragPixelsPerUnit` is the pointer travel per unit.
 // When `resetValue` is a number, a double-click or Enter on the knob
 // commits it.
+//
+// `knob3dSize`, when set, draws the 3D GLB model over the knob element at
+// that size in CSS pixels. It is display only: the model registers no input
+// of its own, so wheel, drag, keyboard and double-click keep reaching the
+// handlers below unchanged, and a failed mount leaves the flat knob.
 export function createPercentKnob({
     min,
     max,
@@ -41,6 +48,7 @@ export function createPercentKnob({
     setValue,
     isVisible = () => true,
     onValueChange = () => {},
+    knob3dSize = 0,
 }) {
     if (!root || !display || !knob || !indicator || !eventTarget
         || typeof getValue !== 'function' || typeof setValue !== 'function') {
@@ -50,6 +58,7 @@ export function createPercentKnob({
     const bounds = { min, max, fallback };
     let dragStartY = null;
     let dragStartValue = null;
+    let knob3d = null;
 
     function indicatorAngle(value) {
         return ((value - min) / (max - min)) * 300 - 150;
@@ -68,6 +77,7 @@ export function createPercentKnob({
         knob.setAttribute('aria-valuenow', String(value));
         knob.setAttribute('aria-valuetext', text);
         root.classList.toggle('hidden', !isVisible());
+        knob3d?.setValue(value);
     }
 
     function commit(value) {
@@ -130,6 +140,22 @@ export function createPercentKnob({
     eventTarget.addEventListener('mouseup', onMouseUp);
     render();
 
+    // Not awaited: the model is fetched over HTTP and the flat knob is fully
+    // usable until it arrives.
+    if (knob3dSize > 0) {
+        mountKnob3d({
+            host: knob,
+            min,
+            max,
+            value: normalizePercentValue(getValue(), bounds),
+            size: knob3dSize,
+        }).then((handle) => {
+            if (!handle) return;
+            knob3d = handle;
+            render();
+        });
+    }
+
     return {
         render,
         destroy() {
@@ -139,6 +165,8 @@ export function createPercentKnob({
             knob.removeEventListener('dblclick', onDoubleClick);
             eventTarget.removeEventListener('mousemove', onMouseMove);
             eventTarget.removeEventListener('mouseup', onMouseUp);
+            knob3d?.dispose();
+            knob3d = null;
         },
     };
 }

@@ -86,6 +86,12 @@ export function consumeSendToProgressionHandoff(deps) {
     });
 
     state.setPatterns(patterns);
+    // P1 arrives verbatim, its step lane values included. `setPatterns`
+    // blanks the lanes of a generated set, so P1's are put back over the
+    // row, keeping whatever open state that row's drawer already had.
+    if (blob.p1 && typeof blob.p1.lanes === 'object' && blob.p1.lanes) {
+        state.setLanes(0, { ...blob.p1.lanes, open: state.getLanes(0).open });
+    }
     state.setProgressionRoot(blob.root);
     state.setProgressionScaleId(blob.scale);
     state.setProgressionDegrees(degrees);

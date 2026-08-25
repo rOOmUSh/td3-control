@@ -21,6 +21,9 @@ export function normalizeTripletMorphPercent(value) {
     return normalizePercentValue(value, TRIPLET_MORPH_BOUNDS);
 }
 
+/** Rendered size of the 3D model drawn over this knob, in CSS pixels. */
+const PANEL_KNOB_3D_SIZE = 50;
+
 export function createTripletMorphControl({
     root,
     display,
@@ -34,6 +37,7 @@ export function createTripletMorphControl({
 }) {
     return createPercentKnob({
         ...TRIPLET_MORPH_BOUNDS,
+        knob3dSize: PANEL_KNOB_3D_SIZE,
         ariaLabel: 'Triplet morph',
         pageStep: TRIPLET_MORPH_PAGE_STEP,
         root,

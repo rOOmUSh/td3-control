@@ -100,6 +100,7 @@ async fn spawn_remote_sync_server() -> (u16, Arc<Mutex<Vec<RemoteSyncCommand>>>)
                     Json(RemoteSyncCommandResponse {
                         ok: true,
                         queued: true,
+                        listening: Some(true),
                         results: Vec::new(),
                     })
                 }
@@ -124,8 +125,14 @@ async fn captured_commands(
     commands.lock().await.clone()
 }
 
+// The browser polls in a loop, so there is always a window between one poll
+// returning and the next starting, and it widens while the browser handles
+// the command it just took. Rejecting there dropped play and stop commands
+// that arrived close together. A command is now held for the next poll, and
+// `listening` reports whether anyone was waiting rather than deciding
+// whether the command survives.
 #[tokio::test]
-async fn command_rejects_when_no_remote_ui_is_polling() {
+async fn command_is_held_when_no_remote_ui_is_polling() {
     let (router, _state) = build_router();
     let target = start_schedule::current_epoch_micros() + 1_000_000;
     let body = serde_json::json!({
@@ -136,10 +143,115 @@ async fn command_rejects_when_no_remote_ui_is_polling() {
     .to_string();
 
     let resp = router
+        .clone()
         .oneshot(post_json("/api/remote-sync/command", body))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let payload: RemoteSyncCommandResponse = json_body(resp.into_body()).await;
+    assert!(payload.queued, "the command must be kept");
+    assert_eq!(
+        payload.listening,
+        Some(false),
+        "no browser was waiting, and the reply should say so"
+    );
+
+    // The whole point: a poll arriving afterwards still gets it.
+    let resp = router.oneshot(poll_request()).await.unwrap();
+    let polled: RemoteSyncPollResponse = json_body(resp.into_body()).await;
+    let command = polled
+        .command
+        .expect("the held command reaches the next poll");
+    assert_eq!(command.command, RemoteSyncCommandKind::Play);
+    assert_eq!(command.centibpm, Some(12500));
+}
+
+#[tokio::test]
+async fn stale_command_is_discarded_before_a_later_command() {
+    let (router, state) = build_router();
+    let stale_play = serde_json::json!({
+        "command": "play",
+        "centibpm": 12000,
+        "targetEpochMicros": start_schedule::current_epoch_micros() + 1_000_000,
+    })
+    .to_string();
+    let resp = router
+        .clone()
+        .oneshot(post_json("/api/remote-sync/command", stale_play))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    state
+        .playback
+        .remote_sync
+        .age_queued_commands_for_test(std::time::Duration::from_secs(11))
+        .await;
+    let poll_task = tokio::spawn(router.clone().oneshot(poll_request()));
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    let fresh_stop = serde_json::json!({ "command": "stop" }).to_string();
+    let resp = router
+        .oneshot(post_json("/api/remote-sync/command", fresh_stop))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = poll_task.await.unwrap().unwrap();
+    let polled: RemoteSyncPollResponse = json_body(resp.into_body()).await;
+    let command = polled.command.expect("the fresh command reaches the poll");
+    assert_eq!(command.command, RemoteSyncCommandKind::Stop);
+}
+
+#[tokio::test]
+async fn command_reports_a_waiting_poll_as_listening() {
+    let (router, _state) = build_router();
+    let poll_task = tokio::spawn(router.clone().oneshot(poll_request()));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let body = serde_json::json!({ "command": "stop" }).to_string();
+    let resp = router
+        .oneshot(post_json("/api/remote-sync/command", body))
+        .await
+        .unwrap();
+    let payload: RemoteSyncCommandResponse = json_body(resp.into_body()).await;
+    assert_eq!(payload.listening, Some(true));
+
+    let polled = poll_task.await.unwrap().unwrap();
+    let polled: RemoteSyncPollResponse = json_body(polled.into_body()).await;
+    assert!(polled.command.is_some());
+}
+
+// Two commands sent back to back, the second landing while nothing is
+// polling, must both survive: this is the play-then-stop case that lost a
+// stop in practice.
+#[tokio::test]
+async fn back_to_back_commands_are_both_delivered() {
+    let (router, _state) = build_router();
+    for body in [
+        serde_json::json!({ "command": "bpm", "centibpm": 12000 }).to_string(),
+        serde_json::json!({ "command": "stop" }).to_string(),
+    ] {
+        let resp = router
+            .clone()
+            .oneshot(post_json("/api/remote-sync/command", body))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    let mut seen = Vec::new();
+    for _ in 0..2 {
+        let resp = router.clone().oneshot(poll_request()).await.unwrap();
+        let polled: RemoteSyncPollResponse = json_body(resp.into_body()).await;
+        seen.push(polled.command.expect("both commands are kept").command);
+    }
+    assert_eq!(
+        seen,
+        vec![RemoteSyncCommandKind::Bpm, RemoteSyncCommandKind::Stop],
+        "both survive, in the order they were sent"
+    );
 }
 
 #[tokio::test]
@@ -224,6 +336,75 @@ async fn probe_accepts_running_remote_server() {
 
     let payload: RemoteSyncProbeResponse = json_body(resp.into_body()).await;
     assert!(payload.ok);
+}
+
+#[tokio::test]
+async fn probe_reports_a_round_trip_for_a_server_that_answered() {
+    let port = spawn_status_server().await;
+    let (router, _state) = build_router();
+    let body = serde_json::json!({ "port": port }).to_string();
+    let resp = router
+        .oneshot(post_json("/api/remote-sync/probe", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let payload: RemoteSyncProbeResponse = json_body(resp.into_body()).await;
+    assert!(payload.ok);
+    let result = &payload.results[0];
+    let rtt = result
+        .rtt_micros
+        .expect("a probe that answered must carry its round trip");
+    // A loopback request cannot be instantaneous, and the probe gives up at
+    // 700 ms, so anything outside that window means the measurement is not
+    // timing what it claims to.
+    assert!(rtt > 0, "round trip was zero");
+    assert!(
+        rtt < 700_000,
+        "round trip {} exceeds the probe timeout",
+        rtt
+    );
+}
+
+// A failed probe's duration is the timeout, which describes the wait rather
+// than the link, so it must not be reported as a round trip. A mixed probe
+// also proves the measurement is per peer rather than one figure for all.
+#[tokio::test]
+async fn probe_measures_only_the_ports_that_answered() {
+    let live = spawn_status_server().await;
+    let dead = closed_local_port().await;
+    let (router, _state) = build_router();
+    let body = serde_json::json!({ "ports": [live, dead] }).to_string();
+    let resp = router
+        .oneshot(post_json("/api/remote-sync/probe", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let payload: RemoteSyncProbeResponse = json_body(resp.into_body()).await;
+    assert!(!payload.ok, "one peer was unreachable");
+
+    let live_result = payload
+        .results
+        .iter()
+        .find(|result| result.port == live)
+        .expect("the live port is in the results");
+    assert!(live_result.ok);
+    assert!(
+        live_result.rtt_micros.is_some(),
+        "a peer that answered was not timed"
+    );
+
+    let dead_result = payload
+        .results
+        .iter()
+        .find(|result| result.port == dead)
+        .expect("the closed port is in the results");
+    assert!(!dead_result.ok);
+    assert!(
+        dead_result.rtt_micros.is_none(),
+        "a timeout was reported as a round trip"
+    );
 }
 
 #[tokio::test]

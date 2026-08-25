@@ -38,6 +38,37 @@ Important modules include:
 - `src/bank/*`
 - `src/library/*`
 
+## Application Icon
+
+One artwork file feeds every surface that shows the app icon, so the
+browser tab, the launcher window and the executable can never disagree.
+
+- `ui/img/td3-control.png` is the 256x256 RGBA artwork. It is served to the
+  browser as a `rel="icon"` link on all four pages, and `build.rs` decodes
+  it into raw RGBA in `OUT_DIR` for the launcher window icon
+  (`src/launcher/icon.rs`), which needs pixels rather than an encoded file.
+- `ui/favicon.ico` holds the same artwork at 16, 24, 32, 48, 64, 128 and 256
+  pixels. It answers the browser request for `/favicon.ico`, and on Windows
+  targets `build.rs` compiles it into the executable resource table, which is
+  what Explorer, the taskbar and a user-created shortcut read. ICO stores its
+  images as uncompressed bitmaps, so the full ladder is around 370 KB.
+
+Both files are embedded in the release binary by `rust-embed` along with the
+rest of `ui/`, so a single-file distribution serves them with no siblings.
+
+The Windows resource step needs a resource compiler (`rc.exe` from the
+Windows SDK on MSVC hosts). Without one the build prints a cargo warning and
+produces a working binary that carries the default Cargo icon.
+
+Both files are generated from one high resolution master, so every size is a
+single clean downscale rather than a chain of them. To replace the artwork,
+point both commands at the new master:
+
+```sh
+magick MASTER.png -filter Lanczos -resize 256x256 -strip ui/img/td3-control.png
+magick MASTER.png -filter Lanczos -define icon:auto-resize=256,128,64,48,32,24,16 ui/favicon.ico
+```
+
 ## Runtime Configuration
 
 `TD3_CONFIG.env` is the main runtime contract.

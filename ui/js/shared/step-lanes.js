@@ -25,6 +25,11 @@
 // Every reader goes through `laneState()` so a pattern written before
 // the field existed, or one that came back from the server without it,
 // resolves to the defaults.
+//
+// The lanes belong to the pattern slot rather than to the pattern
+// content: a pattern that replaces another in a slot adopts that slot's
+// lanes through `carryLaneState()`, so an edit, randomize, paste or
+// projection elsewhere in the UI leaves the drawer and its values alone.
 
 export const STEP_COUNT = 16;
 
@@ -123,6 +128,23 @@ export function writeLaneState(pattern, lanes) {
     if (!pattern || typeof pattern !== 'object') return null;
     const next = laneState({ lanes });
     pattern.lanes = next;
+    return next;
+}
+
+/**
+ * Move the lane state of `previous` onto `next` and return `next`.
+ *
+ * The lanes belong to the pattern slot, not to the pattern content, so a
+ * replacement pattern adopts the lanes of the one it replaces and any
+ * `lanes` it carried itself is discarded. With `reset` the values,
+ * switches and ratio knobs return to their defaults while the drawer's
+ * open flag still travels, so a cleared or reloaded slot keeps its
+ * drawer visible over a blank lane.
+ */
+export function carryLaneState(previous, next, { reset = false } = {}) {
+    if (!next || typeof next !== 'object') return next;
+    const prior = laneState(previous);
+    writeLaneState(next, reset ? { open: prior.open } : prior);
     return next;
 }
 

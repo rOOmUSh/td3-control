@@ -107,5 +107,24 @@ test('import applies morph only for a multiple of four straight steps, and live 
     assert(v1.lanes.cutoff.length === 16, 'absent meta still yields lanes');
 });
 
+test('an import keeps the drawer open and the values a slot already carried', () => {
+    // The paste paths hand this the pattern after `setPattern` has moved
+    // the slot's lanes onto it, so a document without CO/GT data leaves
+    // the drawer and its values alone.
+    const pattern = {
+        active_steps: 16,
+        triplet: false,
+        lanes: { open: true, cutoff: Array.from({ length: 16 }, (_, i) => i * 8) },
+    };
+    const { lanes } = applyImportedStepsMeta({
+        meta: {},
+        pattern,
+        deviceControlsSupported: true,
+    });
+    assert(lanes.open === true, 'drawer stays open');
+    assert(lanes.cutoff[3] === 24, 'existing values survive a document without CO');
+    assert(lanes.cutoffOn === false, 'a document without CO leaves the lane off');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

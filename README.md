@@ -18,9 +18,9 @@ It combines:
 
 The app runs locally. There is no cloud account, no remote service, and no browser extension.
 
-## New in v1.3.0: CUTOFF and GATE Step Lanes
+## New in v1.3.1: Remote Sync and 3D Transport Controls
 
-Version 1.3.0 adds per-step `CUTOFF` automation for the TD-3-MO and per-step `GATE` control for non-saving host audition. Open the lane drawer below a pattern to edit all sixteen step values.
+Version 1.3.1 adds 3D transport knobs, the application icon, configurable Remote Sync start delay, round-trip reporting, and reliable `TRIPLET` and `MORPH` mirroring between devices.
 
 ## Demo Video
 
@@ -156,13 +156,13 @@ After downloading and extracting the macOS zip, open Terminal and go into the ex
 For Apple Silicon Macs, use the `aarch64` build:
 
 ```bash
-cd ~/Downloads/td3-control-v1.3.0-macos-aarch64
+cd ~/Downloads/td3-control-vX.Y.Z-macos-aarch64
 ```
 
 For Intel Macs, use the `x86_64` build:
 
 ```bash
-cd ~/Downloads/td3-control-v1.3.0-macos-x86_64
+cd ~/Downloads/td3-control-vX.Y.Z-macos-x86_64
 ```
 
 ### 1. Allow macOS to run the binary
@@ -922,9 +922,9 @@ Both use the same Rust core.
 
 ## Release Status
 
-`v1.0.0` means the core workflow is usable and tested on the author's setup.
+The core workflow is usable and tested on the author's setup.
 
-It does not mean every TD-3 firmware version, MIDI interface, DAW path, or operating system environment has been exhaustively validated.
+That does not mean every TD-3 firmware version, MIDI interface, DAW path, or operating system environment has been exhaustively validated.
 
 Expected stable areas:
 

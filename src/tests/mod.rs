@@ -31,6 +31,7 @@ mod golden_tests;
 mod instance_guard_tests;
 mod launcher_child_args_tests;
 mod launcher_device_options_tests;
+mod launcher_icon_tests;
 mod launcher_persist_tests;
 mod launcher_process_tests;
 mod launcher_tests;

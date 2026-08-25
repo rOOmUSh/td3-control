@@ -39,6 +39,18 @@ pub struct EnvFieldInfo {
     pub max: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<Vec<String>>,
+    /// Present when this field only applies while another key holds a given
+    /// value. The Settings page hides the field until the condition is met,
+    /// so mutually exclusive settings are not both on screen at once.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visible_when: Option<EnvVisibleWhen>,
+}
+
+/// A condition on another field's current value.
+#[derive(Serialize, Deserialize)]
+pub struct EnvVisibleWhen {
+    pub key: String,
+    pub equals: String,
 }
 
 #[derive(Serialize, Deserialize)]

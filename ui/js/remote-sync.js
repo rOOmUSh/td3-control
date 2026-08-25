@@ -10,6 +10,7 @@ let onCommand = async () => {};
 let enabled = false;
 let portText = '';
 let togglePending = false;
+let lastProbe = null;
 
 const doc = typeof document !== 'undefined' ? document : null;
 const controls = doc ? doc.getElementById('remote-sync-controls') : null;
@@ -53,7 +54,8 @@ export function init(options = {}) {
                 throw new Error(formatRemoteSyncFailure(response, 'Remote sync unavailable'));
             }
             setEnabled(true);
-            setStatus(remoteLabel());
+            lastProbe = response;
+            setStatus(formatProbeRoundTrip(response) || remoteLabel());
         } catch (err) {
             setEnabled(false);
             setStatus(err && err.message ? err.message : unavailableMessageForPorts(ports));
@@ -138,6 +140,42 @@ export function formatRemoteSyncFailure(response, fallback = 'Remote sync failed
     return `${fallback}: ${failed.map(formatFailedResult).join('; ')}`;
 }
 
+/**
+ * The round trip each peer answered the probe in, as a status line.
+ *
+ * The figure is the server to server hop measured on the master, which is the
+ * same path a relayed command takes, so it is the latency a start delay has
+ * to cover. Returns an empty string when no result carried a measurement, so
+ * a caller can fall back to its own message.
+ */
+export function formatProbeRoundTrip(response) {
+    const results = response && Array.isArray(response.results) ? response.results : [];
+    const timed = results.filter(
+        (result) => result && result.ok && Number.isFinite(result.rttMicros),
+    );
+    if (timed.length === 0) return '';
+    const parts = timed.map(
+        (result) => `${result.port} ${formatMicros(result.rttMicros)}`,
+    );
+    const worst = Math.max(...timed.map((result) => result.rttMicros));
+    if (timed.length === 1) return `Remote sync ON: ${parts[0]} round trip`;
+    return `Remote sync ON: ${parts.join(', ')} round trip, worst ${formatMicros(worst)}`;
+}
+
+/** Microseconds as a compact millisecond reading. */
+export function formatMicros(micros) {
+    if (!Number.isFinite(micros)) return '?';
+    const millis = micros / 1000;
+    if (millis < 10) return `${millis.toFixed(2)} ms`;
+    if (millis < 100) return `${millis.toFixed(1)} ms`;
+    return `${Math.round(millis)} ms`;
+}
+
+/** The most recent probe response, or null before any probe. */
+export function lastProbeResponse() {
+    return lastProbe;
+}
+
 export function formatRemoteSyncSuccess(label, response) {
     const results = response && Array.isArray(response.results) ? response.results : [];
     const ports = results
@@ -164,8 +202,13 @@ export async function relayBpm(centibpm) {
     return relay({ command: 'bpm', centibpm });
 }
 
-export async function relayTriplet(triplet) {
-    return relay({ command: 'triplet', triplet: !!triplet });
+/**
+ * Relay a TRIPLET press. `morph` says whether the sender wrote the 12-step
+ * projection or only set the device's triplet flag: the two produce
+ * different patterns, so a peer given the flag alone plays something else.
+ */
+export async function relayTriplet(triplet, morph) {
+    return relay({ command: 'triplet', triplet: !!triplet, morph: !!morph });
 }
 
 async function relay(payload) {

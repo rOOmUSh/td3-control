@@ -166,3 +166,26 @@ UI_PATTERN_EXPORT_NAME_PROMPT=1
 # Pause in milliseconds between browser download batches of 10 patterns.
 # Set to 0 to disable the pause (0-60000).
 UI_PATTERN_EXPORT_BATCH_DELAY_MS=2000
+
+
+# -----------------------------------------------------------------------------
+# 9. REMOTE SYNC
+# -----------------------------------------------------------------------------
+
+# How the shared start instant is chosen when REMOTE sync is on. With sync on,
+# the master does not start when clicked: it picks an instant a little ahead,
+# sends it to every peer, and all of them begin exactly there.
+#   musical = a note value at the current tempo (see the DIVISION key)
+#   ms      = a flat millisecond count, independent of tempo (see the MS key)
+REMOTE_SYNC_START_DELAY_MODE=musical
+
+# The note value used when the mode is musical. A bar is 4 beats.
+# One of: 1/8, 1/4, 1/2, 1bar, 2bars, 4bars.
+# 1bar is the behaviour the app had before this was configurable, which is
+# 2 seconds at 120 BPM.
+REMOTE_SYNC_START_DELAY_DIVISION=1bar
+
+# The flat lead used when the mode is ms (0-60000). Measured command delivery
+# between two servers on one machine is about 3 ms, so this only needs to
+# cover the link plus a margin.
+REMOTE_SYNC_START_DELAY_MS=120

@@ -4,10 +4,11 @@ import {
     cycleDurationMicros,
     eventEpochMicros,
     startSyncFromTargetMicros,
-    targetEpochMicrosForPlay,
 } from './remote-sync-timing.js';
 import {
     buildRelayRequest,
+    formatMicros,
+    formatProbeRoundTrip,
     formatRemoteSyncFailure,
     migrateRemoteSyncPortsStorage,
     parsePort,
@@ -38,13 +39,6 @@ test('cycleDurationMicros matches normal 16-step timing at 125 BPM', () => {
 
 test('cycleDurationMicros supports triplet timing and active steps', () => {
     assert.equal(cycleDurationMicros(120, 8, true), 1_333_312);
-});
-
-test('targetEpochMicrosForPlay adds one cycle to the click epoch', () => {
-    assert.equal(
-        targetEpochMicrosForPlay({ timeStamp: 345.678 }, 125, 16, false, 1000),
-        3_265_678,
-    );
 });
 
 test('startSyncFromTargetMicros returns transport-compatible milliseconds', () => {
@@ -120,4 +114,51 @@ test('formatRemoteSyncFailure names failed ports', () => {
 
 test('unavailableMessageForPort names the missing server port', () => {
     assert.equal(unavailableMessageForPort(3031), 'No server on port 3031');
+});
+
+test('formatMicros reads as milliseconds at a sensible precision', () => {
+    assert.equal(formatMicros(1234), '1.23 ms');
+    assert.equal(formatMicros(45678), '45.7 ms');
+    assert.equal(formatMicros(456789), '457 ms');
+    assert.equal(formatMicros(undefined), '?');
+});
+
+test('formatProbeRoundTrip reports the round trip of one peer', () => {
+    assert.equal(
+        formatProbeRoundTrip({ ok: true, results: [{ port: 3031, ok: true, rttMicros: 1500 }] }),
+        'Remote sync ON: 3031 1.50 ms round trip',
+    );
+});
+
+test('formatProbeRoundTrip names the worst peer when there are several', () => {
+    const line = formatProbeRoundTrip({
+        ok: true,
+        results: [
+            { port: 3031, ok: true, rttMicros: 1500 },
+            { port: 3032, ok: true, rttMicros: 4200 },
+        ],
+    });
+    assert.match(line, /3031 1\.50 ms/);
+    assert.match(line, /3032 4\.20 ms/);
+    assert.match(line, /worst 4\.20 ms/);
+});
+
+// A failed probe's duration is its timeout, which says nothing about the
+// link, so it must never be reported as a round trip.
+test('formatProbeRoundTrip ignores peers that did not answer', () => {
+    const line = formatProbeRoundTrip({
+        ok: false,
+        results: [
+            { port: 3031, ok: true, rttMicros: 900 },
+            { port: 3032, ok: false, error: 'No server on port 3032' },
+        ],
+    });
+    assert.match(line, /3031/);
+    assert.doesNotMatch(line, /3032/);
+});
+
+test('formatProbeRoundTrip yields nothing when no peer was timed', () => {
+    assert.equal(formatProbeRoundTrip({ ok: true, results: [] }), '');
+    assert.equal(formatProbeRoundTrip(null), '');
+    assert.equal(formatProbeRoundTrip({ ok: true, results: [{ port: 3031, ok: true }] }), '');
 });

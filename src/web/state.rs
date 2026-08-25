@@ -288,6 +288,9 @@ pub struct UiConfigSnapshot {
     pub ui_rand_acc_percent: u8,
     pub ui_rand_ud_percent: u8,
     pub progression_next_pattern_save_step: u32,
+    pub remote_sync_start_delay_mode: String,
+    pub remote_sync_start_delay_division: String,
+    pub remote_sync_start_delay_ms: u32,
 }
 
 impl UiConfigSnapshot {
@@ -312,6 +315,9 @@ impl UiConfigSnapshot {
             ui_rand_acc_percent: 30,
             ui_rand_ud_percent: 30,
             progression_next_pattern_save_step: 2,
+            remote_sync_start_delay_mode: "musical".into(),
+            remote_sync_start_delay_division: "1bar".into(),
+            remote_sync_start_delay_ms: 120,
         }
     }
 }

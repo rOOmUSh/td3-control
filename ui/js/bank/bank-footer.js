@@ -15,6 +15,7 @@ import { bankApi } from './bank-api.js';
 import { toast } from './bank-toast.js';
 import { getBankBpm, setBankBpm, subscribeBpm } from './bank-play.js';
 import { applyState } from '../shared/class-state.js';
+import { deviceLabelWithFirmware } from '../shared/device-label.js';
 
 // HTML bank.html owns the structural classes on #btn-midi, its icon,
 // and #midi-label. This module only swaps the state-dependent subset
@@ -68,7 +69,7 @@ function wireMidi(btnMidi, midiLabel) {
                 _connected = true;
                 paintConnection(btnMidi, midiLabel, true);
                 const label = res.product_name
-                    ? `Connected: ${res.product_name} v${res.firmware || '?'}`
+                    ? `Connected: ${deviceLabelWithFirmware(res.product_name, res.firmware)}`
                     : 'MIDI connected';
                 toast(label, 'success');
             }

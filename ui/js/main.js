@@ -613,9 +613,10 @@ tripletToggle.addEventListener('click', async () => {
     const targets = bulkTargets();
     if (targets.length === 0) return;
     const next = !targets.every((i) => state.getTriplet(i));
-    const outcome = await applyTripletPress(targets, next, state.isTripletMorphSend());
+    const useMorph = state.isTripletMorphSend();
+    const outcome = await applyTripletPress(targets, next, useMorph);
     if (remoteSync.isEnabled()) {
-        remoteSync.relayTriplet(next)
+        remoteSync.relayTriplet(next, useMorph)
             .catch(err => setStatus('Remote triplet error: ' + err.message));
     }
     setStatus(bulkLabel(tripletPressLabel(next, outcome)));
@@ -1105,6 +1106,9 @@ multipatternDeviceIo.init({ state, api, setStatus });
 selectors.init(state);
 selectors.setScratch(scratch.group, scratch.pattern, scratch.side);
 multipatternTimeline.init();
+// An incoming morph TRIPLET press has to run the same projection the sender
+// ran, and that lives here on the top toolbar.
+transport.setRemoteTripletPress(pressTripletFor);
 transport.init(setStatus, scratch);
 await randomize.init();
 deviceBackup.init(setStatus, showBackupStatus);

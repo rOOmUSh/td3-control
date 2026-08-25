@@ -49,7 +49,7 @@ import { auditionLaneFields, effectiveLane, laneState } from './shared/step-lane
 import { highlightStep } from './multipattern/multipattern-list.js';
 import { highlightColumn } from './multipattern/multipattern-timeline.js';
 import * as preview from './multipattern/multipattern-preview.js';
-import { envInt } from './td3-env.js';
+import { envInt, envStr } from './td3-env.js';
 import { stepIntervalMs as timingStepIntervalMs } from './shared/transport-timing.js';
 import {
     cycleAnchorPulseIndex,
@@ -72,10 +72,12 @@ import {
     morphRequestPercent,
 } from './shared/triplet-morph-timing.js';
 import { planForPattern } from './multipattern/triplet-morph-view.js';
+import { mountKnob3d } from './shared/knob-3d.js';
 import {
+    eventEpochMicros,
     startSyncFromTargetMicros,
-    targetEpochMicrosForPlay,
 } from './remote-sync-timing.js';
+import { startDelayMicros } from './shared/remote-start-delay.js';
 import * as remoteSync from './remote-sync.js';
 import { applyRemoteTripletCommand } from './remote-sync-triplet.js';
 import {
@@ -99,6 +101,13 @@ const knobIndicator = document.getElementById('knob-indicator');
 const bpmFineToggle = document.getElementById('bpm-fine-toggle');
 
 let bpmFineMode = false;
+
+// The 3D face drawn over the tempo knob, or null while it loads and whenever
+// it is unavailable. Null is the working state: the flat knob stays in place
+// and keeps every listener below, so nothing here needs an error path. The
+// face draws only; every input below is untouched by it.
+let bpmKnob3d = null;
+const BPM_KNOB_3D_SIZE = 50;
 
 // Pre-load save step. Env `PROGRESSION_NEXT_PATTERN_SAVE_STEP` (exposed
 // as `progressionNextPatternSaveStep` on the inlined env snapshot) is the
@@ -213,6 +222,15 @@ let wrapSync = {
 // Init / status
 // ---------------------------------------------------------------------------
 
+// The TRIPLET morph projection lives on the top toolbar in `main.js`, which
+// imports this module, so it is injected rather than imported back.
+let remoteTripletPress = null;
+
+/** Register the function an incoming morph TRIPLET press should run. */
+export function setRemoteTripletPress(fn) {
+    remoteTripletPress = typeof fn === 'function' ? fn : null;
+}
+
 export function init(statusFn, scratch) {
     setStatus = statusFn;
     if (scratch) scratchSlot = scratch;
@@ -287,6 +305,23 @@ export function init(statusFn, scratch) {
         const bpm = dragBpm;
         dragBpm = null;
         applyLiveBpm(bpm);
+    });
+
+    // Draw the 3D face over the flat knob. Not awaited: `bootstrapLayout`
+    // awaits the page entry module before it reports the layout ready, so
+    // waiting here would hold the whole page on a model fetch and a shader
+    // compile. `updateBpmDisplay` afterwards adopts any tempo that changed
+    // while the model was in flight.
+    mountKnob3d({
+        host: bpmKnob,
+        min: 20,
+        max: 300,
+        value: state.getBpm(),
+        size: BPM_KNOB_3D_SIZE,
+    }).then((handle) => {
+        if (!handle) return;
+        bpmKnob3d = handle;
+        updateBpmDisplay();
     });
 }
 
@@ -421,8 +456,9 @@ async function handleRemoteCommand(command) {
         if (!Number.isFinite(command.centibpm)) return;
         applyLiveBpm(command.centibpm / 100, { relayRemote: false });
     } else if (command.command === 'triplet') {
-        if (applyRemoteTripletCommand(command, state)) {
-            setStatus(`Remote triplet ${command.triplet ? 'ON' : 'OFF'}`);
+        if (await applyRemoteTripletCommand(command, state, remoteTripletPress)) {
+            const how = command.morph === true ? ', morphed' : '';
+            setStatus(`Remote triplet ${command.triplet ? 'ON' : 'OFF'}${how}`);
         }
     }
 }
@@ -761,22 +797,21 @@ async function togglePlay(event, options = {}) {
     }
 }
 
-function plannedStartPatternIdx() {
-    const tl = state.getTimeline();
-    const start = firstTimelinePos(tl);
-    const activeTimelineSlots = countNonEmpty(tl);
-    if (activeTimelineSlots >= 1 && start >= 0) {
-        const patIdx = tl[start] - 1;
-        if (patIdx >= 0 && patIdx < state.getPatternCount()) return patIdx;
-    }
-    return state.getFocusedIdx();
-}
-
+/**
+ * The instant every synced device should begin, as configured.
+ *
+ * The lead was one pattern cycle. Its configurable replacement defaults to a
+ * fixed bar, which matches a full 16-step straight cycle and stays independent
+ * of shorter or triplet pattern lengths.
+ */
 function plannedStartTargetEpochMicros(event) {
-    const patIdx = plannedStartPatternIdx();
-    const activeSteps = patIdx !== null ? state.getActiveSteps(patIdx) : state.getActiveSteps();
-    const triplet = patIdx !== null ? state.getTriplet(patIdx) : state.getTriplet();
-    return targetEpochMicrosForPlay(event, state.getBpm(), activeSteps, triplet);
+    const lead = startDelayMicros({
+        mode: envStr('remoteSyncStartDelayMode'),
+        division: envStr('remoteSyncStartDelayDivision'),
+        milliseconds: envInt('remoteSyncStartDelayMs'),
+        bpm: state.getBpm(),
+    });
+    return eventEpochMicros(event) + lead;
 }
 
 function timingForPattern(patIdx) {
@@ -1779,6 +1814,7 @@ export function updateBpmDisplay(value = state.getBpm()) {
     bpmDisplay.textContent = bpm.toFixed(bpmFineMode ? 2 : 0);
     const angle = ((bpm - 20) / 280) * 300 - 150;
     knobIndicator.style.transform = `rotate(${angle}deg)`;
+    bpmKnob3d?.setValue(bpm);
 }
 
 export function updatePlayButton() {

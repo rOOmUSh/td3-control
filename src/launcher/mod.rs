@@ -9,6 +9,7 @@ pub(crate) mod child_args;
 pub mod choice;
 pub(crate) mod device_options;
 pub mod help_text;
+pub(crate) mod icon;
 pub mod midi_probe;
 pub(crate) mod persist;
 pub(crate) mod process;
@@ -51,7 +52,8 @@ pub fn run(env: &AppEnv, env_path: PathBuf) -> Result<Option<LauncherChoice>, Td
     let viewport = eframe::egui::ViewportBuilder::default()
         .with_inner_size([720.0, 640.0])
         .with_min_inner_size([560.0, 540.0])
-        .with_title("TD-3 Control Launcher");
+        .with_title("TD-3 Control Launcher")
+        .with_icon(icon::icon_data());
     let options = eframe::NativeOptions {
         viewport,
         ..Default::default()

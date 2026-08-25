@@ -33,5 +33,39 @@ assert(state.getGatePercent() === 1, 'setter clamps the lower bound');
 state.setGatePercent(500);
 assert(state.getGatePercent() === 100, 'setter clamps the upper bound');
 
+console.log('progression-state step lane tests:');
+
+function progPattern(note) {
+    return {
+        active_steps: 16,
+        triplet: false,
+        steps: Array.from({ length: 16 }, () => ({
+            note, transpose: 'NORMAL', accent: false, slide: false, time: 'NORMAL',
+        })),
+    };
+}
+
+const progLanes = {
+    open: true,
+    cutoffOn: true,
+    cutoff: Array.from({ length: 16 }, (_, i) => i * 8),
+    gate: Array.from({ length: 16 }, () => 70),
+    cutoffRatio: 96,
+};
+
+state.setLanes(1, progLanes);
+state.setPattern(1, progPattern('D'));
+assert(state.getLanes(1).open === true, 'setPattern keeps the row drawer open');
+assert(state.getLanes(1).cutoff[3] === 24, 'setPattern keeps the per-step values');
+assert(state.getLanes(1).cutoffRatio === 96, 'setPattern keeps the ratio');
+assert(state.getPattern(1).steps[0].note === 'D', 'the new content did land');
+
+state.setPatterns([progPattern('E'), progPattern('F'), progPattern('G'), progPattern('A')]);
+assert(state.getLanes(1).open === true, 'a generated set leaves the drawer open');
+assert(state.getLanes(1).cutoffOn === false, 'a generated set switches the lane off');
+assert(state.getLanes(1).cutoff.every(v => v === 64), 'a generated set blanks the values');
+assert(state.getLanes(1).cutoffRatio === 64, 'a generated set centres the ratio');
+assert(state.getPattern(1).steps[0].note === 'F', 'the generated content did land');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

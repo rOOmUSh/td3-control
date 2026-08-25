@@ -21,7 +21,7 @@ import {
     readPitchBend,
     writePitchBend,
 } from '../shared/pitch-bend-control.js';
-import { laneState, writeLaneState } from '../shared/step-lanes.js';
+import { carryLaneState, laneState, writeLaneState } from '../shared/step-lanes.js';
 import { createTripletMorphSession } from '../shared/triplet-morph-session.js';
 import { canonicalPatternText } from '../shared/pattern-canonical.js';
 import { editableSteps } from '../shared/triplet-morph-editing.js';
@@ -309,8 +309,24 @@ export function noteName(idx) { return NOTE_NAMES[Math.max(0, Math.min(12, idx))
 
 // --- Setters ---
 
-export function setPatterns(p) { patterns = p; notify(true); }
-export function setPattern(idx, p) { patterns[idx] = p; notify(true); }
+/**
+ * Replace all four patterns (RANDOMIZE, generate, Control handoff).
+ * Generated content arrives with blank lanes; the drawers a user opened
+ * belong to the rows and stay open over them.
+ */
+export function setPatterns(p) {
+    const previous = patterns;
+    patterns = Array.isArray(p)
+        ? p.map((next, i) => carryLaneState(previous[i], next, { reset: true }))
+        : p;
+    notify(true);
+}
+/** Replace one pattern. The row's lanes travel to the incoming pattern. */
+export function setPattern(idx, p) {
+    carryLaneState(patterns[idx], p);
+    patterns[idx] = p;
+    notify(true);
+}
 export function setStep(patIdx, stepIdx, s) { patterns[patIdx].steps[stepIdx] = s; notify(true); }
 export function setTimeline(t) { timeline = t; save(); notify(); }
 export function setTimelineLength(n) {

@@ -178,6 +178,100 @@ fn html_uses_local_tailwind_css() {
 }
 
 #[tokio::test]
+async fn favicon_ico_is_served_as_an_image() {
+    let app = build_app();
+    let req = Request::builder()
+        .uri("/favicon.ico")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        ct.contains("icon") || ct.contains("image"),
+        "expected an image content-type, got {}",
+        ct
+    );
+
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    // ICO header: reserved 0, type 1 (icon), then the image count. Each
+    // 16-byte directory entry starts with its width and height, where 0
+    // means 256.
+    assert!(body.len() > 6, "favicon.ico should not be empty");
+    assert_eq!(&body[0..4], &[0x00, 0x00, 0x01, 0x00], "not an ICO file");
+
+    let count = u16::from_le_bytes([body[4], body[5]]) as usize;
+    let mut sizes = Vec::with_capacity(count);
+    for i in 0..count {
+        let entry = 6 + 16 * i;
+        assert!(body.len() >= entry + 16, "ICO directory is truncated");
+        let width = body[entry];
+        let height = body[entry + 1];
+        assert_eq!(width, height, "icon {} is not square", i);
+        sizes.push(if width == 0 { 256u32 } else { u32::from(width) });
+    }
+
+    // Windows reads 16 and 32 for list views, 48 for the desktop and 256
+    // for the extra-large view; browsers pick 16 or 32 for the tab.
+    for expected in [16, 32, 48, 256] {
+        assert!(
+            sizes.contains(&expected),
+            "favicon.ico is missing the {}px image, has {:?}",
+            expected,
+            sizes
+        );
+    }
+}
+
+#[tokio::test]
+async fn png_icon_is_served_as_a_png() {
+    let app = build_app();
+    let req = Request::builder()
+        .uri("/img/td3-control.png")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(ct.contains("png"), "expected image/png, got {}", ct);
+
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    // PNG signature.
+    const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    assert!(body.starts_with(&PNG_MAGIC), "response is not a PNG file");
+}
+
+#[test]
+fn html_links_the_app_icon() {
+    for path in [
+        "index.html",
+        "progression.html",
+        "bank.html",
+        "settings.html",
+    ] {
+        let body = embedded_ui::read_text(path).unwrap_or_else(|| panic!("embed missing {}", path));
+        assert!(
+            body.contains(r#"href="/favicon.ico" rel="icon""#),
+            "{} should link /favicon.ico",
+            path
+        );
+        assert!(
+            body.contains(r#"href="/img/td3-control.png" rel="icon""#),
+            "{} should link the PNG icon",
+            path
+        );
+    }
+}
+
+#[tokio::test]
 async fn unknown_path_returns_404() {
     let app = build_app();
     let req = Request::builder()

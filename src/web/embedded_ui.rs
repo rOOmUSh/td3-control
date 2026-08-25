@@ -14,6 +14,7 @@ use rust_embed::RustEmbed;
 #[folder = "ui/"]
 #[exclude = "config/bank-library.sqlite3*"]
 #[exclude = "config/bank-library-patterns/*"]
+#[exclude = "partials/knob/tests/**"]
 struct UiAssets;
 
 pub async fn serve_asset(uri: Uri) -> Response {

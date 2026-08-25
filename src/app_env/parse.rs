@@ -71,6 +71,16 @@ pub(super) fn parse_env(
             "UI_PATTERN_EXPORT_NAME_PROMPT",
             get("UI_PATTERN_EXPORT_NAME_PROMPT")?,
         )?,
+        remote_sync_start_delay_mode: get("REMOTE_SYNC_START_DELAY_MODE")?.to_owned(),
+        remote_sync_start_delay_division: get("REMOTE_SYNC_START_DELAY_DIVISION")?.to_owned(),
+        // Permissive here on purpose: the loader accepts any hand-edited
+        // value in range and the Settings UI enforces the tighter choice.
+        remote_sync_start_delay_ms: parse_u32_range(
+            "REMOTE_SYNC_START_DELAY_MS",
+            get("REMOTE_SYNC_START_DELAY_MS")?,
+            0,
+            60000,
+        )?,
         ui_pattern_export_batch_delay_ms: parse_u32_range(
             "UI_PATTERN_EXPORT_BATCH_DELAY_MS",
             get("UI_PATTERN_EXPORT_BATCH_DELAY_MS")?,

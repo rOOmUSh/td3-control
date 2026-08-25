@@ -86,6 +86,9 @@ pub async fn start_server(
         ui_rand_acc_percent: env.ui_rand_acc_percent,
         ui_rand_ud_percent: env.ui_rand_ud_percent,
         progression_next_pattern_save_step: env.progression_next_pattern_save_step,
+        remote_sync_start_delay_mode: env.remote_sync_start_delay_mode.clone(),
+        remote_sync_start_delay_division: env.remote_sync_start_delay_division.clone(),
+        remote_sync_start_delay_ms: env.remote_sync_start_delay_ms,
     };
 
     // Prefer the resolved control-session backup dir (already layers

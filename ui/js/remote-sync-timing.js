@@ -21,10 +21,6 @@ export function cycleDurationMicros(bpm, activeSteps, triplet) {
     return tickPeriodMicros * steps * clocksPerStep;
 }
 
-export function targetEpochMicrosForPlay(event, bpm, activeSteps, triplet, timeOriginMs) {
-    return eventEpochMicros(event, timeOriginMs)
-        + cycleDurationMicros(bpm, activeSteps, triplet);
-}
 
 export function startSyncFromTargetMicros(targetEpochMicros) {
     if (!Number.isFinite(targetEpochMicros) || targetEpochMicros <= 0) return null;

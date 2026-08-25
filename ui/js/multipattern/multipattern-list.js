@@ -1,9 +1,10 @@
 // Orchestrates the `#multipattern-list` container on the main Control page.
 //
-// Subscribes to multipattern-state `onChange` and rebuilds the card list
+// Subscribes to multipattern-state `onChange` and re-renders the card list
 // whenever the pattern array changes structurally OR the focused index /
-// checked set / per-step content changes. For N≤64 this is cheap and keeps
-// the DOM a pure function of state.
+// checked set / per-step content changes. The DOM stays a pure function of
+// state, but a card is only rebuilt when one of its own inputs moved, and
+// the container is only disturbed when the set of cards actually changed.
 //
 // One delegated click listener on the container handles every per-card
 // button - PREVIEW, SHIFT, TRNSPS, RAND, COPY, PASTE, DEL - so row renders
@@ -101,27 +102,119 @@ function cancelQueuedRender() {
     renderHandle = null;
 }
 
-/** Rebuild the card list from current state. */
+// --- Card reuse -----------------------------------------------------------
+//
+// A card is 430 elements, so 64 patterns is 27,584. Rebuilding all of them
+// for a change that touched one pattern, or none, is what made every knob
+// turn, focus move and checkbox cost about a third of a second.
+//
+// A card is kept and reused unless one of its own inputs changed. The inputs
+// in `cardSignature` are the complete set `renderCard` reads: they were taken
+// by instrumenting every store getter and recording what one card build
+// actually touched, rather than by reading the source, so nothing is missed
+// by eye. `renderCard` also reads `preview.isActive(i)` and `clipboard.has()`,
+// which are not store getters and are included too.
+//
+// Adding a read to `renderCard` without adding it here leaves a stale card.
+// The browser suite asserts that each input repaints its card.
+
+const cardCache = new Map();
+
+/** Inputs shared by every card, read once per render. */
+function globalSignature() {
+    return [
+        state.getAbMode(),
+        state.getScratchSlot(),
+        state.getSelectedSlot(),
+        state.isDeviceControlsSupported(),
+        state.isKbEditEnabled(),
+        state.isLiveUpdate(),
+        clipboard.has('rest'),
+        clipboard.has('slide'),
+        clipboard.has('accent'),
+    ];
+}
+
+/**
+ * Everything the card at `index` is built from. Equal signatures mean
+ * identical markup, so the existing element is kept.
+ *
+ * The index is part of the signature because the card's handlers close over
+ * it: a card must never be reused at a different position, even when the
+ * pattern content matches.
+ */
+export function cardSignature(index, globals, visible) {
+    const focused = state.getFocusedIdx() === index;
+    return JSON.stringify([
+        index,
+        visible,
+        globals,
+        state.getPattern(index),
+        state.getActiveSteps(index),
+        state.getTriplet(index),
+        state.getLanes(index),
+        state.isChecked(index),
+        state.isNoSave(index),
+        state.isTripletMorphSendFor(index),
+        preview.isActive(index),
+        focused,
+        // The selected step only shows on the focused card.
+        focused ? state.getSelectedStep() : -1,
+    ]);
+}
+
+/** Drop cached cards for indexes that no longer exist. */
+function pruneCache(count) {
+    for (const index of [...cardCache.keys()]) {
+        if (index >= count) cardCache.delete(index);
+    }
+}
+
+/** Re-render the card list from current state, reusing unchanged cards. */
 export function render() {
     cancelQueuedRender();
     if (!container) return;
-    const scrollHost = getScrollHost();
-    const scrollTop = scrollHost ? scrollHost.scrollTop : 0;
     const count = state.getPatternCount();
     const vp = state.getViewport();
     const mode = state.getAbMode();
     const scratch = state.getScratchSlot();
     const startSlot = state.getSelectedSlot();
-    const frag = document.createDocumentFragment();
+    const globals = globalSignature();
+    pruneCache(count);
+
+    const cards = [];
     for (let i = 0; i < count; i++) {
-        const card = renderCard(i);
-        if (!matchesViewport(i, vp, scratch, mode, startSlot)) {
-            card.classList.add('mp-card-hidden');
-            card.style.display = 'none';
+        const visible = matchesViewport(i, vp, scratch, mode, startSlot);
+        const signature = cardSignature(i, globals, visible);
+        const cached = cardCache.get(i);
+        if (cached && cached.signature === signature) {
+            cards.push(cached.card);
+            continue;
         }
-        frag.appendChild(card);
+        const card = renderCard(i);
+        card.classList.toggle('mp-card-hidden', !visible);
+        card.style.display = visible ? '' : 'none';
+        cardCache.set(i, { signature, card });
+        cards.push(card);
     }
-    container.replaceChildren(frag);
+
+    // Swapping one card in place leaves the rest of the list alone, so the
+    // scroll position is never disturbed and never has to be restored.
+    // Writing `scrollTop` forces a synchronous layout of the whole list,
+    // which at 64 patterns is the single most expensive thing a render can
+    // do, so it is reserved for the case that actually needs it: the card
+    // count changing.
+    const existing = Array.from(container.children);
+    if (existing.length !== cards.length) {
+        const scrollHost = getScrollHost();
+        const scrollTop = scrollHost ? scrollHost.scrollTop : 0;
+        container.replaceChildren(...cards);
+        restoreScroll(scrollHost, scrollTop);
+    } else {
+        for (let i = 0; i < cards.length; i++) {
+            if (existing[i] !== cards[i]) existing[i].replaceWith(cards[i]);
+        }
+    }
     paintStepHighlight();
     alignStepLaneDrawers(container, '.mp-card-grid');
     // The cards are new, so the derived triplet geometry that was on the
@@ -130,7 +223,6 @@ export function render() {
     // also covers the rebuilds that never came from a notification at
     // all - a clipboard or preview change used to drop the morph view.
     tripletMorphView.render();
-    restoreScroll(scrollHost, scrollTop);
 }
 
 function getScrollHost() {

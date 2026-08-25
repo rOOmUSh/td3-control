@@ -50,6 +50,9 @@ export function writeGatePercent(value, storage) {
     return normalized;
 }
 
+/** Rendered size of the 3D model drawn over this knob, in CSS pixels. */
+const PANEL_KNOB_3D_SIZE = 50;
+
 export function createGateControl({
     root,
     display,
@@ -63,6 +66,7 @@ export function createGateControl({
 }) {
     return createPercentKnob({
         ...GATE_BOUNDS,
+        knob3dSize: PANEL_KNOB_3D_SIZE,
         ariaLabel: 'Gate',
         root,
         display,

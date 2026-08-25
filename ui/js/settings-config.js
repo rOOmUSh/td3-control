@@ -94,7 +94,39 @@ function renderFields() {
         (f) => f.section_id === activeSectionId,
     );
     for (const field of fieldsInSection) {
-        fieldsContainer.appendChild(buildFieldRow(field));
+        const row = buildFieldRow(field);
+        row.dataset.fieldKey = field.key;
+        fieldsContainer.appendChild(row);
+    }
+    applyFieldVisibility();
+}
+
+/**
+ * The value a field currently holds, counting edits not yet saved.
+ * Visibility has to follow what is on screen, not what is on disk, or
+ * switching the mode would leave the wrong control showing until a save.
+ */
+export function effectiveValue(key) {
+    if (pendingEdits.has(key)) return pendingEdits.get(key);
+    return payload.values[key] ?? '';
+}
+
+/**
+ * True when `field` has no condition, or its condition is met. Comparison is
+ * case-insensitive to match how the server validates an enum.
+ */
+export function fieldIsVisible(field, valueOf) {
+    const condition = field && field.visible_when;
+    if (!condition || !condition.key) return true;
+    const actual = String(valueOf(condition.key) ?? '').trim().toLowerCase();
+    return actual === String(condition.equals).trim().toLowerCase();
+}
+
+/** Show or hide each rendered row according to its condition. */
+function applyFieldVisibility() {
+    for (const row of fieldsContainer.querySelectorAll('[data-field-key]')) {
+        const field = payload.fields.find((f) => f.key === row.dataset.fieldKey);
+        row.classList.toggle('hidden', !fieldIsVisible(field, effectiveValue));
     }
 }
 
@@ -229,6 +261,9 @@ function markDirty(key, newValue) {
         pendingEdits.set(key, newValue);
     }
     updateDirtyIndicator();
+    // A field others depend on has just moved, so re-evaluate which rows
+    // belong on screen without rebuilding them and losing focus.
+    applyFieldVisibility();
 }
 
 function updateDirtyIndicator() {

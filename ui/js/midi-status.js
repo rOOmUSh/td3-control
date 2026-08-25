@@ -9,6 +9,7 @@ import { api } from './api.js';
 import * as deviceBackup from './device-backup.js';
 import * as syncSource from './sync-source.js';
 import { applyState } from './shared/class-state.js';
+import { deviceLabelWithFirmware } from './shared/device-label.js';
 
 // HTML partials/transport-bar.html owns the structural classes on
 // #btn-midi, its icon, and #midi-label. This module only swaps the
@@ -85,7 +86,7 @@ async function autoConnect() {
             sync_source: 'usb',
             device_controls: conn.device_controls,
         });
-        setStatus(`Connected: ${conn.product_name} v${conn.firmware}`);
+        setStatus(`Connected: ${deviceLabelWithFirmware(conn.product_name, conn.firmware)}`);
         deviceBackup.ensureBackup(conn.firmware);
         fireModeSend();
     } catch (_) {
@@ -118,7 +119,7 @@ async function toggleConnection() {
                 sync_source: 'usb',
                 device_controls: res.device_controls,
             });
-            setStatus(`Connected: ${res.product_name} v${res.firmware}`);
+            setStatus(`Connected: ${deviceLabelWithFirmware(res.product_name, res.firmware)}`);
             deviceBackup.ensureBackup(res.firmware);
             fireModeSend();
         }
@@ -174,13 +175,13 @@ function updateUI(statusRes) {
         icon.textContent = 'sync';
         midiLabel.textContent = 'CONNECTED';
         if (statusRes && statusRes.product_name) {
-            firmwareLabel.textContent = `${statusRes.product_name} v${statusRes.firmware || '?'}`;
+            firmwareLabel.textContent = deviceLabelWithFirmware(statusRes.product_name, statusRes.firmware);
         }
     } else {
         icon.textContent = key === 'yellow' ? 'sync' : 'sync_problem';
         midiLabel.textContent = 'DISCONNECTED';
         if (key === 'yellow' && statusRes && statusRes.product_name) {
-            firmwareLabel.textContent = `${statusRes.product_name} v${statusRes.firmware || '?'}`;
+            firmwareLabel.textContent = deviceLabelWithFirmware(statusRes.product_name, statusRes.firmware);
         } else {
             firmwareLabel.textContent = '';
         }

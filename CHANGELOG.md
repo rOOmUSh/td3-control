@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.3.1 - 2026-08-24
+
+### Added
+
+- Added the application icon.
+- The transport bar knobs are drawn as 3D models: `BPM`, `GATE`, `TRIPLET`, and `CUTOFF` on a TD-3-MO.
+- The REMOTE sync start delay is configurable under `Settings` `CONFIG` `REMOTE SYNC`.
+- Toggling REMOTE sync ON reports the round trip each peer answered its probe in, so the delay can be set from measurement rather than guesswork.
+
+### Fixed
+
+- The per-pattern step lane drawer no longer closes and loses its values when another control is used.
+- Remote commands now wait in the peer queue for up to ten seconds.
+- Stale Remote commands are discarded.
+- Remote commands no longer disappear between browser polls.
+- Remote `TRIPLET` now mirrors the `MORPH` mode.
+- Remote `TRIPLET OFF` now restores the original straight pattern.
+- Remote TRIPLET projection now finishes before the next command is processed.
+
+### Compatibility
+
+- No pattern, file, SysEx, or storage format changed. `.steps.txt`, `.syx`, bank packages, saved libraries, and every UI selector, element ID and data attribute behave exactly as in v1.3.0. The two static assets `/favicon.ico` and `/img/td3-control.png` are additions; no existing route was removed or renamed.
+- Three configuration keys are new: `REMOTE_SYNC_START_DELAY_MODE`, `REMOTE_SYNC_START_DELAY_DIVISION` and `REMOTE_SYNC_START_DELAY_MS`. A configuration file written before they existed loads unchanged. The default is a fixed one-bar musical lead: it matches the previous cycle lead for a full 16-step straight pattern, while short and triplet patterns use the same fixed bar instead of their shorter cycle.
+
 ## v1.3.0 - 2026-08-21
 
 ### Added

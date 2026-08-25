@@ -150,6 +150,12 @@ pub async fn get_env_config_full(
                 ),
                 crate::env_metadata::FieldKind::ScaleId => ("scaleId", None, None, None),
             };
+            let visible_when = crate::env_metadata::visibility_for(f.key).map(|(key, equals)| {
+                crate::web::api_types::EnvVisibleWhen {
+                    key: key.to_owned(),
+                    equals: equals.to_owned(),
+                }
+            });
             EnvFieldInfo {
                 key: f.key.to_owned(),
                 section_id: f.section_id.to_owned(),
@@ -158,6 +164,7 @@ pub async fn get_env_config_full(
                 min,
                 max,
                 options,
+                visible_when,
             }
         })
         .collect();

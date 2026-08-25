@@ -79,7 +79,38 @@ pub const SECTIONS: &[Section] = &[
         id: "pattern_export",
         title: "PATTERN EXPORT",
     },
+    Section {
+        id: "remote_sync",
+        title: "REMOTE SYNC",
+    },
 ];
+
+/// Fields that only apply while another key holds a particular value.
+///
+/// Entries are `(field, depends on, required value)`. The Settings UI hides a
+/// field whose condition is unmet, so the delay is shown either as a note
+/// value or as a millisecond count, never both. Kept beside `FIELDS` rather
+/// than on `FieldMeta` so the forty existing entries stay untouched.
+pub const VISIBILITY: &[(&str, &str, &str)] = &[
+    (
+        "REMOTE_SYNC_START_DELAY_DIVISION",
+        "REMOTE_SYNC_START_DELAY_MODE",
+        "musical",
+    ),
+    (
+        "REMOTE_SYNC_START_DELAY_MS",
+        "REMOTE_SYNC_START_DELAY_MODE",
+        "ms",
+    ),
+];
+
+/// The key and value `field` depends on, if it has such a condition.
+pub fn visibility_for(field: &str) -> Option<(&'static str, &'static str)> {
+    VISIBILITY
+        .iter()
+        .find(|(key, _, _)| *key == field)
+        .map(|(_, depends_on, equals)| (*depends_on, *equals))
+}
 
 pub const FIELDS: &[FieldMeta] = &[
     // --- MIDI & DEVICE ---
@@ -288,6 +319,29 @@ pub const FIELDS: &[FieldMeta] = &[
         section_id: "pattern_export",
         kind: FieldKind::Integer { min: 0, max: 60_000 },
         description: "Pause in milliseconds between browser download batches of 10 patterns. Set to 0 to disable the pause.",
+    },
+    // --- REMOTE SYNC ---
+    FieldMeta {
+        key: "REMOTE_SYNC_START_DELAY_MODE",
+        section_id: "remote_sync",
+        kind: FieldKind::Enum {
+            options: &["musical", "ms"],
+        },
+        description: "How the shared start instant is chosen with REMOTE sync on: musical picks a note value at the current tempo, ms uses a flat millisecond lead.",
+    },
+    FieldMeta {
+        key: "REMOTE_SYNC_START_DELAY_DIVISION",
+        section_id: "remote_sync",
+        kind: FieldKind::Enum {
+            options: &["1/8", "1/4", "1/2", "1bar", "2bars", "4bars"],
+        },
+        description: "Note value the start is scheduled ahead by in musical mode. 1bar is the previous fixed behaviour, which is 2 seconds at 120 BPM.",
+    },
+    FieldMeta {
+        key: "REMOTE_SYNC_START_DELAY_MS",
+        section_id: "remote_sync",
+        kind: FieldKind::Integer { min: 0, max: 60000 },
+        description: "Flat lead in milliseconds in ms mode. Measured delivery between two servers on one machine is about 3 ms, so this only has to cover the link plus a margin.",
     },
 ];
 

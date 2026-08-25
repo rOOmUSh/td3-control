@@ -2636,6 +2636,9 @@ async fn http_config_env_keys_are_stable_camel_case() {
         "uiRandAccPercent",
         "uiRandUdPercent",
         "progressionNextPatternSaveStep",
+        "remoteSyncStartDelayMode",
+        "remoteSyncStartDelayDivision",
+        "remoteSyncStartDelayMs",
     ];
     for key in expected_keys {
         assert!(obj.contains_key(key), "missing expected key: {}", key);

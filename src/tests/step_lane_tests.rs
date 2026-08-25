@@ -2,6 +2,7 @@
 //! audition timeline with per-step gate and cutoff, and the HTTP
 //! validation of the lane fields.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -307,14 +308,20 @@ fn cutoff_lane_is_emitted_on_rest_steps_too() {
 // HTTP validation
 // ---------------------------------------------------------------------------
 
+/// Serial number for the per-test library file.
+///
+/// A wall-clock stamp is not unique here: `cargo test` runs these in
+/// parallel and two threads entering within the same clock tick produced
+/// the same path, so one of them opened a store another was already using.
+/// That is what failed on macOS in CI, where the local runner never saw it
+/// because it pinned a single thread. A counter cannot collide.
+static LIBRARY_SERIAL: AtomicU64 = AtomicU64::new(0);
+
 fn build_router() -> Router {
     let path = std::env::temp_dir().join(format!(
         "td3-steplane-test-{}-{}.json",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
+        LIBRARY_SERIAL.fetch_add(1, Ordering::Relaxed)
     ));
     let _ = std::fs::remove_file(&path);
     let library = Arc::new(LibraryStore::load_or_create(path).expect("test library"));

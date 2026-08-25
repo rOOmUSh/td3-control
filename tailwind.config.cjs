@@ -3,6 +3,10 @@ module.exports = {
   content: [
     "./ui/**/*.html",
     "./ui/**/*.js",
+    // The 3D knob package is vendored and uses no utility classes. Scanning
+    // its minified three.js bundles feeds arbitrary identifier runs to the
+    // class extractor, which generates utilities nothing asked for.
+    "!./ui/partials/knob/**",
   ],
   theme: {
     extend: {

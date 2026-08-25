@@ -193,6 +193,8 @@ You can adjust it in two ways:
 
 If playback is already running, the app updates the playback timer and sends the new BPM to the TD-3 when possible.
 
+On the Control page the knob is drawn as a 3D model. Turning it left goes toward `20` BPM and right toward `300`, and dragging up raises the tempo at the same one BPM per three pixels as the flat knob. The wheel behaves exactly as above, fine mode included. The model is loaded only after the page is ready; if it cannot be loaded, or the browser has no WebGL, the flat knob stays on screen and every control keeps working. The Progression and Bank pages always use the flat knob.
+
 ## Gate
 
 The `GATE` control sets how long ordinary notes are held during non-saving host audition. Its value is an integer from `1%` to `100%` of one pattern step:

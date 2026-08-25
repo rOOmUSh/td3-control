@@ -5,6 +5,7 @@ import {
     LANE_COLOR_MID,
     LANE_COLOR_MIN,
     auditionLaneFields,
+    carryLaneState,
     defaultLaneValues,
     effectiveLane,
     effectiveLaneValue,
@@ -161,6 +162,55 @@ test('readout colour blends linearly between anchors', () => {
     const [, g2] = upper.match(/\d+/g).map(Number);
     assert(g2 > LANE_COLOR_MID[1] && g2 < LANE_COLOR_MAX[1], `upper half heads to green: ${upper}`);
     assert(laneColor('cutoff', 500) === rgb(LANE_COLOR_MAX), 'over-range clamps');
+});
+
+test('carryLaneState moves the whole lane state onto the replacement', () => {
+    const previous = { steps: [], lanes: { open: true, cutoffOn: true, cutoff: [7], cutoffRatio: 96 } };
+    const next = { steps: [] };
+    const returned = carryLaneState(previous, next);
+    assert(returned === next, 'returns the replacement');
+    const lanes = laneState(next);
+    assert(lanes.open === true, 'drawer stays open');
+    assert(lanes.cutoffOn === true, 'switch travels');
+    assert(lanes.cutoff[0] === 7, 'per-step value travels');
+    assert(lanes.cutoffRatio === 96, 'ratio travels');
+});
+
+test('carryLaneState discards lanes the replacement carried itself', () => {
+    const previous = { lanes: { open: true, cutoff: [7] } };
+    const next = { lanes: { open: false, cutoff: [120], gateOn: true } };
+    carryLaneState(previous, next);
+    const lanes = laneState(next);
+    assert(lanes.open === true, 'the slot open state wins');
+    assert(lanes.cutoff[0] === 7, 'the slot values win');
+    assert(lanes.gateOn === false, 'the incoming switch is discarded');
+});
+
+test('carryLaneState with reset keeps only the open flag', () => {
+    const previous = {
+        lanes: {
+            open: true, cutoffOn: true, gateOn: true,
+            cutoff: [7], gate: [9], cutoffRatio: 96, gateRatio: 20,
+        },
+    };
+    const next = {};
+    carryLaneState(previous, next, { reset: true });
+    const lanes = laneState(next);
+    assert(lanes.open === true, 'drawer stays open');
+    assert(lanes.cutoffOn === false && lanes.gateOn === false, 'switches off');
+    assert(isLaneDefault('cutoff', lanes.cutoff), 'cutoff back to default');
+    assert(isLaneDefault('gate', lanes.gate), 'gate back to default');
+    assert(lanes.cutoffRatio === 64 && lanes.gateRatio === 50, 'ratios back to centre');
+});
+
+test('carryLaneState tolerates a missing previous pattern and a non-object next', () => {
+    const next = {};
+    carryLaneState(null, next);
+    const lanes = laneState(next);
+    assert(lanes.open === false, 'no previous means a closed drawer');
+    assert(isLaneDefault('cutoff', lanes.cutoff), 'no previous means defaults');
+    assert(carryLaneState({ lanes: { open: true } }, null) === null, 'null next is returned as is');
+    assert(carryLaneState({}, 5) === 5, 'a non-object next is returned as is');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -51,6 +51,9 @@ export function writeFilterCutoff(value, storage) {
     return normalized;
 }
 
+/** Rendered size of the 3D model drawn over this knob, in CSS pixels. */
+const PANEL_KNOB_3D_SIZE = 50;
+
 export function createFilterCutoffControl({
     root,
     display,
@@ -64,6 +67,7 @@ export function createFilterCutoffControl({
 }) {
     return createPercentKnob({
         ...CUTOFF_BOUNDS,
+        knob3dSize: PANEL_KNOB_3D_SIZE,
         ariaLabel: 'Filter cutoff',
         pageStep: 8,
         formatValue: formatFilterCutoff,

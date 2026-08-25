@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::State;
@@ -24,10 +24,16 @@ const RELAY_TIMEOUT: Duration = Duration::from_millis(1500);
 const PROBE_TIMEOUT: Duration = Duration::from_millis(700);
 const MAX_QUEUE: usize = 8;
 const MAX_REMOTE_PORTS: usize = 8;
+const MAX_COMMAND_AGE: Duration = Duration::from_secs(10);
+
+struct QueuedRemoteSyncCommand {
+    command: RemoteSyncCommand,
+    queued_at: Instant,
+}
 
 #[derive(Default)]
 pub struct RemoteSyncQueue {
-    queue: Mutex<VecDeque<RemoteSyncCommand>>,
+    queue: Mutex<VecDeque<QueuedRemoteSyncCommand>>,
     notify: Notify,
     listener_count: AtomicUsize,
 }
@@ -37,24 +43,54 @@ impl RemoteSyncQueue {
         Self::default()
     }
 
-    async fn push(&self, command: RemoteSyncCommand) -> Result<(), AppError> {
-        if self.listener_count.load(Ordering::Acquire) == 0 {
-            return Err(AppError::Conflict("remote UI not listening".to_string()));
-        }
+    /// Queue `command` and report whether a poll was waiting for it.
+    ///
+    /// A command is accepted whether or not anyone is listening at that
+    /// instant. The browser polls in a loop, so between one poll returning
+    /// and the next one starting there is a window with no listener, and it
+    /// widens while the browser is busy handling the command it just took.
+    /// Rejecting there dropped play and stop commands that arrived close
+    /// together, which is exactly when they matter. The queue is bounded by
+    /// both size and age, so a genuinely absent UI cannot replay stale input.
+    async fn push(&self, command: RemoteSyncCommand) -> bool {
+        let listening = self.listener_count.load(Ordering::Acquire) > 0;
 
         let mut queue = self.queue.lock().await;
+        let now = Instant::now();
+        queue.retain(|queued| now.saturating_duration_since(queued.queued_at) <= MAX_COMMAND_AGE);
         if queue.len() >= MAX_QUEUE {
             let _ = queue.pop_front();
         }
-        queue.push_back(command);
-        self.notify.notify_waiters();
-        Ok(())
+        queue.push_back(QueuedRemoteSyncCommand {
+            command,
+            queued_at: now,
+        });
+        // Unlike `notify_waiters`, this stores a permit if the poll has checked
+        // the queue but has not registered its waiter yet.
+        self.notify.notify_one();
+        listening
     }
 
     async fn pop_waiting(&self) -> Option<RemoteSyncCommand> {
         let _listener = PollListener::new(&self.listener_count);
         loop {
-            if let Some(command) = self.queue.lock().await.pop_front() {
+            let command = {
+                let mut queue = self.queue.lock().await;
+                let now = Instant::now();
+                loop {
+                    match queue.pop_front() {
+                        Some(queued)
+                            if now.saturating_duration_since(queued.queued_at)
+                                <= MAX_COMMAND_AGE =>
+                        {
+                            break Some(queued.command);
+                        }
+                        Some(_) => continue,
+                        None => break None,
+                    }
+                }
+            };
+            if let Some(command) = command {
                 return Some(command);
             }
 
@@ -68,6 +104,16 @@ impl RemoteSyncQueue {
     #[cfg(test)]
     pub fn listener_count(&self) -> usize {
         self.listener_count.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    pub async fn age_queued_commands_for_test(&self, age: Duration) {
+        let now = Instant::now();
+        let queued_at = now.checked_sub(age).unwrap_or(now);
+        let mut queue = self.queue.lock().await;
+        for queued in queue.iter_mut() {
+            queued.queued_at = queued_at;
+        }
     }
 }
 
@@ -144,10 +190,11 @@ async fn command(
         command.target_epoch_micros,
         command.triplet,
     )?;
-    state.playback.remote_sync.push(command).await?;
+    let listening = state.playback.remote_sync.push(command).await;
     Ok(Json(RemoteSyncCommandResponse {
         ok: true,
         queued: true,
+        listening: Some(listening),
         results: Vec::new(),
     }))
 }
@@ -316,6 +363,7 @@ async fn probe_remote_server_with_client(
     port: u16,
 ) -> RemoteSyncProbeResult {
     let url = format!("http://127.0.0.1:{}/api/status", port);
+    let started = Instant::now();
     let response = match client.get(url).send().await {
         Ok(response) => response,
         Err(_) => return probe_failure(port, format!("No server on port {}", port)),
@@ -324,11 +372,16 @@ async fn probe_remote_server_with_client(
     if !response.status().is_success() {
         return probe_failure(port, format!("No td3-control server on port {}", port));
     }
+    // Measured after the status line is back, so it covers the request, the
+    // peer's handling and the response head. The body is not read: it is the
+    // status payload and its size would flatter or distort the figure.
+    let rtt_micros = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
 
     RemoteSyncProbeResult {
         port,
         ok: true,
         error: None,
+        rtt_micros: Some(rtt_micros),
     }
 }
 
@@ -373,6 +426,7 @@ async fn relay_command_to_port(
             ok: true,
             queued: true,
             error: None,
+            listening: body.listening,
         };
     }
 
@@ -416,9 +470,13 @@ fn collect_relay_results(
 fn command_response_from_results(results: Vec<RemoteSyncRelayResult>) -> RemoteSyncCommandResponse {
     let ok = results.iter().all(|result| result.ok);
     let queued = results.iter().all(|result| result.queued);
+    // The relay's own reply carries no listener state of its own: whether a
+    // browser was attached is a fact about each peer, and it travels on the
+    // per-port results.
     RemoteSyncCommandResponse {
         ok,
         queued,
+        listening: None,
         results,
     }
 }
@@ -461,6 +519,7 @@ fn relay_failure(port: u16, error: String) -> RemoteSyncRelayResult {
         ok: false,
         queued: false,
         error: Some(error),
+        listening: None,
     }
 }
 
@@ -469,5 +528,6 @@ fn probe_failure(port: u16, error: String) -> RemoteSyncProbeResult {
         port,
         ok: false,
         error: Some(error),
+        rtt_micros: None,
     }
 }

@@ -1322,6 +1322,129 @@ test('setting a row morph flag notifies without touching the pattern', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Step lane persistence
+//
+// The lanes belong to the pattern slot, not to the pattern content, so a
+// replacement pattern adopts them. CLEAR and a wholesale load blank the
+// values but leave the drawer open.
+// ---------------------------------------------------------------------------
+
+function freshPattern(note = 'D') {
+    return {
+        active_steps: 16,
+        triplet: false,
+        steps: Array.from({ length: 16 }, () => ({
+            note, transpose: 'NORMAL', accent: false, slide: false, time: 'NORMAL',
+        })),
+    };
+}
+
+const TUNED_LANES = {
+    open: true,
+    cutoffOn: true,
+    gateOn: true,
+    cutoff: Array.from({ length: 16 }, (_, i) => i * 8),
+    gate: Array.from({ length: 16 }, (_, i) => i + 20),
+    cutoffRatio: 96,
+    gateRatio: 30,
+};
+
+test('setPattern keeps the slot lanes when a caller supplies a fresh pattern', () => {
+    reset();
+    state.setLanes(0, TUNED_LANES);
+    state.setPattern(0, freshPattern());
+    const lanes = state.getLanes(0);
+    assert(lanes.open === true, 'drawer still open');
+    assert(lanes.cutoffOn === true && lanes.gateOn === true, 'switches still on');
+    assert(lanes.cutoff[3] === 24 && lanes.gate[3] === 23, 'per-step values kept');
+    assert(lanes.cutoffRatio === 96 && lanes.gateRatio === 30, 'ratios kept');
+    assert(state.getPattern(0).steps[0].note === 'D', 'the new content did land');
+});
+
+test('setPattern discards lanes the incoming pattern carried', () => {
+    reset();
+    state.setLanes(0, TUNED_LANES);
+    const incoming = freshPattern();
+    incoming.lanes = { open: false, cutoffOn: false, cutoff: Array(16).fill(1) };
+    state.setPattern(0, incoming);
+    const lanes = state.getLanes(0);
+    assert(lanes.open === true, 'slot open state wins');
+    assert(lanes.cutoff[3] === 24, 'slot values win');
+});
+
+test('resetPattern blanks the lane values and leaves the drawer open', () => {
+    reset();
+    state.setLanes(0, TUNED_LANES);
+    state.resetPattern(0);
+    const lanes = state.getLanes(0);
+    assert(lanes.open === true, 'drawer stays open');
+    assert(lanes.cutoffOn === false && lanes.gateOn === false, 'switches off');
+    assert(lanes.cutoff.every(v => v === 64), 'cutoff back to 64');
+    assert(lanes.gate.every(v => v === 50), 'gate back to 50');
+    assert(lanes.cutoffRatio === 64 && lanes.gateRatio === 50, 'ratios centred');
+});
+
+test('resetAllPatterns blanks every lane and leaves the drawers open', () => {
+    reset();
+    state.addPattern();
+    state.setLanes(0, TUNED_LANES);
+    state.setLanes(1, TUNED_LANES);
+    state.resetAllPatterns();
+    for (const i of [0, 1]) {
+        assert(state.getLanes(i).open === true, `drawer ${i} stays open`);
+        assert(state.getLanes(i).cutoff[3] === 64, `lane ${i} blanked`);
+    }
+    reset();
+});
+
+test('deleting the last pattern blanks its lanes and leaves the drawer open', () => {
+    reset();
+    state.setLanes(0, TUNED_LANES);
+    state.deletePattern(0);
+    const lanes = state.getLanes(0);
+    assert(state.getPatternCount() === 1, 'the floor keeps one pattern');
+    assert(lanes.open === true, 'drawer stays open');
+    assert(lanes.cutoff[3] === 64, 'values blanked');
+});
+
+test('pasteIntoFocused keeps the target slot lanes', () => {
+    reset();
+    state.addPattern();
+    state.setLanes(0, TUNED_LANES);
+    state.setLanes(1, { open: false, cutoffOn: false, cutoff: Array(16).fill(10) });
+    state.setFocused(1);
+    state.copyFocused();
+    state.setFocused(0);
+    state.pasteIntoFocused();
+    const lanes = state.getLanes(0);
+    assert(lanes.open === true, 'the target drawer stays open');
+    assert(lanes.cutoff[3] === 24, 'the target values survive the paste');
+    reset();
+});
+
+test('replaceAllPatterns blanks the lanes and keeps each drawer open', () => {
+    reset();
+    state.addPattern();
+    state.setLanes(0, TUNED_LANES);
+    state.replaceAllPatterns([freshPattern('E'), freshPattern('F'), freshPattern('G')]);
+    assert(state.getPatternCount() === 3, 'three patterns loaded');
+    assert(state.getLanes(0).open === true, 'the open drawer stays open');
+    assert(state.getLanes(0).cutoff[3] === 64, 'loaded content brings blank lanes');
+    assert(state.getLanes(2).open === false, 'a slot that did not exist starts closed');
+    reset();
+});
+
+test('undo restores the lanes recorded in the snapshot', () => {
+    reset();
+    state.setLanes(0, TUNED_LANES);
+    const snap = state.getSnapshot();
+    state.setLanes(0, { open: true, cutoff: Array(16).fill(5) });
+    state.restoreSnapshot(snap, true);
+    assert(state.getLanes(0).cutoff[3] === 24, 'the snapshot lanes come back');
+    reset();
+});
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 

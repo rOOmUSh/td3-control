@@ -51,7 +51,7 @@ import {
     readPitchBend,
     writePitchBend,
 } from '../shared/pitch-bend-control.js';
-import { laneState, writeLaneState } from '../shared/step-lanes.js';
+import { carryLaneState, laneState, writeLaneState } from '../shared/step-lanes.js';
 import { createTripletMorphSession } from '../shared/triplet-morph-session.js';
 import { canonicalPatternText } from '../shared/pattern-canonical.js';
 import { editableSteps } from '../shared/triplet-morph-editing.js';
@@ -513,6 +513,9 @@ export function setPattern(a, b) {
     if (b === undefined) { i = focusedIdx; p = a; }
     else                 { i = a; p = b; }
     if (i === null || i < 0 || i >= patterns.length) return;
+    // The lanes belong to the slot, so the incoming pattern adopts them
+    // and the drawer survives every caller that rebuilds a pattern.
+    carryLaneState(patterns[i], p);
     patterns[i] = p;
     notify(true);
 }
@@ -584,18 +587,22 @@ export function setTripletBulk(idxList, value) {
 export function setGroup(g) { group = g; notify(); }
 export function setPatternNum(p) { patternNum = p; notify(); }
 export function setSide(s) { side = s; notify(); }
+// Tempo, gate and MIDI channel are session settings that no card is built
+// from: `renderCard` reads none of them. They notify as derived-only so a
+// knob drag does not rebuild the card list, which at 64 patterns is 17,792
+// elements and about a quarter of a second per change.
 export function setBpm(b) {
     const numeric = typeof b === 'number' ? b : parseFloat(b);
     const safe = Number.isFinite(numeric) ? numeric : 120;
     bpm = Math.round(Math.max(20, Math.min(300, safe)) * 100) / 100;
     sessionStorage.setItem('td3_bpm', String(bpm));
-    notify();
+    notify(false, false, true);
 }
 export function setGatePercent(value) {
     const next = writeGatePercent(value);
     if (next === gatePercent) return;
     gatePercent = next;
-    notify();
+    notify(false, false, true);
 }
 export function setMidiChannel(value) {
     const next = writeMidiChannel(value);
@@ -1000,15 +1007,24 @@ export function transposePattern(a, b) {
     notify(true);
 }
 
+/**
+ * A factory-default pattern for the slot `previous` occupied. CLEAR wipes
+ * the lane values, switches and ratio knobs but leaves the drawer open,
+ * so a cleared card keeps the controls the user put on screen.
+ */
+function clearedPattern(previous) {
+    return carryLaneState(previous, defaultPattern(), { reset: true });
+}
+
 export function resetPattern(patIdx) {
     const i = resolveIdx(patIdx);
     if (i === null || i === undefined) return;
-    patterns[i] = defaultPattern();
+    patterns[i] = clearedPattern(patterns[i]);
     notify(true);
 }
 
 export function resetAllPatterns() {
-    for (let i = 0; i < patterns.length; i++) patterns[i] = defaultPattern();
+    for (let i = 0; i < patterns.length; i++) patterns[i] = clearedPattern(patterns[i]);
     notify(true, true);
 }
 
@@ -1051,7 +1067,7 @@ export function deletePattern(delIdx) {
     if (patterns.length <= 1) {
         // Keep at least one pattern; DEL on the last one resets it instead
         // of producing an empty list (always keep N ≥ 1).
-        patterns[0] = defaultPattern();
+        patterns[0] = clearedPattern(patterns[0]);
         focusedIdx = 0;
         checkedSet = new Set();
         timelineDefault = [1];
@@ -1125,7 +1141,7 @@ export function deleteCheckedPatterns() {
     // If checkedSet still has the lone remaining pattern, treat that as
     // a request to reset it (matches single-DEL N=1 floor behavior).
     if (patterns.length === 1 && checkedSet.has(0)) {
-        patterns[0] = defaultPattern();
+        patterns[0] = clearedPattern(patterns[0]);
         checkedSet = new Set();
         timelineDefault = [1];
         timelineChecked = [];
@@ -1294,7 +1310,7 @@ export function copyFocused() {
 
 export function pasteIntoFocused() {
     if (focusedIdx === null || clipboard === null) return false;
-    patterns[focusedIdx] = clonePattern(clipboard);
+    patterns[focusedIdx] = carryLaneState(patterns[focusedIdx], clonePattern(clipboard));
     notify(true);
     return true;
 }
@@ -1327,7 +1343,10 @@ export function replaceAllPatterns(newPatterns) {
     const safe = newPatterns.slice(0, MAX_PATTERNS)
         .filter(p => p && Array.isArray(p.steps) && p.steps.length === 16);
     if (safe.length === 0) return false;
-    patterns = safe.map(clonePattern);
+    // Loaded content arrives with blank lanes, but a drawer the user
+    // opened stays open over the slot it belongs to.
+    const previous = patterns;
+    patterns = safe.map((p, i) => carryLaneState(previous[i], clonePattern(p), { reset: true }));
     focusedIdx = 0;
     checkedSet = new Set();
     timelineDefault = Array.from({ length: patterns.length }, (_, i) => i + 1);
